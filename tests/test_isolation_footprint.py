@@ -18,9 +18,13 @@ precedent art.13 cites. Four pins:
    entry whose file no longer has a hit fails until it is struck, and any file
    outside it fails at once.
 2. **one set of constants** — act/lib/config.py defines the paths; act/llm.py the
-   argv; ingest/claude-env.sh (when it exists) must spell the same literals.
+   argv; ingest/claude-env.sh spells the same literals (equality pinned here and in
+   tests/test_ingest_claude_isolation.py).
 3. **closed footprint** — exactly one LaunchAgent template ships (the board
-   server) and it is the only resident label the doctor expects.
+   server) and it is the only resident label the doctor expects; the ingest
+   chain's own launchd plists are gone (the a11y prune is a cleanup step, §72.5);
+   the doctor's footprint probe is the one place that names the owner's skills
+   dir, and it only lists symlink names and targets.
 4. **the boundary sets the env** — ``llm.runner_env`` always points
    ``CLAUDE_CONFIG_DIR`` at the app's own directory.
 """
@@ -127,17 +131,27 @@ class ConstantsTestCase(unittest.TestCase):
                                               "--mcp-config", '{"mcpServers":{}}'))
         self.assertEqual(llm.CONFIG_DIR_ENV, "CLAUDE_CONFIG_DIR")
 
-    def test_shell_side_spells_the_same_literals_when_it_exists(self):
-        # TODO(PR-D): ingest/claude-env.sh lands with the ingest rewrite; once it
-        # exists this branch is the equality pin the plan names (§3.2).
-        env_sh = REPO / "ingest" / "claude-env.sh"
-        if not env_sh.is_file():
-            self.skipTest("ingest/claude-env.sh lands in PR-D")
-        text = env_sh.read_text(encoding="utf-8")
-        self.assertIn("ZelinAIAssistant/claude-config", text)
+    def test_shell_side_spells_the_same_literals(self):
+        """§3.2 two definitions, one value: claude-env.sh's CLAUDE_CONFIG_DIR default is the
+        same path as config.CLAUDE_CONFIG_DIR (both under $HOME, both relocated by the same
+        AIASSISTANT_CLAUDE_CONFIG_DIR seam), HEADLESS_CWD is <that>/cwd on both sides, and
+        the ISOLATION_ARGV array is the llm tuple element for element."""
+        from tests.test_ingest_claude_isolation import shell_isolation_argv
+        text = (REPO / "ingest" / "claude-env.sh").read_text(encoding="utf-8")
+        m = re.search(r'^CLAUDE_CONFIG_DIR="\$\{AIASSISTANT_CLAUDE_CONFIG_DIR:-\$HOME/([^}"]+)\}"$',
+                      text, re.MULTILINE)
+        self.assertIsNotNone(m, "claude-env.sh must default CLAUDE_CONFIG_DIR under $HOME")
+        self.assertEqual(Path.home() / m.group(1), config.CLAUDE_CONFIG_DIR)
+        self.assertEqual(config.HEADLESS_CWD.relative_to(config.CLAUDE_CONFIG_DIR).as_posix(), "cwd")
+        self.assertIn('HEADLESS_CWD="$CLAUDE_CONFIG_DIR/cwd"', text)
         self.assertIn("--print-path headless_cwd", text)
-        for flag in llm.ISOLATION_FLAGS:
-            self.assertIn(flag, text)
+        self.assertEqual(shell_isolation_argv(text), llm.ISOLATION_ARGV)
+
+    def test_the_env_seam_has_one_name_on_both_sides(self):
+        text = (REPO / "ingest" / "claude-env.sh").read_text(encoding="utf-8")
+        src = (REPO / "act" / "lib" / "config.py").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("AIASSISTANT_CLAUDE_CONFIG_DIR"', src)
+        self.assertIn("${AIASSISTANT_CLAUDE_CONFIG_DIR:-", text)
 
     def test_the_cli_exposes_both_paths_for_the_shell(self):
         self.assertIn("claude_config_dir", config._CLI_PATH_KEYS)
@@ -152,6 +166,22 @@ class ClosedFootprintTestCase(unittest.TestCase):
         templates = sorted(p.stem for p in (REPO / "act" / "launchd").glob("*.plist"))
         self.assertEqual(templates, ["com.zelin.aiassistant.server"])
         self.assertEqual(core.RESIDENT_LABELS, frozenset({"com.zelin.aiassistant.server"}))
+
+    def test_the_ingest_chain_ships_no_launchd_plists(self):
+        self.assertFalse((REPO / "ingest" / "launchd").exists(),
+                         "§72.5: the a11y prune runs inside screenpipe-cleanup.sh")
+
+    def test_the_footprint_probe_is_the_one_place_naming_the_owner_claude_dir(self):
+        literal = re.compile(r"""["']\.claude["']""")
+        hits = sorted(path.relative_to(REPO).as_posix() for top in ("act", "server", "ingest")
+                      for path in (REPO / top).rglob("*.py")
+                      if literal.search(path.read_text(encoding="utf-8")))
+        self.assertEqual(hits, ["act/lib/checks/launchd.py"])
+        src = (REPO / "act" / "lib" / "checks" / "launchd.py").read_text(encoding="utf-8")
+        body = src[src.index("def repo_skill_links"):src.index("def _footprint_skill_links")]
+        self.assertNotIn("open(", body)
+        self.assertNotIn("read_text", body)
+        self.assertNotIn("unlink", body)
 
     def test_no_systemd_or_task_scheduler_templates(self):
         for gone in ("act/systemd", "act/tasksched", "act/approve"):
