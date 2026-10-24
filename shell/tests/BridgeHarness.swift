@@ -1,22 +1,23 @@
 // BridgeHarness.swift — behavior tests for shell/Sources/ShellBridge.swift
-// (the `zaiShell` wire contract, CONTRACT §61.1) + LegacyPrefs (§61.4).
+// (the `zaiShell` wire contract, CONTRACT §61.1). v2.0.0: the captions block, the
+// hotkey key, setCaptions / setCaptionPrefs / setBadge / probeCaptionKey, the
+// quick_capture command and the §61.4 LegacyPrefs seed are retired — section [1]/[3]
+// pin their ABSENCE so nobody re-adds them by mirroring an old file.
 // Compiled by run.sh together with every shell source except main.swift into a
 // plain macOS CLI tool — no Xcode, no XCTest, no WKWebView. Exits non-zero on
-// any failure. Same harness style as ios/tests/captions.
+// any failure.
 //
-// Boundaries the harness deliberately does NOT cross: no `setCaptions` with
-// VALID args and no `setRecording` / `refreshRecording` against the REAL
-// RecordingController (those spawn pgrep/pkill, write UserDefaults and
-// analytics — run.sh sandboxes AIASSISTANT_HOME, but the engines are the mac
-// app's frozen logic and are covered by their own drift guards) — the valid
+// Boundaries the harness deliberately does NOT cross: no `setRecording` /
+// `refreshRecording` against the REAL RecordingController (those spawn
+// pgrep/pkill and write UserDefaults — run.sh sandboxes AIASSISTANT_HOME, but
+// the engine is Recording.swift's frozen logic, pinned by its own hash) — the valid
 // setRecording / refreshRecording cases below run against the injected
 // `RecordingActions` seams (never CGRequestScreenCaptureAccess, never setMode);
 // the §61.7 schedule cases swap `RecordingSchedule.active` for one backed by
 // a throwaway UserDefaults suite and inject its now / mode / engine seams
 // (never pkill, never applyMode);
-// no UserDefaults.standard writes (LegacyPrefs and the two permission flags
-// get injected suites — section [5c] pins the nine shell-held pref key
-// literals of §66.2).
+// no UserDefaults.standard writes (the two permission flags get injected
+// suites — section [5c] pins the shell-held pref key literals of §66.2).
 
 import Foundation
 
@@ -34,19 +35,18 @@ func run() {
     print("[1] stateSnapshot wire keys:")
     let snap = ShellBridge.stateSnapshot()
     let rec = snap["recording"] as? [String: Any] ?? [:]
-    let cap = snap["captions"] as? [String: Any] ?? [:]
     for key in ["available", "on", "mode", "engine_running", "diagnosis", "note",
                 "tcc_lost", "screen_permission", "resume_mode"] {
         check(rec[key] != nil, "recording.\(key) present")
     }
-    for key in ["available", "on", "engine", "paused", "engine_dead",
-                "status_text", "status_is_error"] {
-        check(cap[key] != nil, "captions.\(key) present")
-    }
     check(["zh", "en"].contains(snap["language"] as? String ?? ""),
           "language ∈ zh|en", "got \(String(describing: snap["language"]))")
-    check(rec["available"] as? Bool == true && cap["available"] as? Bool == true,
-          "both engines available in this shell build")
+    check(rec["available"] as? Bool == true, "the recording engine is available in this shell build")
+    // v2.0.0 retirements (art.6 v2.0 clause, §61.1 tombstone): pinned ABSENT
+    check(snap["captions"] == nil, "no `captions` block (Live captions retired v2.0.0)")
+    check(snap["hotkey"] == nil, "no `hotkey` key (global quick-capture hotkey retired v2.0.0)")
+    check(Set(snap.keys) == Set(["recording", "permissions", "launch_at_login", "launch_at_login_available", "language"]),
+          "top-level snapshot keys are exactly the lite set", "got \(snap.keys.sorted())")
     // `on` is derived from mode, never stored separately
     let mode = rec["mode"] as? String ?? "?"
     check(["off", "screen", "screen_audio"].contains(mode), "mode vocabulary frozen (§15)",
@@ -54,11 +54,7 @@ func run() {
     check((rec["on"] as? Bool) == (mode != "off"), "recording.on ⇔ mode != off")
     check(rec["diagnosis"] is NSNull || rec["diagnosis"] is String,
           "diagnosis is null or failure id")
-    // §68.2 / §68.13 add-only keys: caption prefs, permissions block, launch_at_login, hotkey
-    for key in ["source", "translate", "translate_direction", "apple_locale", "ark_model",
-                "font_size", "opacity"] {
-        check(cap[key] != nil, "captions.\(key) present (caption prefs)")
-    }
+    // §68.13 add-only keys: permissions block, launch_at_login
     let perm = snap["permissions"] as? [String: Any] ?? [:]
     for key in ["screen", "microphone", "notifications", "vault"] {
         let value = perm[key] as? String ?? "?"
@@ -71,17 +67,11 @@ func run() {
     check(snap["launch_at_login_available"] is Bool, "launch_at_login_available is bool")
     check(snap["launch_at_login_available"] as? Bool == false,
           "launch_at_login_available is false for a bare binary (no bundle id / not under /Applications)")
-    check((snap["hotkey"] as? String)?.isEmpty == false, "hotkey label present")
     // §61.1 追记 add-only keys (parity batch shell-recording-bridge): typed, never absent
     check(rec["self_heal_note"] is String, "recording.self_heal_note is a string")
     check(rec["log_tail"] is String, "recording.log_tail is a string")
     check((rec["log_tail"] as? String) == "" || rec["diagnosis"] is String,
           "log_tail is empty unless a diagnosis is present")
-    check(cap["translation_note"] is String, "captions.translation_note is a string")
-    check(cap["translation_active"] is Bool, "captions.translation_active is bool")
-    check(cap["source_note"] is String, "captions.source_note is a string")
-    check(cap["apple_engine_available"] as? Bool == appleCaptionEngineAvailable(),
-          "captions.apple_engine_available mirrors appleCaptionEngineAvailable()")
     check(perm["screen_requested"] is Bool, "permissions.screen_requested is bool")
     check(perm["screen_requested"] as? Bool == Prefs.bool(PermissionsProbe.screenRequestedKey, default: false),
           "permissions.screen_requested mirrors the screenPermissionRequested pref")
@@ -90,28 +80,23 @@ func run() {
     print("[2] stateJSON round-trips:")
     if let json = ShellBridge.stateJSON(),
        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
-        check(obj["recording"] != nil && obj["captions"] != nil, "parses back with both blocks")
+        check(obj["recording"] != nil && obj["permissions"] != nil && obj["captions"] == nil,
+              "parses back with the recording + permissions blocks (no captions)")
     } else {
         check(false, "stateJSON produced parseable JSON")
     }
 
     // ---- 2b. shell → page command event detail (§61.6; D40 open_page) ----
     print("[2b] commandJSON (zai-shell-command detail):")
-    if let json = ShellBridge.commandJSON("quick_capture"),
-       let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
-        check(obj["command"] as? String == "quick_capture" && obj.count == 1, "quick_capture → {command} only (old vocabulary unchanged)")
-    } else {
-        check(false, "commandJSON(quick_capture) produced parseable JSON")
-    }
-    if let json = ShellBridge.commandJSON("open_page", args: ["page": "settings", "anchor": "live_captions"]),
+    if let json = ShellBridge.commandJSON("open_page", args: ["page": "settings", "anchor": "recording"]),
        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
         check(obj["command"] as? String == "open_page", "open_page → command key")
-        check(obj["page"] as? String == "settings" && obj["anchor"] as? String == "live_captions",
+        check(obj["page"] as? String == "settings" && obj["anchor"] as? String == "recording",
               "open_page carries page + anchor verbatim (web app.tsx shellPageUrl reads these keys)")
     } else {
         check(false, "commandJSON(open_page) produced parseable JSON")
     }
-    if let json = ShellBridge.commandJSON("open_page", args: ["page": "about", "command": "quick_capture"]),
+    if let json = ShellBridge.commandJSON("open_page", args: ["page": "about", "command": "rogue"]),
        let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
         check(obj["command"] as? String == "open_page", "args cannot overwrite the command key")
     } else {
@@ -153,8 +138,12 @@ func run() {
           "setRecording with unknown mode rejected")
     checkRecordingActions(bridge)
     checkRecordingSchedule(bridge)
-    check(rejection(["method": "setCaptions"]).hasPrefix("INVALID_ARGS"),
-          "setCaptions without on rejected")
+    // v2.0.0 retired methods (§61.1 tombstone) are unknown, whatever their args
+    for method in ["setCaptions", "setCaptionPrefs", "setBadge", "probeCaptionKey"] {
+        check(rejection(["method": method, "on": true, "count": 1, "name": "volcano-ark-key.txt"])
+                .hasPrefix("UNKNOWN_METHOD"),
+              "\(method) is retired → UNKNOWN_METHOD", rejection(["method": method]))
+    }
     check(rejection(["method": "setLanguage", "lang": "fr"]).hasPrefix("INVALID_ARGS"),
           "setLanguage outside zh|en rejected")
     // §68.13 new methods: type-strict rejections (valid calls touch TCC / SMAppService /
@@ -167,25 +156,6 @@ func run() {
           "openPane outside the pane vocabulary rejected")
     check(rejection(["method": "setLaunchAtLogin", "on": "yes"]).hasPrefix("INVALID_ARGS"),
           "setLaunchAtLogin with string on rejected")
-    check(rejection(["method": "setBadge", "count": -1]).hasPrefix("INVALID_ARGS"),
-          "setBadge negative rejected")
-    check(rejection(["method": "setBadge", "count": "3"]).hasPrefix("INVALID_ARGS"),
-          "setBadge string rejected (type-strict)")
-    check(rejection(["method": "setCaptionPrefs"]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs with no prefs rejected")
-    check(rejection(["method": "setCaptionPrefs", "engine": "whisper"]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs engine outside auto|doubao|apple rejected")
-    check(rejection(["method": "setCaptionPrefs", "font_size": 99]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs font_size outside 14...40 rejected")
-    check(rejection(["method": "setCaptionPrefs", "opacity": 0.05]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs opacity outside 0.2...1 rejected")
-    check(rejection(["method": "setCaptionPrefs", "translate": "on"]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs translate must be bool")
-    check(rejection(["method": "setCaptionPrefs", "ark_model": ""]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs empty ark_model rejected")
-    // a bad key alongside a good one rejects the WHOLE request (zero writes)
-    check(rejection(["method": "setCaptionPrefs", "source": "mic", "engine": "bogus"]).hasPrefix("INVALID_ARGS"),
-          "setCaptionPrefs is all-or-nothing")
     if let state = try? bridge.handle(["method": "getPermissions"]) {
         check((state["permissions"] as? [String: Any])?["screen"] != nil,
               "getPermissions refreshes and returns the permissions block")
@@ -216,48 +186,6 @@ func run() {
     check(rejection(["method": "chooseFolder", "prompt": true]).hasPrefix("INVALID_ARGS"),
           "chooseFolder prompt must be a string")
     check((try? bridge.handle(["method": "getState"]))?["dialog"] == nil, "non-dialog methods carry no dialog block")
-    // §68.2 追记 probeCaptionKey：词表 / 类型严格 / 沙箱里没保存 key → INVALID_ARGS；注入假探针（绝不连网）
-    check(cap["key_probe"] is NSNull, "captions.key_probe is null before any test")
-    check(rejection(["method": "probeCaptionKey"]).hasPrefix("INVALID_ARGS"), "probeCaptionKey without name rejected")
-    check(rejection(["method": "probeCaptionKey", "name": "anthropic-api-key.txt"]).hasPrefix("INVALID_ARGS"),
-          "probeCaptionKey outside the two volcano files rejected")
-    check(rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt", "value": 3]).hasPrefix("INVALID_ARGS"),
-          "probeCaptionKey value must be a string")
-    check(rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt"]).hasPrefix("INVALID_ARGS: nothing to test"),
-          "probeCaptionKey with nothing saved and no value rejected", rejection(["method": "probeCaptionKey", "name": "volcano-ark-key.txt"]))
-    var probed: (String, String)? = nil
-    CaptionKeyCheck.shared.arkProbe = { key, model, done in
-        probed = (key, model)
-        done(.modelNotFound(detail: "harness"))
-    }
-    CaptionKeyCheck.shared.speechProbe = { credential, done in
-        probed = (credential.fileRepresentation, "speech")
-        done(.ok)
-    }
-    if let reply = try? bridge.handle(["method": "probeCaptionKey", "name": "volcano-ark-key.txt", "value": " ark-KEY "]) {
-        let probe = (reply["captions"] as? [String: Any])?["key_probe"] as? [String: Any]
-        check(probed?.0 == "ark-KEY", "probeCaptionKey trims the pasted value and probes it (not the file)")
-        check(probed?.1 == LiveCaptionsController.shared.arkModel, "ark probe uses the configured Ark model")
-        check(probe?["name"] as? String == "volcano-ark-key.txt", "key_probe names the credential")
-        check(probe?["state"] as? String == "done" && probe?["verdict"] as? String == "model_not_found"
-              && probe?["detail"] as? String == "harness", "synchronous fake verdict lands in the snapshot",
-              String(describing: probe))
-        check(probe?["code"] as? String == "" && probe?["message"] as? String == "", "unused verdict fields are empty strings")
-    } else {
-        check(false, "probeCaptionKey with a pasted value must not throw")
-    }
-    if let reply = try? bridge.handle(["method": "probeCaptionKey", "name": "volcano-speech-key.txt", "value": "1234567890:token-abc"]) {
-        let probe = (reply["captions"] as? [String: Any])?["key_probe"] as? [String: Any]
-        check(probed?.1 == "speech" && probed?.0.contains("token-abc") == true, "speech probe gets the parsed credential")
-        check(probe?["verdict"] as? String == "ok", "ok verdict lands", String(describing: probe))
-    } else {
-        check(false, "probeCaptionKey speech with a pasted value must not throw")
-    }
-    let describe = CaptionKeyCheck.describe(name: "volcano-speech-key.txt", verdict: .resourceNotEnabled(code: "45000030", message: "not activated"))
-    check(describe["verdict"] as? String == "resource_not_enabled" && describe["code"] as? String == "45000030"
-          && describe["message"] as? String == "not activated", "describe carries code + message for resource verdicts")
-    check(CaptionKeyCheck.result(.badKey(detail: "x")) == "unauthorized" && CaptionKeyCheck.result(.network(detail: "x")) == "error",
-          "analytics result vocabulary mirrors the native applyCaptionVerdict")
     check(FolderDialog.abbreviateHome(NSHomeDirectory() + "/Notes") == "~/Notes", "abbreviateHome folds $HOME to ~")
     check(FolderDialog.abbreviateHome("/Volumes/X") == "/Volumes/X", "abbreviateHome leaves other paths alone")
     // §54 追记 2026-09-06 / D41：页面 <input type=file>（📎 贴图）的 WKUIDelegate runOpenPanelWith 落点 = FileDialog。
@@ -296,106 +224,35 @@ func run() {
     _ = try? bridge.handle(["method": "setLanguage", "lang": before])
     check(LanguageStore.shared.lang == before, "language restored")
 
-    // ---- 5. LegacyPrefs seed: copy only unset keys, once ----
-    print("[5] LegacyPrefs.seedFromNativeAppIfNeeded:")
-    let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
-    let sourceName = "zai.harness.source.\(stamp)"
-    let targetName = "zai.harness.target.\(stamp)"
-    let source = UserDefaults(suiteName: sourceName)!
-    let target = UserDefaults(suiteName: targetName)!
-    defer {
-        source.removePersistentDomain(forName: sourceName)
-        target.removePersistentDomain(forName: targetName)
-    }
-    source.set("screen_audio", forKey: "recordingMode")
-    source.set(true, forKey: "liveCaptionsEnabled")
-    source.set(30.0, forKey: "captionsFontSize")
-    source.set(true, forKey: "screenTCCWasGranted")      // must NOT travel
-    target.set("off", forKey: "recordingMode")           // shell-side choice wins
-    let copied = LegacyPrefs.seedFromNativeAppIfNeeded(target: target, source: source)
-    check(copied.sorted() == ["captionsFontSize", "liveCaptionsEnabled"],
-          "copies only unset, whitelisted keys", "got \(copied)")
-    check(target.string(forKey: "recordingMode") == "off", "never overwrites a shell value")
-    check(target.object(forKey: "screenTCCWasGranted") == nil,
-          "TCC history is not inherited (new bundle id needs its own grant)")
-    check(target.bool(forKey: LegacyPrefs.marker), "marker written")
-    source.set(40.0, forKey: "captionsOpacity")
-    let second = LegacyPrefs.seedFromNativeAppIfNeeded(target: target, source: source)
-    check(second.isEmpty && target.object(forKey: "captionsOpacity") == nil,
-          "runs once (marker) — later native changes do not leak in")
-    let noSource = LegacyPrefs.seedFromNativeAppIfNeeded(
-        target: UserDefaults(suiteName: targetName + ".b")!, source: nil)
-    check(noSource.isEmpty, "no native domain → nothing copied, no crash")
-    check(UserDefaults(suiteName: targetName + ".b")!.object(forKey: LegacyPrefs.marker) == nil,
-          "no native domain → no marker either (a later install of the native domain still seeds)")
-    UserDefaults(suiteName: targetName + ".b")?.removePersistentDomain(forName: targetName + ".b")
-
-    checkOverlayFrameSeed(target: target, source: source, targetName: targetName)
     checkShellHeldPrefs()
-    checkTerminalTakeover()
+    checkIgnoredAppsOverride()
 }
 
-/// §66.2 setting:prefs:* —— 九把只有壳持有的 UserDefaults 键（六个字幕键、录制回滚键、
-/// 两个权限记账键）逐字钉住键名字面量：谁改了键名（或只改了一半），这一节当场红。
-/// 字幕六键与 lastActiveRecordingMode 住在 §61.3 冻结引擎文件里（Recording.swift /
-/// LiveCaptions.swift 逐字镜像 mac/，永不为测试开缝），所以壳这边钉的是真正会读写它们的
-/// 壳代码：LegacyPrefs 的迁移清单 + 搬运行为（ShellBridge.swift）。两把权限键是壳自己的，
-/// 走 PermissionsProbe 的注入 suite 跑真实读路径。清单侧的 proof = swift:BridgeHarness。
+/// §15 v2.0.0 add-only：设置页写的 `recording_ignored_apps` 先于 config.yaml 的 `recording.ignored_apps`，
+/// 清洗与 act/lib/config._clean_str_list 同款（字串 / 整数、去空白、丢空项与布尔）。注入 overrides，不读真文件。
+func checkIgnoredAppsOverride() {
+    print("[5d] SettingsIO.overrideList (recording_ignored_apps):")
+    let raw: [String: Any] = ["recording_ignored_apps": ["  1Password ", "", 3, true, "Foo::Bar"]]
+    check(SettingsIO.overrideList("ignored_apps", overrides: raw) == ["1Password", "3", "Foo::Bar"],
+          "list override is cleaned like _clean_str_list", "got \(String(describing: SettingsIO.overrideList("ignored_apps", overrides: raw)))")
+    check(SettingsIO.overrideList("ignored_apps", overrides: [:]) == nil, "no override → nil (config.yaml / defaults decide)")
+    check(SettingsIO.overrideList("ignored_apps", overrides: ["recording_ignored_apps": "1Password"]) == nil,
+          "a non-list value is ignored (wrong types are silently ignored, §15)")
+    check(SettingsIO.overrideList("obsidian_raw", overrides: ["obsidian_raw": ["x"]]) == nil,
+          "only the mapped list keys are honored")
+    check(SettingsIO.overrideListKeys == ["ignored_apps": "recording_ignored_apps"], "override key map frozen")
+}
+
+/// §66.2 setting:prefs:* —— 只有壳持有的两把权限记账键逐字钉住键名字面量：谁改了键名（或只改了
+/// 一半），这一节当场红。走 PermissionsProbe 的注入 suite 跑真实读路径。v2.0.0：字幕六键与
+/// LegacyPrefs 迁移清单随 Live captions 退役（§61.4 tombstone）。清单侧的 proof = swift:BridgeHarness。
 @MainActor
 func checkShellHeldPrefs() {
-    print("[5c] shell-held UserDefaults prefs (captions / resume mode / permission flags):")
+    print("[5c] shell-held UserDefaults prefs (permission flags):")
     let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
-
-    // ---- 迁移清单逐键：原生 app 里选过的字幕 / 回滚模式，第一次启动壳时照搬过来（§61.4）
-    let migrated = ["captionsAppleLocale", "captionsArkModel", "captionsEngine", "captionsSource",
-                    "captionsTranslate", "captionsTranslateDirection", "lastActiveRecordingMode"]
-    for key in migrated {
-        check(LegacyPrefs.keys.contains(key), "LegacyPrefs carries the \(key) key from the native domain")
-    }
-    check(!LegacyPrefs.keys.contains("screenPermissionRequested") && !LegacyPrefs.keys.contains("vaultAccessGranted"),
-          "TCC bookkeeping is never inherited — the shell bundle id earns its own grants")
-
-    let srcName = "zai.harness.prefs.src.\(stamp)"
     let dstName = "zai.harness.prefs.dst.\(stamp)"
-    let src = UserDefaults(suiteName: srcName)!
     let dst = UserDefaults(suiteName: dstName)!
-    defer {
-        src.removePersistentDomain(forName: srcName)
-        dst.removePersistentDomain(forName: dstName)
-    }
-    src.set("en", forKey: "captionsAppleLocale")
-    src.set("doubao-seed-1-6", forKey: "captionsArkModel")
-    src.set("doubao", forKey: "captionsEngine")
-    src.set("system", forKey: "captionsSource")
-    src.set(true, forKey: "captionsTranslate")
-    src.set("zh2en", forKey: "captionsTranslateDirection")
-    src.set("screen_audio", forKey: "lastActiveRecordingMode")
-    src.set(true, forKey: "screenPermissionRequested")   // must NOT travel
-    src.set(true, forKey: "vaultAccessGranted")          // must NOT travel
-    let carried = LegacyPrefs.seedFromNativeAppIfNeeded(target: dst, source: src).sorted()
-    check(carried == migrated, "every caption key + the resume mode travel, nothing else", "got \(carried)")
-    check(dst.string(forKey: "captionsAppleLocale") == "en", "captionsAppleLocale lands verbatim")
-    check(dst.string(forKey: "captionsArkModel") == "doubao-seed-1-6", "captionsArkModel lands verbatim")
-    check(dst.string(forKey: "captionsEngine") == "doubao", "captionsEngine lands verbatim")
-    check(dst.string(forKey: "captionsSource") == "system", "captionsSource lands verbatim")
-    check(dst.object(forKey: "captionsTranslate") != nil && dst.bool(forKey: "captionsTranslate"),
-          "captionsTranslate lands verbatim (bool, not a string)")
-    check(dst.string(forKey: "captionsTranslateDirection") == "zh2en", "captionsTranslateDirection lands verbatim")
-    check(dst.string(forKey: "lastActiveRecordingMode") == "screen_audio",
-          "lastActiveRecordingMode lands verbatim (the re-enable button restores the audio tier)")
-    check(["screen", "screen_audio"].contains(dst.string(forKey: "lastActiveRecordingMode") ?? ""),
-          "the seeded resume mode is one of the two live modes the button may restore")
-    check(dst.object(forKey: "screenPermissionRequested") == nil && dst.object(forKey: "vaultAccessGranted") == nil,
-          "permission flags stay behind in the native domain")
-
-    // 壳这边已经选过的字幕键永不被原生值覆盖（同一把键，shell-side choice wins）
-    let keepName = "zai.harness.prefs.keep.\(stamp)"
-    let keep = UserDefaults(suiteName: keepName)!
-    defer { keep.removePersistentDomain(forName: keepName) }
-    keep.set("apple", forKey: "captionsEngine")
-    let kept = LegacyPrefs.seedFromNativeAppIfNeeded(target: keep, source: src).sorted()
-    check(!kept.contains("captionsEngine") && keep.string(forKey: "captionsEngine") == "apple",
-          "a captionsEngine already chosen in the shell survives the seed", "got \(kept)")
+    defer { dst.removePersistentDomain(forName: dstName) }
 
     // ---- screenPermissionRequested：系统提示每个 bundle id 只弹一次，之后只能深链面板
     let flagName = "zai.harness.prefs.flags.\(stamp)"
@@ -472,142 +329,6 @@ func checkRecordingActions(_ bridge: ShellBridge) {
     trace = []
     _ = try? bridge.handle(["method": "getState"])
     check(trace.isEmpty, "getState stays pure (no refresh, no TCC)")
-}
-
-/// §61.4 追记：字幕悬浮窗的拖动位置（NSWindow autosave "liveCaptionsPanel"）在自己的一次性标记下
-/// 补种——已经播过种的壳（传入的 target：marker 已 true）也收到一次；壳自己拖过的永不覆盖。
-@MainActor
-func checkOverlayFrameSeed(target: UserDefaults, source: UserDefaults, targetName: String) {
-    print("[6] LegacyPrefs overlay frame (own one-shot marker):")
-    let frame = "120 80 760 110 0 0 1440 877 "
-    check(LegacyPrefs.overlayFrameKey == "NSWindow Frame liveCaptionsPanel",
-          "overlay frame key = NSWindow's autosave record for liveCaptionsPanel")
-    check(!LegacyPrefs.keys.contains(LegacyPrefs.overlayFrameKey), "frame is NOT in the first-seed key list")
-    // the seeded target above already has both markers (the second call armed the frame marker while the
-    // native domain had no frame yet) → a frame written natively afterwards must not leak in
-    check(target.bool(forKey: LegacyPrefs.overlayFrameMarker), "frame marker armed by the previous run")
-    source.set(frame, forKey: LegacyPrefs.overlayFrameKey)
-    check(LegacyPrefs.seedFromNativeAppIfNeeded(target: target, source: source).isEmpty
-          && target.object(forKey: LegacyPrefs.overlayFrameKey) == nil,
-          "frame marker set → later native frames do not leak in")
-    // an install seeded BEFORE this key existed: prefs marker true, frame marker absent → frame copied once
-    let legacyName = targetName + ".legacy"
-    let legacy = UserDefaults(suiteName: legacyName)!
-    defer { legacy.removePersistentDomain(forName: legacyName) }
-    legacy.set(true, forKey: LegacyPrefs.marker)
-    let frameOnly = LegacyPrefs.seedFromNativeAppIfNeeded(target: legacy, source: source)
-    check(frameOnly == [LegacyPrefs.overlayFrameKey],
-          "already-seeded install receives the frame once (and nothing else)", "got \(frameOnly)")
-    check(legacy.string(forKey: LegacyPrefs.overlayFrameKey) == frame, "frame value copied verbatim")
-    check(legacy.object(forKey: "recordingMode") == nil, "prefs marker still honoured — recordingMode not re-seeded")
-    check(legacy.bool(forKey: LegacyPrefs.overlayFrameMarker), "frame marker written")
-    source.set("1 1 320 72 0 0 1440 877 ", forKey: LegacyPrefs.overlayFrameKey)
-    check(LegacyPrefs.seedFromNativeAppIfNeeded(target: legacy, source: source).isEmpty
-          && legacy.string(forKey: LegacyPrefs.overlayFrameKey) == frame,
-          "frame copies once — later native drags stay native")
-    // a shell that already dragged its own overlay keeps its frame
-    let draggedName = targetName + ".dragged"
-    let dragged = UserDefaults(suiteName: draggedName)!
-    defer { dragged.removePersistentDomain(forName: draggedName) }
-    dragged.set("9 9 500 100 0 0 1440 877 ", forKey: LegacyPrefs.overlayFrameKey)
-    let draggedCopied = LegacyPrefs.seedFromNativeAppIfNeeded(target: dragged, source: source)
-    check(!draggedCopied.contains(LegacyPrefs.overlayFrameKey)
-          && dragged.string(forKey: LegacyPrefs.overlayFrameKey) == "9 9 500 100 0 0 1440 877 ",
-          "shell-side frame never overwritten", "got \(draggedCopied)")
-    check(dragged.bool(forKey: LegacyPrefs.overlayFrameMarker) && dragged.bool(forKey: LegacyPrefs.marker),
-          "fresh install arms both markers in one run")
-}
-
-/// §68.7（issue #216）终端接管：TerminalLauncher 三形 AppleScript + 两层引号、terminal_app 解析六例、
-/// TerminalRelay 队列消费（新鲜 / 过期 / 坏形 / .tmp / 顺序 / 消费）、ShellHeartbeat beat / stop——全部在沙盒
-/// AIASSISTANT_HOME 下，绝不 spawn osascript。
-@MainActor
-func checkTerminalTakeover() {
-    // ---- 7. §68.7 terminal takeover: launcher quoting / setting resolution, queue relay, heartbeat ----
-    print("[7] TerminalLauncher + TerminalRelay (issue #216):")
-    // quoting layers: single-quote the whole shell line, then AppleScript-escape it
-    check(TerminalLauncher.shellSingleQuoted("a 'b' c") == "'a '\\''b'\\'' c'", "POSIX single-quoting closes–escapes–reopens")
-    check(TerminalLauncher.appleScriptQuoted("say \"hi\" \\ there") == "\"say \\\"hi\\\" \\\\ there\"", "AppleScript literal escapes \\ and \"")
-    let ghostty = TerminalLauncher.script(for: .ghostty, command: "claude --resume x")
-    check(ghostty.contains("new tab in window 1 with configuration {command:\"/bin/zsh -lc 'claude --resume x'\"}")
-          && ghostty.contains("new window with configuration"), "Ghostty script: new tab in window 1, else new window",
-          ghostty)
-    check(TerminalLauncher.script(for: .terminal, command: "claude --resume x").contains("do script \"claude --resume x\""),
-          "Terminal.app script: do script <line>")
-    check(TerminalLauncher.script(for: .iterm2, command: "claude").contains("create window with default profile command \"/bin/zsh -lc 'claude'\""),
-          "iTerm2 script: create window with default profile command")
-    check(TerminalLauncher.bootstrapped("claude").hasPrefix(TerminalLauncher.pathBootstrap)
-          && TerminalLauncher.bootstrapped("claude").hasSuffix("claude"), "executed line = PATH bootstrap + raw command")
-    // D36 / issue #216 复合接管命令：server 的 shell_line 是 `cd '<cwd>' || { echo 'folder not found:' '<cwd>'; exit 1; }; export AIASSISTANT_HOME=…; cd '<wt>' && claude --resume <id>`
-    // （不 exec——`exec cd` 会让 shell 静默退出，退役 .command 通道就是这样坏的；echo 里的 cwd 也 shlex.quote 过——路径可能是 LLM 原文）。
-    // 壳必须把整行**作为一个 shell 字串**交给 /bin/zsh -lc：单引号层 closes–escapes–reopens 每个 '，双引号只在 AppleScript 层
-    // 转义（PATH 兜底那句里有），&& / ; / {} 原样进 zsh。
-    let compound = "cd '/tmp/h' || { echo 'folder not found:' '/tmp/h'; exit 1; }; export AIASSISTANT_HOME=/tmp/h; cd '/tmp/wt' && claude --resume 6f9619ff"
-    let executed = TerminalLauncher.bootstrapped(compound)
-    check(executed == TerminalLauncher.pathBootstrap + compound && !executed.contains("exec "),
-          "compound shell_line rides verbatim behind the PATH bootstrap — no exec anywhere", executed)
-    let ghosttyCompound = TerminalLauncher.script(for: .ghostty, command: executed)
-    let expectedZsh = "/bin/zsh -lc '" + executed.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    check(ghosttyCompound.contains("{command:" + TerminalLauncher.appleScriptQuoted(expectedZsh) + "}"),
-          "Ghostty: the whole compound line is ONE zsh -lc argument (cd && claude survive both quoting layers)", ghosttyCompound)
-    check(ghosttyCompound.contains("cd '\\\\''/tmp/wt'\\\\'' && claude --resume 6f9619ff")
-          && ghosttyCompound.contains("echo '\\\\''folder not found:'\\\\'' '\\\\''/tmp/h'\\\\''; exit 1;")
-          && ghosttyCompound.contains("export PATH=\\\"$HOME/.local/bin"),
-          "Ghostty: single quotes re-opened, double quotes AppleScript-escaped, && and ; untouched", ghosttyCompound)
-    check(TerminalLauncher.script(for: .iterm2, command: executed).contains("command " + TerminalLauncher.appleScriptQuoted(expectedZsh)),
-          "iTerm2: same zsh -lc wrapping for the compound line")
-    check(TerminalLauncher.script(for: .terminal, command: executed).contains("do script " + TerminalLauncher.appleScriptQuoted(executed)),
-          "Terminal.app: compound line goes to do script as one AppleScript string (login shell parses it)")
-    // terminal_app setting (server-owned, §68.1) resolved against installed apps — mirrors server resolve_terminal
-    let onlyTerminal: (TerminalApp) -> Bool = { $0 == .terminal }
-    let all: (TerminalApp) -> Bool = { _ in true }
-    check(TerminalLauncher.resolve(setting: "auto", installed: all) == .ghostty, "auto → Ghostty when installed")
-    check(TerminalLauncher.resolve(setting: "auto", installed: onlyTerminal) == .terminal, "auto → Terminal when Ghostty absent")
-    check(TerminalLauncher.resolve(setting: "iterm2", installed: all) == .iterm2, "explicit iterm2 wins when installed")
-    check(TerminalLauncher.resolve(setting: "iterm2", installed: onlyTerminal) == .terminal, "uninstalled choice falls back like auto")
-    check(TerminalLauncher.resolve(setting: "bogus", installed: all) == .ghostty, "unknown value = auto")
-    check(TerminalLauncher.resolve(setting: nil, installed: onlyTerminal) == .terminal, "missing override = auto")
-    // queue relay in the sandboxed AIASSISTANT_HOME: parse shape, stale + malformed dropped, fresh launched oldest-first, consumed
-    let fm = FileManager.default
-    let qdir = TerminalRelay.queueDir
-    check(qdir.hasPrefix(AppPaths.stateRoot) && qdir.hasSuffix("/state/terminal_queue"), "queue dir = <home>/state/terminal_queue")
-    try? fm.createDirectory(atPath: qdir, withIntermediateDirectories: true)
-    let now: TimeInterval = 1_700_000_000
-    func writeEntry(_ name: String, _ obj: [String: Any]) {
-        let data = try! JSONSerialization.data(withJSONObject: obj)
-        fm.createFile(atPath: qdir + "/" + name, contents: data)
-    }
-    writeEntry("b.json", ["id": "b", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - 2])
-    writeEntry("a.json", ["id": "a", "kind": "maintainer", "command": "cd /r && claude", "shell_line": "cd /r; claude", "created_at": now - 30])
-    writeEntry("old.json", ["id": "old", "kind": "takeover", "command": "claude", "shell_line": "claude", "created_at": now - TerminalRelay.staleAfter - 1])
-    writeEntry("bad.json", ["id": "bad", "kind": "takeover"])          // no shell_line → malformed
-    fm.createFile(atPath: qdir + "/half.json.tmp", contents: Data("{".utf8))   // in-flight server write: never touched
-    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "c", "created_at": 1.0]) != nil,
-          "parse accepts the server entry shape")
-    check(TerminalRelay.parse(path: "/p", ["id": "x", "kind": "takeover", "command": "c", "shell_line": "", "created_at": 1.0]) == nil,
-          "parse rejects an empty shell_line")
-    var launched: [String] = []
-    let drained = TerminalRelay.drain(now: now) { launched.append($0.id + ":" + $0.shellLine) }
-    check(launched == ["a:cd /r; claude", "b:claude"], "fresh entries launched oldest first, stale/malformed never launched", "\(launched)")
-    check(drained.map(\.kind) == ["maintainer", "takeover"], "drain returns what it handed to launch")
-    let left = (try? fm.contentsOfDirectory(atPath: qdir))?.sorted() ?? []
-    check(left == ["half.json.tmp"], "consumed + stale + malformed entries deleted; the .tmp in-flight write is left alone", "\(left)")
-    check(TerminalRelay.drain(now: now) { _ in check(false, "nothing to launch on an empty queue") }.isEmpty, "empty queue → no launches")
-    check(TerminalRelay.staleAfter == 60 && TerminalRelay.tickInterval == 1.0, "stale threshold 60 s (server STALE_AFTER_S), 1 s tick")
-    // heartbeat: beat creates/touches state/shell.heartbeat, stop removes it
-    ShellHeartbeat.stop()
-    check(!fm.fileExists(atPath: ShellHeartbeat.path), "no heartbeat before the first beat")
-    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now - 100))
-    let beat1 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
-    ShellHeartbeat.beat(now: Date(timeIntervalSince1970: now))
-    let beat2 = (try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.modificationDate] as? Date
-    check(ShellHeartbeat.path.hasSuffix("/state/shell.heartbeat"), "heartbeat path = <home>/state/shell.heartbeat")
-    check(beat1 != nil && beat2 != nil && beat2! > beat1!, "beat touches the mtime forward", "\(String(describing: beat1)) → \(String(describing: beat2))")
-    check((try? String(contentsOfFile: ShellHeartbeat.path, encoding: .utf8))?.hasPrefix("pid=") == true, "heartbeat body carries the pid")
-    let beatMode = ((try? fm.attributesOfItem(atPath: ShellHeartbeat.path))?[.posixPermissions] as? NSNumber)?.intValue ?? -1
-    check(beatMode == 0o600, "heartbeat file is 0600 (private-file lens inside state/)", "\(beatMode)")
-    ShellHeartbeat.stop()
-    check(!fm.fileExists(atPath: ShellHeartbeat.path), "stop removes the heartbeat (server flips to 503 at once)")
 }
 
 MainActor.assumeIsolated { run() }

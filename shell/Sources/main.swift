@@ -1,33 +1,27 @@
 // main.swift — "Zelin's AI Assistant" 壳 app（AppKit + WKWebView）的 bootstrap + AppDelegate
 // 壳即产品（owner 2026-09-02）：bundle "Zelin's AI Assistant.app"、显示名同名；
-// bundle id 仍是 com.zelin.ai-board（与旧 app 的 com.zelin.ai-engineer 各持各的
-// TCC 身份；旧 app 装机版改名 "Zelin's AI Assistant (old)"，CONTRACT §54）。
+// bundle id 是 com.zelin.ai-board（它自己的 TCC 身份，CONTRACT §54）。
 //
-// 职责刻意做薄：解析 PORT/HOME/SERVER_REPO → 探活 /api/board → **连接**
+// 职责刻意做薄：解析 PORT/HOME/SERVER_REPO → 探活 GET /api/health → **连接**
 // launchd 托管的 server（com.zelin.aiassistant.server，install.sh 渲染/加载）→
-// 一个 WKWebView 窗口加载 http://127.0.0.1:PORT/。板子本体（React board）活在
-// web/dist，由 server/ 静态托管；壳里没有看板业务逻辑。壳**必须**原生承载的
-// 最小残留（R2.2.3 / CONTRACT §61）：录制引擎的进程归属（screenpipe 是壳的直接
-// 子进程——TCC 屏幕录制授权按 GUI 父进程归属）、实时字幕引擎 + 悬浮窗；两者经
-// ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。v0.48.x P4 余量（§68.13）：
-// §28 通知中继消费（NotifyRelay，5 s tick）、TCC 探针 + 系统设置深链、登录时启动、
-// Dock 徽章、全局快速捕获快捷键（ShellSystem.swift）；§68.7（issue #216）终端接管
-// 队列消费（TerminalRelay，1 s tick，Apple Events → 终端）+ 壳心跳（server 据它判
-// 「队列有消费者」）。Dock-only（D3）：无菜单栏
-// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口（只看看板窗口，不看
-// hasVisibleWindows——字幕悬浮窗会把它顶成 true）；⌘Q 正常退出。窗口三条纯策略
+// 一个 WKWebView 窗口加载 http://127.0.0.1:PORT/。页面本体（React，会议纪要 / 录制与导入 /
+// 设置 / 关于）活在 web/dist，由 server/ 静态托管；壳里没有业务逻辑。壳**必须**原生承载的
+// 最小残留（R2.2.3 / CONTRACT §61）：录制引擎的进程归属（TCC 屏幕录制授权按 GUI 父进程
+// 归属；§61.8 启动时 adopt 带 recipe 标记的引擎、退出只停自己派生的那台），经 ShellBridge
+// （`zaiShell`）暴露给页面；§68.13 的其余残留：§28 通知中继消费（NotifyRelay，5 s tick）、
+// TCC 探针 + 系统设置深链、登录时启动（ShellSystem.swift）。Dock-only（D3）：无菜单栏
+// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口；⌘Q 正常退出。窗口三条纯策略
 // （外链交系统浏览器 / Dock 重开 / 标题跟随页面）、启动来源策略（LaunchPolicy，D38：
 // `--background` argv / 登录项启动 → 建窗不前置不 activate，§56.5 / §61 追记）与主菜单纯表
-// （MenuSpec：双语标题、设置… ⌘, / 权限体检… / 关于 → 看板页、聚焦捕获框 ⌘L、隐藏其他 /
-// 缩放，随 LanguageStore 切换整个重建）与其 NSMenu 装配住在 ShellSupport.swift，§54 追记；
-// 本文件只挂到 NSApp、做副作用。
+// （MenuSpec：双语标题、设置… ⌘, / 权限体检… / 关于、隐藏其他 / 缩放，随 LanguageStore 切换
+// 整个重建）住在 ShellSupport.swift，§54 追记；本文件只挂到 NSApp、做副作用。
+// v2.0.0 退役（全文见 tag full）：终端接管队列消费（TerminalRelay）+ 壳心跳、全局快速捕获快捷键、
+// Dock 徽章、实时字幕引擎 + 悬浮窗、原生 app 偏好一次性迁移（LegacyPrefs）。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
-// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（当时还是
-// ad-hoc 签名，授权连 build 都跨不过去；2026-09-12 起换稳定身份，§54.3 修正——但壳
-// 依旧不持有磁盘授权，本条结论不变）——repo 在外置卷上时子进程读不到 checkout，
-// 以 "No module named server" 死掉。launchd 用的是 §55 探针验过的守护解释器。
-// 壳保留 spawn 兜底，但**只在探活失败且 launchd 没加载该 label 时**才 spawn——
+// 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权——repo 在外置卷上时
+// 子进程读不到 checkout，以 "No module named server" 死掉。launchd 用的是 §55 探针验过的
+// 守护解释器。壳保留 spawn 兜底，但**只在探活失败且 launchd 没加载该 label 时**才 spawn——
 // 两个 server 绝不能抢同一个端口（launchd 那份会 crash-loop，doctor 报 FAIL）。
 //
 // 生命周期诚实原则：只 terminate 我们自己 spawn 的 child server；对一个我们
@@ -72,7 +66,7 @@ enum ShellConfig {
     }()
 
     /// HOME：env AIASSISTANT_HOME → home.txt pointer（CONTRACT §19，与
-    /// mac/Sources/Utils.swift AppPaths.stateRoot 同一解析顺序）。两者都缺 =
+    /// ShellSupport.swift AppPaths.stateRoot 同一解析顺序）。两者都缺 =
     /// nil：spawn 时不注入 env，由 server 侧 canonical 默认值接手
     /// （server/paths.py DEFAULT_HOME）——绝不在壳里猜一台机器的路径。
     static let homeDir: String? = {
@@ -112,9 +106,10 @@ enum ShellConfig {
     }()
 
     static var boardURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
-    static var probeURL: URL { URL(string: "http://127.0.0.1:\(port)/api/board")! }
-    /// 看板深链（web route.ts `?page=<page>`：about / permissions / settings…；路径仍是 `/`，
-    /// 所以 ExternalLinkPolicy 判 board、留在壳内加载）。
+    /// 连接探针（§54.2）：GET /api/health——token-light、永远答话的活性路由（server/health.py）。
+    static var probeURL: URL { URL(string: "http://127.0.0.1:\(port)/api/health")! }
+    /// 页面深链（web route.ts `?page=<page>`：recaps / ingest / settings / about / permissions…；
+    /// 路径仍是 `/`，所以 ExternalLinkPolicy 判 board、留在壳内加载）。
     static func pageURL(_ page: String, anchor: String? = nil) -> URL {
         var c = URLComponents(url: boardURL, resolvingAgainstBaseURL: false)!
         var items = [URLQueryItem(name: "page", value: page)]
@@ -133,7 +128,7 @@ final class ServerManager {
     /// 只在我们亲手 spawn 时非 nil——这是「退出时是否 terminate」的唯一依据。
     private(set) var spawned: Process?
 
-    /// 探活：GET /api/board，1s timeout；任何 2xx 视为 server 在班。
+    /// 探活：GET /api/health，1s timeout；任何 2xx 视为 server 在班。
     /// 回调保证回到 main queue（调用方全是 UI 流程）。
     func probe(_ completion: @escaping (Bool) -> Void) {
         var req = URLRequest(url: ShellConfig.probeURL, timeoutInterval: 1.0)
@@ -269,10 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let server = ServerManager()
     /// 页面 ⇄ 壳 桥（§61.1）；与 webView 同寿命。
     private let bridge = ShellBridge()
-    /// 5 s 引擎巡检（镜像 mac AppDelegate.refresh 的录制半边：TCC 自愈 + pgrep 活性）。
+    /// 5 s 引擎巡检（TCC 自愈 + pgrep 活性 + §61.8 pidfile + §28 通知中继）。
     private var engineTick: Timer?
-    /// 1 s 终端接管队列消费（§68.7 TerminalRelay）：双击到终端出现应在一秒内。
-    private var terminalTick: Timer?
     /// `webView.title` → `window.title` 的 KVO 句柄（§54 追记：标题跟随页面）。
     private var titleObservation: NSKeyValueObservation?
     /// `LanguageStore.$lang` 订阅句柄（§54 追记：主菜单随界面语言重建）。
@@ -283,16 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var deferredAlert: NSAlert?
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
-        let seeded = LegacyPrefs.seedFromNativeAppIfNeeded()
-        if !seeded.isEmpty {
-            server.logLine("board-shell: seeded prefs from \(LegacyPrefs.nativeSuite): "
-                + seeded.joined(separator: ","))
-        }
-        _ = LanguageStore.shared   // L() 镜像就位（悬浮窗/通知文案）
-        ShellNavigation.openSettings = { [weak self] anchor in
-            self?.openSettingsPage(anchor: anchor)
-        }
+        _ = LanguageStore.shared   // L() 镜像就位（菜单 / 通知文案）
         ShellWindow.show = { [weak self] in self?.showWindow() }
         // 主菜单随界面语言重建（原生 Store.swift `/lang` 与设置页保存后 `app.installMainMenu()`
         // 的壳版）：`$lang` 订阅时先同步发当前值 = 首次安装（窗口建起前菜单已在）；之后页面每次
@@ -312,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// launch」的壳版，§56.5 / §61 追记）。后台启动——install.sh 自动部署 relaunch 的
     /// `--background` argv、或 loginwindow 的登录项启动事件——窗口已建好但**不 orderFront、
     /// 不 activate**，落一行 log 取证（这是唯一能证明登录项判定在这台机器上生效的地方）；
-    /// 之后 Dock 点击（ReopenPolicy 见看板不在 → show）/ ⌃⌥Space / 通知点击 / 菜单深链照旧前置。
+    /// 之后 Dock 点击（ReopenPolicy 见主窗口不在 → show）/ 通知点击 / 菜单深链照旧前置。
     /// 其余启动（Dock / Finder / 用户手敲 `open`）与从前一样直接前置。**必须在
     /// applicationDidFinishLaunching 里调**：`LaunchAtLogin.launchedAsLoginItem()` 只在此刻读得到启动事件。
     private func presentOnLaunch() {
@@ -323,14 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             showWindow()
         case .background(let reason):
             server.logLine("board-shell: background launch (\(reason)) — window built but not shown; "
-                + "Dock click / ⌃⌥Space / notification click bring it up")
+                + "Dock click / notification click bring it up")
         }
     }
 
     /// D38 的另一半：两个失败弹窗（showStartFailure / showConfigFailure）的时机。NSAlert 面板住在
     /// modal-panel 层、盖在所有 app 的窗口之上——登录项启动时 server 冷启动超过 10 s，它就会成为
-    /// owner 登录后看到的第一件东西。后台启动且看板窗口还没露面 → 不 runModal：alert 全文先落
-    /// board-shell.log，压到下一次 showWindow()（Dock 点击 / ⌃⌥Space / 通知点击）再弹；隐藏窗口里的
+    /// owner 登录后看到的第一件东西。后台启动且主窗口还没露面 → 不 runModal：alert 全文先落
+    /// board-shell.log，压到下一次 showWindow()（Dock 点击 / 通知点击）再弹；隐藏窗口里的
     /// 失败 splash 照常渲染，窗口一露面就带着排障线索。前台启动或窗口已在屏上 → 照旧立刻 runModal。
     private func presentFailureAlert(_ alert: NSAlert) {
         switch LaunchPolicy.failureAlertTiming(presentation: launchPresentation,
@@ -349,13 +333,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读、
-    /// 全局快速捕获快捷键（⌃⌥Space → 与 显示 → 聚焦捕获框 ⌘L 同一条路 focusCaptureField）。
+    /// §68.13 其余原生残留：通知中继（§28 唯一 native 通道，点击 = 前置窗口）、TCC 探针初读。
     private func startNativeResidue() {
         NotifyRelayDelegate.install()
         PermissionsProbe.shared.refresh()
-        QuickCaptureHotkey.shared.onFire = { [weak self] in self?.focusCaptureField(nil) }
-        QuickCaptureHotkey.shared.register()
     }
 
     /// §54 生命周期：先探活——有人在班就直接 attach；没有则看 launchd 有没有
@@ -384,40 +365,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// 引擎落户壳后的启动序列（逐字对应 mac AppDelegate 的同名调用；P0-11：
-    /// 无 recordingMode = 尚未 consent = off，autostart 自然不动）。
+    /// 引擎落户壳后的启动序列（P0-11：无 recordingMode = 尚未 consent = off，autostart 自然不动）。
     private func startEngines() {
-        LiveCaptionsController.shared.restoreOnLaunch()
-        // 起跑即心跳一次：不然头 5 s 里双击卡片会被 server 判「壳没在跑」（503）
-        ShellHeartbeat.beat()
-        let relay = Timer(timeInterval: TerminalRelay.tickInterval, repeats: true) { _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    _ = TerminalRelay.drain()   // §68.7：消费 state/terminal_queue → Apple Events 开终端
-                }
-            }
-        }
-        RunLoop.main.add(relay, forMode: .common)
-        terminalTick = relay
-        // §61.8 引擎归属：这个壳进程刚出生，`RecordingController.engineProcess` 必然是 nil——
-        // 此刻还活着的 screenpipe 按定义不是我们的（上一个壳崩了 / 被 SIGKILL / install.sh 换过壳），
-        // 先在后台把它回收掉（pgrep / pkill 阻塞，绝不占主线程），**回收完**才放行录制那一半：
-        // autostart 的 pgrep 若先看见孤儿就会静默认领它（issue #318），5 s tick 若先装上，回收的
-        // 那一下 pkill 会掉进 §61.7 的反抖窗、被读成「新引擎没起来」→ 假回滚 + 系统通知。
+        // §61.8 引擎归属：先在后台判一次「此刻还活着的 screenpipe 归谁」（pgrep 阻塞，绝不占主线程）——
+        // argv 带 recipe 标记的 = adopt（记 pid、绝不 kill：升级 relaunch / 壳崩溃之后的录制不断档）；
+        // 不带的 = 只记一行日志、不接管也不 kill。判完才放行录制那一半：autostart 的 pgrep 看见活着的
+        // 引擎就不再 spawn 第二台；5 s tick 装在其后。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            EngineOwnership.reclaimAtLaunch()
+            EngineOwnership.adoptAtLaunch()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self = self else { return }
-                    self.startRecordingAfterReclaim()
+                    self.startRecordingAfterAdopt()
                 }
             }
         }
     }
 
-    /// §61.8 回收完成后的下半段启动序列（顺序是本条的全部要点：回收 → 日程执法 →
+    /// §61.8 归属判定完成后的下半段启动序列（顺序是本条的全部要点：adopt 判定 → 日程执法 →
     /// autostart → 装 5 s tick）。
-    private func startRecordingAfterReclaim() {
+    private func startRecordingAfterAdopt() {
         // §61.7 录制日程：窗外启动 = 引擎根本不起（autostart 跳过，`paused` 立刻为真，页面读到
         // 「按日程暂停」）；日程关着 / 窗内 = 原样 autostart。醒来那一拍另有观察者。
         let schedule = RecordingSchedule.active
@@ -437,7 +404,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     RecordingController.shared.refreshEngineState()
                     RecordingSchedule.active.enforce(reason: "tick")   // §61.7：边界 / 复活的引擎在此拍执法
                     NotifyRelay.drain()   // §28：5 s 节拍消费 state/notify_queue（原生 refresh tick 同款）
-                    ShellHeartbeat.beat() // §68.7：server 据 state/shell.heartbeat 判「终端队列有消费者」
+                    // §61.8：自己派生的引擎记 pidfile（Application Support），引擎没了就删
+                    EngineOwnership.syncPidfile(engineAlive: RecordingController.shared.engineRunning)
                 }
             }
         }
@@ -446,27 +414,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ note: Notification) {
-        // §61.8：先停引擎（只停我们自己 spawn 的那一台，≤1.5 s），再拆 tick——退出 app
-        // 就是停录制。崩溃 / SIGKILL 走不到这里，那条路由下次启动的回收兜底。
+        // §61.8：先停引擎（只停我们自己 spawn 且此刻还活着的那一台，≤1.5 s；升级握手
+        // engineHandoff 在场时一台都不停），再拆 tick——手动退出 app 就是停录制。崩溃 / SIGKILL
+        // 走不到这里：引擎照录，下次启动 adopt 它。
         EngineOwnership.stopAtExit()
         engineTick?.invalidate()
-        terminalTick?.invalidate()
-        ShellHeartbeat.stop()   // 没有消费者了：server 立刻转 503，不等 15 s 过期
-        QuickCaptureHotkey.shared.unregister()
         server.stopIfSpawned()
     }
 
-    /// D3 / R2.2.1：关窗不退出——screenpipe 是本进程的子进程、字幕悬浮窗住在本
-    /// 进程，窗口关了它们还得活着。⌘Q 才是退出。
+    /// D3 / R2.2.1：关窗不退出——screenpipe 是本进程派生的引擎，窗口关了它还得录。
+    /// ⌘Q 才是退出。
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
         return false
     }
 
     /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。刻意**不看**
-    /// `flag`（hasVisibleWindows）：字幕悬浮 NSPanel 在场时它恒为 true，Dock 点击
-    /// 就成了空操作（原生 AppDelegate.swift 同一处的教训）——同一个原因，最小化的
-    /// 看板也得壳自己还原：AppKit 的默认重开只在 flag == false 时 deminiaturize。
-    /// 只看看板窗口自己（ReopenPolicy，判例 shell/tests/PolicyHarness.swift）。
+    /// `flag`（hasVisibleWindows）：任何别的面板在场时它恒为 true，Dock 点击就成了空操作
+    /// （原生 AppDelegate.swift 同一处的教训）——同一个原因，最小化的主窗口也得壳自己还原：
+    /// AppKit 的默认重开只在 flag == false 时 deminiaturize。只看主窗口自己（ReopenPolicy，
+    /// 判例 shell/tests/PolicyHarness.swift）。
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
         switch ReopenPolicy.action(boardVisible: window.isVisible,
@@ -491,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    /// 菜单 / 字幕悬浮窗齿轮 → 看板某一页：前置窗口，然后按 PageOpenPolicy（§54.4 D40 追记）——看板 SPA 已载入
+    /// 菜单 → 页面某一页：前置窗口，然后按 PageOpenPolicy（§54.4 D40 追记）——看板 SPA 已载入
     /// （webView 停在看板 origin 的 `/` 且不在加载中）→ 推 `open_page {page, anchor?}` 让页面自己 pushState 换页，
     /// 文档不重载、store / SSE 都留着；页面没人接（回执 false：React 树没起来 / 老 web 构建没有这个词）或还停在
     /// 内嵌 splash / 失败页 / 正在加载 → 整页加载深链（`?page=…` 是看板 origin 上的 `/`，ExternalLinkPolicy 判
@@ -512,11 +478,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             webView.load(deepLink)
         }
         window.makeFirstResponder(webView)
-    }
-
-    /// 字幕悬浮窗齿轮 / app 菜单「设置…」⌘, → 看板设置页（`?page=settings&anchor=<anchor>`）。
-    private func openSettingsPage(anchor: String) {
-        openBoardPage("settings", anchor: anchor)
     }
 
     // MARK: window / webview
@@ -540,8 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = ShellConfig.displayName
-        // 窗口下限镜像原生 MainWindow（分屏 / 小屏要能缩；看板泳道本来就横向滚动）：
-        // truth = ui/tokens/native-tokens.json layout.window.min_width / min_height
+        // 窗口下限（分屏 / 小屏要能缩）：720 × 480。
         window.contentMinSize = NSSize(width: 720, height: 480)
         window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
@@ -662,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             ? L("已加载", "loaded")
             : L("未加载——先 bash install.sh 渲染并加载它", "not loaded — run bash install.sh first to render and load it")
         alert.informativeText = L("""
-        10 秒内未能连上 http://127.0.0.1:\(ShellConfig.port)/api/board。
+        10 秒内未能连上 http://127.0.0.1:\(ShellConfig.port)/api/health。
 
         • server 由 launchd 托管：\(kickstart)
           （label \(labelState)）
@@ -672,7 +632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         • Server repo：\(ShellConfig.serverRepo ?? "(未配置)")
         • 手动试跑：cd 到 server repo 后执行 ZAI_PORT=\(ShellConfig.port) <config/runtime.json 的 python> -m server
         """, """
-        No answer from http://127.0.0.1:\(ShellConfig.port)/api/board within 10 s.
+        No answer from http://127.0.0.1:\(ShellConfig.port)/api/health within 10 s.
 
         • The server is managed by launchd: \(kickstart)
           (label \(labelState))
@@ -728,7 +688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 整个重建——NSMenu 不观察任何东西，与原生同款。逐项装配在 `MenuSpec.build`（ShellSupport.swift，
     /// MenuHarness 不起 NSApplication 就能检查装好的 NSMenuItem）：壳动作显式 target 到 delegate（不赌
     /// responder chain）；AppKit 标准动作 nil target 走 first-responder 链（webview 里的输入框吃 ⌘C/⌘V/⌘Z）。
-    /// 刻意没有 Find / ⌘1..7：⌘F 与切页不被菜单截胡，落到 WKWebView 再进页面（board 自己绑了）。
+    /// 刻意没有 Find / ⌘1..4：⌘F 与切页不被菜单截胡，落到 WKWebView 再进页面（web NavRail 自己绑了）。
     private func installMainMenu(lang: String) {
         let built = MenuSpec.build(MenuSpec.menus(lang: lang, appName: ShellConfig.displayName),
                                    target: self, selector: selector(for:))
@@ -743,7 +703,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .settings: return #selector(openSettingsPage(_:))
         case .permissions: return #selector(openPermissionsPage(_:))
         case .reload: return #selector(reloadPage(_:))
-        case .focusCapture: return #selector(focusCaptureField(_:))
         }
     }
 
@@ -754,7 +713,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     /// 设置… ⌘, → 设置页**顶部**（原生 openSettingsPage 只是 MainNav.section = .settings）：不带 anchor——
     /// web 设置页目录序是 显示 / 模型 / 通用，`anchor=general` 会把页面滚到第三区、目录与显示区顶出视口。
-    /// 带 anchor 的那条路留给字幕悬浮窗齿轮（`openSettingsPage(anchor:)` → live_captions）。
     @objc private func openSettingsPage(_ sender: Any?) {
         openBoardPage("settings")
     }
@@ -771,18 +729,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             webView.reload()
         } else {
             connectOrSpawn()
-        }
-    }
-
-    /// 显示 → 聚焦捕获框 ⌘L 与 全局 ⌃⌥Space 同一条路（原生 focusCaptureField 的壳版，§68.13）：
-    /// 前置窗口 + 向页面推 `quick_capture`（app.tsx 聚焦提案列 composer，不在看板页先回看板）；
-    /// 还停在 splash 上则先加载看板（页面 mount 后 composer 自然在，命令这次不补发）。
-    @objc private func focusCaptureField(_ sender: Any?) {
-        showWindow()
-        if webView.url?.host == "127.0.0.1" {
-            bridge.pushCommand("quick_capture")
-        } else {
-            loadBoard()
         }
     }
 }

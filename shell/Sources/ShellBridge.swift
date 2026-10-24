@@ -1,23 +1,26 @@
 // ShellBridge.swift — 页面 ⇄ 壳 的唯一通道（WKScriptMessageHandlerWithReply，
-// handler 名 `zaiShell`）。看板 header 的「录制」「实时字幕」两个开关经它驱动
-// 壳内的 RecordingController / LiveCaptionsController；壳在任何状态变化时把
+// handler 名 `zaiShell`）。页面的录制开关、权限页与设置页经它驱动壳内的
+// RecordingController / PermissionsProbe / LaunchAtLogin；壳在任何状态变化时把
 // 同一份快照以 `zai-shell-state` window 事件推回页面。
 //
 // 这是一份 wire contract（CONTRACT §61.1，add-only）：
 //   request  = window.webkit.messageHandlers.zaiShell.postMessage({method, ...args})
 //              → Promise<state>；未知 method / 坏参数 → reject(String)
 //              对话框类方法（chooseFolder）的回执 = 快照 + add-only `dialog: {path: string|null}`
-//              异步类方法（probeCaptionKey / refreshRecording）的回执 = 起跑后的快照（`captions.key_probe.state
-//              = running` / 引擎活性仍是旧值），结果由随后的 `zai-shell-state` 事件带回
+//              异步类方法（refreshRecording）的回执 = 起跑后的快照（引擎活性仍是旧值），
+//              结果由随后的 `zai-shell-state` 事件带回
 //   event    = window.dispatchEvent(new CustomEvent("zai-shell-state", {detail: state}))
 //   state    = ShellBridge.stateSnapshot()（键名 snake_case，前端逐字镜像——防腐 #10）
-// 页面只在 `window.webkit?.messageHandlers?.zaiShell` 存在时渲染这两个开关
-// （普通浏览器会话里没有壳，开关隐藏）。
+// 页面只在 `window.webkit?.messageHandlers?.zaiShell` 存在时渲染壳专属控件
+// （普通浏览器会话里没有壳，控件隐藏）。
+// v2.0.0 退役（art.6 v2.0 条款，§61.1 tombstone，全文见 tag full）：方法 setCaptions /
+// setCaptionPrefs / setBadge / probeCaptionKey，快照块 `captions` 与键 `hotkey`，命令
+// `quick_capture`，以及 §61.4 的 LegacyPrefs 一次性偏好迁移。
 //
 // 桥本身零业务逻辑：所有语义都在被搬进来的引擎文件里（§61.3 逻辑零改动）；这里
 // 只做 参数校验 → 调用 → 快照。唯一的例外是 `setRecording on:true` 前的 TCC 提示
 // （RecordingActions.turnOn——原生两处 setMode「开启」按钮各自带的那一句，桥替页面统一补上）。
-// 管我的法条：CONTRACT §54 / §61（§61.1 wire、§61.4 偏好迁移）。
+// 管我的法条：CONTRACT §54 / §61（§61.1 wire）。
 
 import AppKit
 import Combine
@@ -48,16 +51,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         RecordingController.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
-        LiveCaptionsController.shared.objectWillChange
-            .sink { [weak self] _ in self?.schedulePush() }
-            .store(in: &cancellables)
         LanguageStore.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
         PermissionsProbe.shared.objectWillChange
-            .sink { [weak self] _ in self?.schedulePush() }
-            .store(in: &cancellables)
-        CaptionKeyCheck.shared.objectWillChange
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
         RecordingSchedule.active.objectWillChange
@@ -65,9 +62,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             .store(in: &cancellables)
     }
 
-    /// 壳 → 页面 的命令事件（§61.6）：全局快捷键等原生入口向页面发一个动作。
-    /// 词表（add-only）：`quick_capture`（⌃⌥Space / ⌘L）、`open_page {page, anchor?}`（菜单 关于 / 设置… /
-    /// 权限体检… 与悬浮窗齿轮在看板已载入时让 SPA 自己换页，不重载——D40，PageOpenPolicy）。
+    /// 壳 → 页面 的命令事件（§61.6）：菜单等原生入口向页面发一个动作。
+    /// 词表：`open_page {page, anchor?}`（菜单 关于 / 设置… / 权限体检… 在页面已载入时让 SPA 自己换页，
+    /// 不重载——D40，PageOpenPolicy）。`quick_capture` 在 v2.0.0 退役（§61.1 tombstone）。
     /// `completion(handled)`：页面的处理器接到命令会 preventDefault（web shellBridge.onShellCommand）——false =
     /// 没人接（文档还在加载、React 树没起来、老 web 构建没有这个词），调用方据此退回整页加载等旧路。
     func pushCommand(_ command: String, args: [String: String] = [:], completion: ((Bool) -> Void)? = nil) {
@@ -113,7 +110,6 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     static func stateSnapshot() -> [String: Any] {
         let rec = RecordingController.shared
-        let cap = LiveCaptionsController.shared
         var recording: [String: Any] = [
             "available": true,
             "on": rec.mode != "off",
@@ -141,34 +137,6 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         } else {
             recording["diagnosis"] = rec.diagnosis?.failureId ?? NSNull()
         }
-        let captions: [String: Any] = [
-            "available": true,
-            "on": cap.enabled,
-            "engine": cap.engineChoice,
-            "paused": cap.paused,
-            "engine_dead": cap.engineDead,
-            "status_text": cap.statusText,
-            "status_is_error": cap.statusIsError,
-            // §68.2 字幕偏好八键（web 设置页「实时字幕」镜像；写侧 = setCaptionPrefs）
-            "source": cap.source,
-            "translate": cap.translateEnabled,
-            "translate_direction": cap.translateDirection,
-            "apple_locale": cap.appleLocale,
-            "ark_model": cap.arkModel,
-            "font_size": cap.fontSize,
-            "opacity": cap.opacity,
-            // §68.2 追记 add-only：最近一次 BYO key「检测」（probeCaptionKey）；null = 从未检测
-            "key_probe": CaptionKeyCheck.shared.snapshotValue(),
-            // §61.1 追记 add-only：原生 SettingsLiveCaptions 的两句 statusRow + 引擎脚注的判据
-            //   translation_note  翻译走不通的原因句 / Ark 途中报错（无话可说 = ""，翻译关着也是 ""）；
-            //                     页面只在非空时渲染它，「在不在翻」只看 translation_active（原生同此）
-            //   source_note       音源部分不可用的降级句（"缺屏幕录制权限，只在听麦克风" 等；悬浮窗也显示）
-            //   apple_engine_available  appleCaptionEngineAvailable()（macOS 26+ 才有本地引擎；脚注选句）
-            "translation_note": cap.translationNote,
-            "translation_active": cap.translationActive,
-            "source_note": cap.sourceNote,
-            "apple_engine_available": appleCaptionEngineAvailable(),
-        ]
         let perm = PermissionsProbe.shared
         let permissions: [String: Any] = [
             "screen": perm.screen,
@@ -182,13 +150,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
         ]
         return [
             "recording": recording,
-            "captions": captions,
             "permissions": permissions,
             "launch_at_login": LaunchAtLogin.isEnabled,
             // §28 追记 add-only（D39）：向导终章「登录时自动启动」行能不能提供——壳是 /Applications（或
             // ~/Applications）里的正式安装 ∧ 有 bundle id；开发版 / bare binary 为 false，页面把行禁用并说明原因
             "launch_at_login_available": LaunchAtLogin.isAvailable,
-            "hotkey": QuickCaptureHotkey.label,
             "language": LanguageStore.shared.lang,
         ]
     }
@@ -204,12 +170,6 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     static let recordingModes = ["screen", "screen_audio"]
     static let languages = ["zh", "en"]
-    static let captionEngines = ["auto", "doubao", "apple"]
-    static let captionSources = ["both", "mic", "system"]
-    static let captionDirections = ["auto", "zh2en", "en2zh"]
-    static let captionLocales = ["zh", "en"]
-    static let fontSizeRange = 14.0...40.0
-    static let opacityRange = 0.2...1.0
 
     /// Pure request dispatcher (no WebKit types) so a swiftc harness can pin
     /// the vocabulary: returns the snapshot, or throws a `BridgeError` whose
@@ -251,11 +211,6 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             RecordingController.shared.restartEngine()
         case "openScreenRecordingSettings":
             RecordingController.openScreenRecordingSettings()
-        case "setCaptions":
-            guard let on = dict["on"] as? Bool else {
-                throw BridgeError.invalidArgs("setCaptions needs on: bool")
-            }
-            LiveCaptionsController.shared.setEnabled(on)
         case "setLanguage":
             guard let lang = dict["lang"] as? String, Self.languages.contains(lang) else {
                 throw BridgeError.invalidArgs("lang must be zh|en")
@@ -278,25 +233,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
                 throw BridgeError.invalidArgs("setLaunchAtLogin needs on: bool")
             }
             if let why = LaunchAtLogin.set(on) { throw BridgeError.invalidArgs("launch at login: \(why)") }
-        case "setCaptionPrefs":
-            try Self.applyCaptionPrefs(dict)
         case "setRecordingSchedule":
             // §61.7 录制日程：全部可选键、整份先校验再落盘（任一坏值整个请求拒绝、零写入）
             try Self.applyRecordingSchedule(dict)
-        case "setBadge":
-            guard let count = dict["count"] as? Int, count >= 0 else {
-                throw BridgeError.invalidArgs("setBadge needs count: non-negative int")
-            }
-            DockBadge.set(count)
-        case "probeCaptionKey":
-            // §68.2 追记：火山 key「检测」——name 必填且在词表内；value 可选但类型严格（非空 = 探这个值、不落盘）
-            guard let name = dict["name"] as? String else {
-                throw BridgeError.invalidArgs("probeCaptionKey needs name: string")
-            }
-            if let raw = dict["value"], !(raw is String) {
-                throw BridgeError.invalidArgs("probeCaptionKey value must be a string")
-            }
-            try CaptionKeyCheck.shared.start(name: name, value: dict["value"] as? String)
         case "chooseFolder":
             // §68.1 目录字段「选择…」：NSOpenPanel 只选目录、可新建；current / prompt 都可选但类型严格
             if let raw = dict["current"], !(raw is String) {
@@ -354,53 +293,6 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             throw BridgeError.invalidArgs("start and end must differ")
         }
         RecordingSchedule.active.apply(spec)
-    }
-
-    /// §68.2 字幕偏好：全部可选键；每键先校验再写（任一坏值整个请求拒绝、零写入）。
-    static func applyCaptionPrefs(_ dict: [String: Any]) throws {
-        let cap = LiveCaptionsController.shared
-        var writes: [() -> Void] = []
-        func pick(_ key: String, _ allowed: [String], _ write: @escaping (String) -> Void) throws {
-            guard let raw = dict[key] else { return }
-            guard let v = raw as? String, allowed.contains(v) else {
-                throw BridgeError.invalidArgs("\(key) must be one of \(allowed.joined(separator: "|"))")
-            }
-            writes.append { write(v) }
-        }
-        try pick("engine", captionEngines) { cap.engineChoice = $0 }
-        try pick("source", captionSources) { cap.source = $0 }
-        try pick("translate_direction", captionDirections) { cap.translateDirection = $0 }
-        try pick("apple_locale", captionLocales) { cap.appleLocale = $0 }
-        if let raw = dict["translate"] {
-            guard let v = raw as? Bool else { throw BridgeError.invalidArgs("translate must be bool") }
-            writes.append { cap.translateEnabled = v }
-        }
-        if let raw = dict["ark_model"] {
-            guard let v = (raw as? String)?.trimmingCharacters(in: .whitespaces), !v.isEmpty, v.count <= 64 else {
-                throw BridgeError.invalidArgs("ark_model must be a non-empty string (<=64)")
-            }
-            writes.append { cap.arkModel = v }
-        }
-        if let raw = dict["font_size"] {
-            guard let v = Self.number(raw), fontSizeRange.contains(v) else {
-                throw BridgeError.invalidArgs("font_size must be 14...40")
-            }
-            writes.append { cap.fontSize = v }
-        }
-        if let raw = dict["opacity"] {
-            guard let v = Self.number(raw), opacityRange.contains(v) else {
-                throw BridgeError.invalidArgs("opacity must be 0.2...1")
-            }
-            writes.append { cap.opacity = v }
-        }
-        guard !writes.isEmpty else { throw BridgeError.invalidArgs("setCaptionPrefs needs at least one pref") }
-        writes.forEach { $0() }
-    }
-
-    private static func number(_ raw: Any) -> Double? {
-        if let d = raw as? Double { return d }
-        if let i = raw as? Int { return Double(i) }
-        return nil
     }
 
     // WKScriptMessageHandlerWithReply（WebKit 在主线程投递；SDK 已标 @MainActor）
@@ -465,63 +357,5 @@ enum RecordingActions {
     static func turnOn(_ mode: String) {
         if !hasScreenPermission() { requestScreenPermission() }
         setMode(mode)
-    }
-}
-
-// MARK: - one-time preference seed from the retiring native app
-//
-// UserDefaults are per bundle id: the shell (com.zelin.ai-board) starts with
-// no `recordingMode`, which P0-11 rightly treats as "no consent yet → off".
-// An owner who already chose a mode / captions prefs in the native app
-// (com.zelin.ai-engineer) has given that consent — carry the choices over
-// ONCE so the first shell launch keeps recording the way the old app did.
-// `screenTCCWasGranted` is deliberately NOT copied: the new bundle id needs
-// its own Screen Recording grant (TROUBLESHOOTING「换壳后的 TCC 重授权」), and
-// the shell should learn its own grant history rather than inherit a stale one.
-
-enum LegacyPrefs {
-    static let nativeSuite = "com.zelin.ai-engineer"
-    static let marker = "legacyPrefsSeeded"
-    static let keys = [
-        "recordingMode", "lastActiveRecordingMode", "liveCaptionsEnabled",
-        "captionsEngine", "captionsSource", "captionsTranslate",
-        "captionsTranslateDirection", "captionsAppleLocale", "captionsArkModel",
-        "captionsFontSize", "captionsOpacity",
-    ]
-    /// The live-captions overlay's dragged position/size — NSWindow's autosave
-    /// record for `setFrameAutosaveName("liveCaptionsPanel")` (CaptionOverlay.swift,
-    /// same name in both apps). Added after `keys` shipped, so it rides its OWN
-    /// one-shot marker: an install that already ran the first seed still
-    /// receives the frame once instead of relearning it from a drag (§61.4 追记).
-    static let overlayFrameKey = "NSWindow Frame liveCaptionsPanel"
-    static let overlayFrameMarker = "legacyOverlayFrameSeeded"
-
-    /// Copies `keys` that are set in the native domain and unset here; runs
-    /// once per shell install (marker). Never overwrites a shell-side value.
-    /// The overlay frame follows the same rule under its own marker.
-    static func seedFromNativeAppIfNeeded(
-        target: UserDefaults = .standard,
-        source: UserDefaults? = UserDefaults(suiteName: nativeSuite)
-    ) -> [String] {
-        guard let source else { return [] }
-        var copied: [String] = []
-        if !target.bool(forKey: marker) {
-            for key in keys where target.object(forKey: key) == nil {
-                if let value = source.object(forKey: key) {
-                    target.set(value, forKey: key)
-                    copied.append(key)
-                }
-            }
-            target.set(true, forKey: marker)
-        }
-        if !target.bool(forKey: overlayFrameMarker) {
-            if target.object(forKey: overlayFrameKey) == nil,
-               let frame = source.object(forKey: overlayFrameKey) {
-                target.set(frame, forKey: overlayFrameKey)
-                copied.append(overlayFrameKey)
-            }
-            target.set(true, forKey: overlayFrameMarker)
-        }
-        return copied
     }
 }
