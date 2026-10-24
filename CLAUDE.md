@@ -54,6 +54,11 @@ cron 的 ingest 链（`ingest/`：export → cleanup → process）把录到的�
 - **录到的东西只变成笔记和纪要**（宪法第 4 条）：永不成任务、永不自动外发；唯一出机的是模型调用。
 - **不碰 owner 的 `~/.claude`**（宪法第 13 条，§78）：headless claude 只经 `act/llm.py` /
   `ingest/claude-env.sh` 的隔离常量运行；`tests/test_isolation_footprint.py` 的 grep 门会拦。
+- **常驻足迹是封闭清单**（§78）：一个 LaunchAgent（`com.zelin.aiassistant.server`）、一条 cron 行（ingest 链）、
+  opt-in 登录项、录制引擎。只有 `install.sh`（装、1.x 迁移）、`uninstall.sh`（逐项删）与 `scripts/upgrade.sh`
+  （§79：ff-only 到带 tag 的 origin/main + `install.sh --from-upgrade`）碰它们；三者都**永不**向录制引擎发信号
+  （`uninstall.sh --stop-engine` 除外）。开发时别在 owner 的机器上跑 `install.sh`：它会重载 server agent、重写
+  crontab；要验证就用临时 `$HOME` + `--non-interactive --no-launchd`，判例用假 `launchctl` / `crontab`。
 
 ## 语言与风格
 
@@ -72,4 +77,4 @@ cron 的 ingest 链（`ingest/`：export → cleanup → process）把录到的�
 7. **测试位置**：一个 behavior 一个文件，文件名说行为不说日期；docstring 引 §；unit/behavior 层禁真 subprocess 和网络；真 IO 只许住 integration/ 且有单文件时间预算。
 8. **目录同步只许 `rsync --delete` 或 git 驱动**；working tree 领先 VCS 不得超过一个 release——每次版本 bump 前先 commit。
 9. **命名单源**：新组件先定 canonical slug（`radar_gmail` 式），模块名/DB row key/service label/log 名/health key 全部从 slug 逐字派生；同一 basename 禁止出现在两个目录层级；子系统按 object 命名（`cloud_relay`），不按动词。
-10. **前端镜像纪律**：client model 字段逐字镜像 wire key，禁翻译层；lane 组成是 server 数据不是 client 代码；文案进 server-owned catalog，禁第二套双语机制。
+10. **前端镜像纪律** —（retired v2.0.0，lane 组成与卡片 catalog 随看板退役，全文见 tag `full`）。存活的一句照旧：client model 字段逐字镜像 wire key，文案进 server-owned catalog。

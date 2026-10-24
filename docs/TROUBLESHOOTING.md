@@ -1,321 +1,121 @@
 # TROUBLESHOOTING — 按症状排障
 
-已知故障模式的单一落点,按**症状 → 原因 → 修复**组织。更多背景和 war story 见 `HANDOFF.md` §3。
+lite 2.0 已知故障模式的单一落点，按**症状 → 原因 → 修复**组织。第一步永远是 `bash install.sh --check`
+（= `python3 -m act.doctor`，退出码 = FAIL 行数，每行带一句修法）。背景见 `HANDOFF.md` §2；1.x（卡片、雷达、
+派发、自动部署、菜单栏 app）的排障条目随 Act 管线退役，全文在 git tag `full`。
 
-## 重装/更新 app 后录屏坏了:开关看着开着,引擎启动即退
+## 重装 / 更新 app 后录屏坏了：开关看着开着，引擎启动即退
 
-**症状**:`state/engine.log` 里 `permission monitor screen=true` 却 `no monitors available`;系统设置里"屏幕录制"开关看着还开着。
+**症状**：`state/engine.log` 里 `permission monitor screen=true` 却 `no monitors available`；系统设置里「屏幕录制」开关看着还开着。
 
-**原因**:`mac/build.sh` 用 ad-hoc 签名(无开发者证书),TCC 把授权绑定到签名指纹上——每次重新构建安装后,"屏幕录制"授权会**静默失效**(ScreenCaptureKit 枚举 0 台显示器)。
+**原因**：TCC 把授权绑在签名身份上。壳用 ad-hoc 签名构建时，每次重新构建都换身份，「屏幕录制」授权**静默失效**。
 
-**修复**:
+**修复**：`bash shell/scripts/make-signing-cert.sh` 生成一张稳定的自签证书并导入 login keychain，之后 `shell/build.sh`
+认出它就用它签名，更新不再掉授权。已经掉了的这一次：`tccutil reset ScreenCapture com.zelin.ai-board`，重开 app，在
+系统设置 → 隐私与安全性 → 屏幕录制 里打开 **Zelin's AI Assistant**。从 ad-hoc 换到稳定身份的那一次会再弹一轮授权（屏幕
+录制、麦克风、文件与文件夹），之后不再弹。
 
-```bash
-tccutil reset ScreenCapture com.zelin.ai-engineer
-```
+**录制还在、只是由 Ghostty 之类的终端起的**：引擎持有的是起它那个进程的授权。壳启动时会接管带 recipe 标记的现成引擎
+（关于页显示 recording (adopted)，§61.8），但在权限页显示 com.zelin.ai-board 已授权之前，不要点「重启录制」。
 
-重启 app 让它重新请求授权,然后在 系统设置 → 隐私与安全性 → 屏幕录制 重新打开开关。日常使用不受影响;只在 app 更新后需要重做一次。
+## ingest 不出笔记 / 纪要不出：headless claude 在 cron 下退出
 
-**永久修复(维护者一次性)**:根因是 ad-hoc 签名——换成一个**稳定的 self-signed code-signing 证书**(免费、不需要 Apple Developer 账号)后,签名指纹跨版本不变,TCC 授权就**不再**因为更新而失效。做法:本地跑一次 `bash shell/scripts/make-signing-cert.sh` 生成稳定证书并导入 login keychain(`shell/build.sh` 会自动认出名为 `Zelin AI Engineer Dev` 的证书来签名);再把脚本打印出来的两个值加成 GitHub secret(`MACOS_SIGN_CERT_P12` 和 `MACOS_SIGN_CERT_PASSWORD`),CI 的 release 构建(`.github/workflows/release.yml`)就会用同一个身份签名。**一次性过渡**:第一个稳定签名的版本因为身份从 ad-hoc 变成 self-signed,会**再弹一次**屏幕录制授权(照上面的 `tccutil reset` + 重新打开开关做一遍),之后所有更新都不再弹。注意 self-signed **不是** notarized,Gatekeeper 首次打开仍需右键→打开(见 `docs/INSTALL.md`)。
+**症状**：`state/ingest.cron.log` 或 `/tmp/screenpipe-auto.log` 里有 `❌ no Anthropic API key`，`process-screenpipe.sh` 以 1 退出；
+或 `state/recap.log` 里 claude 报认证错误。终端里手跑 `claude` 一切正常。
 
-## 换壳后的 TCC 重授权:第一次在看板 header 开「录制」/「实时字幕」会弹系统提示(v0.48.19 起)
+**原因**：每次 headless `claude -p` 都带 `--bare` 在自己的 `CLAUDE_CONFIG_DIR` 下运行（CONTRACT §78），**只认
+`ANTHROPIC_API_KEY`**，永不读你的 Claude Code 登录或钥匙串。你终端里能用，是因为终端里的 claude 用的是你自己的登录。
 
-**症状**:从原生菜单栏 app 换到壳 app "Zelin's AI Assistant"(shell/,D3,CONTRACT §61;2026-09-02 前叫 "Zelin AI Board" / "Zelin's AI Assistant (Board)")后,第一次在看板右上角点「录制 → 仅屏幕」弹出 macOS「屏幕录制」授权提示;第一次开「实时字幕」(音源含麦克风)弹「麦克风」提示;在授权之前 header 显示 `录制:未在录制`,菜单首行写「缺「屏幕录制」权限」。
+**修复**：在 app 的 设置 → 凭证 粘贴 key（写入 `config/secrets/anthropic-api-key.txt`，0600），或
+`bash install.sh` 时让它从 `~/.config/anthropic-key.txt` / `$ANTHROPIC_API_KEY` 复制。doctor 的 `anthropic key` 行变 OK 即可；
+下一轮 cron（:00 / :30）就会出笔记。
 
-**原因**:这是预期行为,不是故障。TCC 授权按 **bundle id + 签名**归属:原生 app 是 `com.zelin.ai-engineer`,壳是 `com.zelin.ai-board`(审计 Q1 决定保留新身份),两者在系统设置里是两条独立的记录;录制引擎(screenpipe)现在是**壳的直接子进程**、字幕的麦克风/系统声音采集在**壳进程内**,所以两项授权都要给壳重新点一次。壳启动时会一次性把原生 app 里的录制模式/字幕偏好接过来(§61.4),但**刻意不**继承「曾授权过」标记——新身份要自己拿授权。
+## server 起不来：`ModuleNotFoundError: No module named 'act'`（或 `'yaml'`），KeepAlive 反复重启
 
-**修复**:
+**症状**：`launchctl list | grep zelin` 里 `com.zelin.aiassistant.server` 状态非 0，`~/Library/Logs/zelin-ai-assistant/server.launchd.log`
+只有一行 `No module named 'act'` 或 `No module named 'yaml'`；同一条命令在终端里手跑正常。app 连不上 server。
 
-1. 屏幕录制:点菜单里的「打开系统设置 → 屏幕录制」(或 系统设置 → 隐私与安全性 → 屏幕录制),给 **Zelin's AI Assistant** 打开开关(列表里同名的还有旧菜单栏 app——它的条目在旧 app 重新构建后会显示为 "Zelin's AI Assistant (old)";分不清时看哪一条是新出现的,或先 `tccutil reset ScreenCapture com.zelin.ai-board` 再开一次开关,重新出现的那条就是壳)。壳每 5 s 探一次授权,授权一生效引擎自动重启(与原生 app 同一自愈路径,通知「录制已就绪」)。
-2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin's AI Assistant**(同上,认新出现的那条),再把「实时字幕」关一次开一次。
-3. 壳自 2026-09-12 起用**稳定的自签证书**签名(`Zelin AI Engineer Dev`,与 1.x 旧 app 的构建用的是同一张;`shell/build.sh` 在 keychain 里认出它就用,认不出才回落 ad-hoc 并在构建日志里说明),所以重新 `bash shell/build.sh` 装机**不再**掉屏幕录制授权。**一次性过渡**:从 ad-hoc 换到稳定身份那一次,屏幕录制 / 麦克风 / 自动化 / 文件与文件夹(~/Documents 笔记库)会各再弹一次——按上面 1、2 两步做一遍(需要的话先 `tccutil reset ScreenCapture com.zelin.ai-board`);笔记库那条走看板的 设置 → **权限体检**(`?page=permissions`)「笔记库访问」一行重新授权一次(这台机器上 `ingest/vault-sync.sh` 若还能找到旧 app "(old)",笔记同步仍用旧 app 的授权,这一条什么都不用做——见下面第 5 条)。之后所有更新都不再弹。证书没装的机器(`security find-identity -p codesigning` 里看不到这个名字)照旧是 ad-hoc:跑一次 `bash shell/scripts/make-signing-cert.sh` 生成并导入即可。
-4. 两个 app 同时在跑时(旧 app 已改名 "Zelin's AI Assistant (old)" 备用,§54),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
-5. **通知与 Documents(P4 起,CONTRACT §68.13)**:系统通知改由壳投递(§28 中继消费者搬进壳)——第一次会弹「通知」授权提示;拒绝了就到 系统设置 → 通知 → **Zelin's AI Assistant** 打开。壳 bundle 现在也带一份 vault-sync-helper(`Zelin's AI Assistant.app/Contents/MacOS/vault-sync-helper`);`ingest/vault-sync.sh` 仍**先找旧 app "(old)"**(它已持有 Documents 授权),旧 app 不在(新机器)才用壳的那份——那时 ~/Documents 的授权按壳的身份记一次:cron 的下一轮 ingest 会照旧回落 direct 模式直到授权到位——在看板 **设置 → 权限体检**(`?page=permissions`)按步骤给壳授权,或在 Finder 里把 `Zelin's AI Assistant.app` 拖进 系统设置 → 隐私与安全性 → 文件与文件夹 / 完全磁盘访问。这一页同时列出后台 python / claude / node 需要的「完全磁盘访问」真实路径(可复制),D20 家族的授权都在那里一次做完。
+**先看是哪个模块**——两条长得一样，修法相反：
 
-**旧 app 的名字与位置(§54 名字互换,2026-09-02)**:`bash install.sh`(含 auto-deploy)第一次装新壳时,把原来的 `/Applications/Zelin's AI Assistant.app`(bundle id `com.zelin.ai-engineer`)**同目录改名**为 `/Applications/Zelin's AI Assistant (old).app`——只改文件夹名,bundle 内容一个字节不动(它在签名封条之内,改了 TCC 授权就名存实亡),所以旧 app 的授权与偏好全部原地保留。**它在系统设置里显示的名字要等下一次重新构建**(`mac/build.sh --install`、.pkg 或 Sparkle 更新——名字盖在 `mac/Info.plist` 里)才变成 "(old)";在那之前隐私列表里会有两条 "Zelin's AI Assistant"。用 .pkg 装过的旧 bundle 是 root 属主:install.sh 搬得动(rename 只要 /Applications 的写权限)但删不了、也不该 `sudo plutil` 去改名(同样破封条);想立刻看到 "(old)" 名字:先 `sudo rm -rf "/Applications/Zelin's AI Assistant (old).app"`(root 属主,用户级脚本删不掉;授权与偏好都不在 bundle 里,删了不丢),再在终端跑 `bash install.sh`——交互模式的第 4 步用同一 bundle id + 同一签名证书把旧 app 重建到 `(old).app`,名字随之到位、授权照旧。
+- `No module named 'yaml'`：pin 的解释器（`config/runtime.json`）没有 PyYAML。
+- `No module named 'act'`：解释器**看不见 repo**。要么 plist 里烧进了 symlink 形状的路径（`~/Projects -> /Volumes/…`），要么
+  这个解释器没有读 repo 的权限——macOS 按二进制授文件访问，launchd 起的任务不继承你终端的授权（CONTRACT §55）。
 
-## 双击卡片在终端接管：第一次弹「"Zelin's AI Assistant" 想要控制 "Ghostty"」；纯浏览器里双击只复制不开终端；单击卡片什么也不做（2026-09-05 起，issue #216 / D36）
+**修复**：在 repo 目录里重跑 `bash install.sh`。它用 `pwd -P` 渲染物理路径，只 pin 能 `import yaml`、并且**被 launchd
+起起来时真能 import act** 的解释器（起一个一次性 launchd 任务实测）；repo 在 `$HOME` 之外时优先试 `/usr/bin/python3`。
+所有候选都过不了时它会照实说，这时给那个解释器授「完全磁盘访问」：系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` →
+`Command`-`Shift`-`G` 粘贴解释器路径。确认：doctor 的 `launchd paths` / `launchd python` / `board server` 行。
 
-**症状 A**：在看板里双击一张执行中 / 待验收的卡，macOS 弹出「"Zelin's AI Assistant" 想要控制 "Ghostty"（或 Terminal / iTerm2）」的自动化授权提示。
+## Claude Code 更新后 headless claude 读不到 vault / repo
 
-**原因**：预期行为。开终端的动作现在由壳经 Apple Events 完成（CONTRACT §68.7 2026-09-05 追记）；授权按（壳, 终端）这一对记在 系统设置 → 隐私与安全性 → 自动化 里。点「允许」即可；拒绝了就到那里给 **Zelin's AI Assistant** 下面的对应终端打开开关。**多久弹一次取决于壳的签名**：壳自 2026-09-12 起用稳定的自签证书签名（`shell/build.sh`，见上文「换壳后的 TCC 重授权」第 3 条），签名指纹跨版本不变——所以这个提示**点一次「允许」就是终身一次**，`install.sh` 再怎么重建壳也不会重弹。只有证书没装、壳回落 ad-hoc 的机器才会每个新版本再弹一次（TCC 记的是每次构建都变的 cdhash）。之前每次双击都弹的 "Allow Ghostty to execute …?" 是 server 写时间戳 `.command` 文件的老通道，已退役。
+**症状**：Claude Code 自动更新后，cron 里的 ingest 读不到外置卷或 ~/Documents 上的东西；doctor `launchd claude` 行 FAIL
+`claude_blind`。
 
-**症状 B**：双击后卡上出现「无法直接打开终端 · 已复制指令，粘贴到终端即可接管」，终端没有打开。
+**原因**：macOS 对命令行程序的完全磁盘访问**按路径**记账，而 `~/.local/bin/claude` 每次更新都指向新的
+`~/.local/share/claude/versions/<版本>`。
 
-**原因**：server 判定没有人能开终端——壳 "Zelin's AI Assistant" 没在跑（`state/shell.heartbeat` 缺席或超过 15 s 没更新，`POST /api/terminal` 返回 503 `SHELL_UNAVAILABLE`），或看板跑在非 macOS 上（501）。这不是故障：指令已经在剪贴板里，粘贴到任意终端即可。要一键打开就把壳启动起来（Dock 里的 Zelin's AI Assistant；登录时启动开关在 关于 区）。
+**修复**：install.sh 维护一份稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`（只接受带有效 Apple
+签名的二进制，版本变了原地替换），recap 与 ingest 都起这一份（`config.resolve_claude_bin`）。给**这条路径**授一次完全磁盘
+访问，之后 Claude Code 怎么更新都不用重做。副本落后一版时 doctor `stable claude` 行 WARN，重跑 `bash install.sh` 刷新。
 
-**症状 B2**：单击卡片没有任何反应；卡面上找不到「在终端接管」按钮，也找不到「单击复制指令」那一行。
+## cron 读不到 ~/Documents：ingest 扫到空 vault
 
-**原因**：这就是设计（D36，owner 2026-09-06）：单击卡片什么功能也没有，双击整卡才是接管；要手动拿到命令，点「展开详情 ▸」打开侧栏，「会话」区的「复制接管指令」按钮把命令放进剪贴板。如果你看到的卡面**仍有**「在终端接管」按钮或「单击复制指令」行，说明装的还是旧版本——看 关于 区的版本号是否等于 main 上最新的 tag（`python3 scripts/version_stamp.py`），旧就 `bash install.sh`。
+**症状**：vault 里有新文件，ingest 却说 inbox 为空；doctor `cron disk access` 行红。
 
-**症状 C**：双击后卡上红字「打开终端失败 · …」。
+**原因**：cron 起的进程同样按二进制受 TCC 管。
 
-**原因**：**只有入队失败**会走到这句——`state/terminal_queue/` 写不进去（磁盘 / 权限），原句会写明。壳那边的失败到不了这条红线（见症状 C2）。
+**修复**：给 `/usr/sbin/cron` 授完全磁盘访问（`docs/INSTALL.md` 第 3 项）。cron 链每轮把真实读取结果写进
+`state/cron_probe.json`（CONTRACT §25），权限页的「定时任务磁盘权限」行与 doctor 同源。
 
-**症状 C2**：双击后卡上是绿字「已在终端打开」，但终端窗口没有出现。
+## 有一台 1.x 留下的后台项：`isolation footprint` 行 WARN，或 `launchctl list` 里有已经删掉的 agent
 
-**原因**：server 把请求排进队列就回 200（页面据此说「已在终端打开」），真正开窗口的是壳，而壳的 osascript 失败**不会回流**到 server 或页面——最常见是自动化授权被拒（症状 A：到 系统设置 → 隐私与安全性 → 自动化 给 Zelin's AI Assistant 下面的终端打开开关），其次是 Ghostty 版本太老不支持 `new tab in window 1`（-1708）。看 `Console.app`（或 `log show --last 5m --predicate 'process == "ZelinAIBoard"'`）里的 `TerminalLauncher: osascript failed …` 一行拿到原因。队列里 60 s 没被消费的请求会被两侧自动清掉，不会攒着在你回来时突然蹦出一堆终端窗口。
+**症状**：doctor `isolation footprint` 行 WARN `isolation_footprint_violation`，列出 `com.zelin.aiassistant.actd` /
+`com.zelin.screenpipe-prune` 之类的 LaunchAgent、`act.radar` / `act.digest` 的 cron 行，或 `~/.claude/skills` 里指进本 repo
+的软链。
 
-**症状 D**：终端窗口闪了一下就关了，claude 没起来。
+**原因**：这台机器装过 1.x。lite 的常驻足迹是封闭清单（CONTRACT §78）：一个 server agent、一条 cron 行、opt-in 登录项、
+录制引擎。
 
-**原因**：旧通道用 `exec` 跑复合命令 `cd '<worktree>' && claude --resume <id>`——`exec cd` 让 shell 静默退出，后半句永远跑不到。2026-09-06 起壳把整行原样交给 `/bin/zsh -lc`（不 exec），复合命令能跑；如果你还看到这个现象，说明装的是旧版本（同症状 B2 的检查法）。
+**修复**：`bash install.sh`。它的第 4 步（`migrate_from_1x`）bootout 并删除 1.x 的十个 agent、unlink 指进本 repo 的
+skills 软链、删 `deploy_state.json`，第 7 步把 crontab 里我们的行收成一条 ingest 链（你自己的其它行原样保留）。它还会
+**打印**一条删除 1.x headless transcript 的命令（`~/.claude/projects/-…-zelin-ai-assistant-state*`，几个 GB）——那是你的
+Claude Code 目录，脚本只打印、不执行；想留就先归档。日志文件是取证材料，脚本不删。
 
-## 雷达静默数天没有新卡 / headless claude 在 cron 下直接死
+## 「立即升级」没有升上去
 
-**症状**:数天没有任何新审批卡;`state/radar.cron.log` 里 claude 报 auth 错误或 `command not found`,而手动在终端跑一切正常。
+**症状**：关于页点了「立即升级」，版本没变。`cat state/upgrade_state.json` 看 `status`：
 
-**原因**:cron/launchd 的 daemon session 有两个坑(部分机器如此):① 读不了 Keychain OAuth 凭证;② PATH 里没有 `~/.local/bin`,claude 二进制找不到。
+- `diverged`：`reason` 是 `dirty`（工作树有改动）、`not_on_main` 或 `diverged`（本地 main 有 origin 上没有的 commit）。
+  升级器**从不** reset / stash，`commands` 里是要你手动跑的命令（diverged 时先 `git branch keep/local-<日期> HEAD` 留底，再
+  `git reset --hard <tag> && bash install.sh`）。
+- `refused`（`untagged`）：origin/main 现在不是一个 `v*` release tag，等下一个 release 即可。
+- `failed`：`reason=fetch` = 离线；`reason=install` = `install.sh` 有失败步，`state/install_report.json` 写着哪一步。没有自动回滚。
+- `running` 卡住：`state/upgrade.lock` 目录还在而 `state/upgrade.log` 不再增长 = 上一轮被杀掉了，删掉那个目录再点一次。
 
-**修复**:headless Claude 优先用文件形式的 API key——打开 app 设置窗口粘贴保存(写入 `config/secrets/anthropic-api-key.txt`,见 `docs/CONTRACT.md` §19);cron/launchd 里的 claude 调用一律用绝对路径。两个 key 文件都缺失时会回退到 claude CLI 自带凭证(常开的 Mac mini 上 cron 通常能用,但不可靠)。
+**新的大版本**（关于页写着「需要手动升级」）：大版本永不自动跨，按页面给的命令手动 `git fetch --tags origin &&
+git checkout v<版本> && bash install.sh`（CONTRACT §26 / §79）。
 
-## 后台服务起不来:`ModuleNotFoundError: No module named 'act'`(或 `'yaml'`),KeepAlive 反复重启
+## `server.launchd.log` 里全是 `ConnectionResetError` 的 traceback，或想逐条看轮询请求
 
-**症状**:`launchctl list | grep zelin` 显示 agent 状态非 0(常见 1),`~/Library/Logs/zelin-ai-assistant/actd.launchd.log` 里只有一行 `ModuleNotFoundError: No module named 'act'` 或 `No module named 'yaml'`;同一条命令在终端里手动跑完全正常。看板因此不再更新。
+**原因**：浏览器关 tab / 刷新时 keep-alive 连接被 reset。当前版本对连接类异常静默、行首带本地时间戳，`/api/health`
+之类的轮询按 (path, 状态码) 每 5 分钟最多一行（CONTRACT §54.2）。
 
-**先看日志里到底是哪个模块** —— 这两条长得一样,修法却相反:
+**逐条看轮询**：给 server agent 的 `EnvironmentVariables` 加 `ZAI_LOG_POLLS=1`（改 `~/Library/LaunchAgents/com.zelin.aiassistant.server.plist`，
+再 `launchctl bootout` + `bootstrap`），或前台跑 `ZAI_LOG_POLLS=1 python3 -m server`。重跑 `install.sh` 会用模板覆盖手改的 plist。
+已经涨起来的日志由你处置：`: > ~/Library/Logs/zelin-ai-assistant/server.launchd.log` 就地清空。
 
-- `No module named 'yaml'` → 缺 PyYAML,见下面原因 2。
-- `No module named 'act'` → **不是** PyYAML 的事,是解释器根本**看不见 repo**,见原因 1 和 3。
+## 版本号不对：doctor `version` 行 WARN
 
-**原因**(三个,CONTRACT §55):
+版本的真源是 main 上的 git tag（CONTRACT §56.1），没有任何文件里写着版本。`act.__version__` 按 `act/_version.py`（生成文件）→
+`git describe` → `act/__init__.py` 的回落行解析。
 
-1. **plist 里烧进了 symlink 形状的路径**。repo 实体在外置卷上、而你习惯用一条便利 symlink 进去(例如 `~/Projects -> /Volumes/…`),install.sh 就会把 symlink 路径写进 `PYTHONPATH` / `AIASSISTANT_HOME`。launchd 起的进程经这个路径形状被 TCC 拒绝,于是 import 不到 `act`。
-2. **pin 的解释器没有 PyYAML**。`config/runtime.json` 指到一个 `import yaml` 会失败的 python3(Homebrew 新装的 3.14 最常见),agent 在写下任何日志之前就退出。
-3. **pin 的解释器有 PyYAML、路径也全对,但它没有读 repo 的权限**(路径修好之后才露出来的那一幕)。macOS 的文件访问授权**按二进制单独计算**,而 launchd 起的任务是它自己的 responsible process ——**不继承**你终端或 app 的授权。于是 `/usr/bin/python3` 读得了 `/Volumes/…` 上的 repo,`/opt/homebrew/bin/python3` 读不了,而两个都能 `import yaml`,老版本的单闸门恰好挑中瞎的那个。
+- **`no act/_version.py`**：没跑过 install.sh。修：`bash install.sh --non-interactive`，或只盖章 `python3 scripts/version_stamp.py --write`
+  再 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`。
+- **stamp 与 checkout 不一致**：手动 `git pull` 了但没跑 install.sh。同上。
+- **报 `X.Y.Z+N`**：HEAD 领先最近的 tag N 个 commit——`git fetch --tags --force origin && bash install.sh --non-interactive`。
 
-**怎么区分 1 和 3**(两者症状字面完全相同):跑 `grep -A1 PYTHONPATH ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist`,把里面的路径与 `cd <repo> && pwd -P` 对比 —— **对不上就是原因 1**(路径形状错),**一字不差却仍然崩就是原因 3**(路径对,是解释器没权限)。想直接验原因 3,拿 plist 里那个解释器跑一次:
+## 开发注意
 
-    /opt/homebrew/bin/python3 -c "import os; print(len(os.listdir('<repo 的物理路径>')))"
-
-在终端里跑**必然成功**(终端把自己的授权借给了子进程),所以这条只用来确认解释器本身没坏 —— 真正的判据是 launchd 会话里的行为,`python3 -m act.doctor` 已经替你判好了。
-
-**确认**:`python3 -m act.doctor` —— `launchd paths` 行会点名携带 symlink 路径的 agent(原因 1);`launchd python` 行两种原因都管,文案会告诉你是「cannot `import yaml`」(原因 2)还是「imports yaml … yet … cannot READ the repo」(原因 3)。
-
-**修复**:三种原因都从在 repo 目录里重跑 `bash install.sh` 开始 —— 它用 `pwd -P` 解析物理路径,并且只 pin **两道闸门都过**的解释器:能 `import yaml`,而且**被 launchd 起起来时真能 import 到 `act`**(安装器会起一个一次性 launchd 任务实测,亚秒级,跑完自己清理)。repo 在 `$HOME` 之外时它会优先试 `/usr/bin/python3` —— 那是唯一带着你自己文件授权的系统解释器。一次重渲染全部 agent(app 里的「一键修复」只重渲染 actd,所以命令行这一遍更彻底)。
-
-没有任何候选 python3 带 PyYAML 时 install.sh 直接报 `[ERR ]` 并给出 pip 命令。若所有候选都过不了 launchd 那道闸门(例如机器上只有一个 python),它会照实说,这时再手动给那个解释器二进制授「完全磁盘访问」:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴解释器路径。
-
-## 派发反复失败:`possibly due to low max file descriptors`(实为 claude 读不到任务目录)
-
-**症状**:卡批准后每次派发都失败,错误 chip 写着 `An unknown error occurred, possibly due to low max file descriptors (Unexpected)`;`state/actd.log` 每十几秒一条 `dispatch: R-xxx FAILED`;终端里手跑 `claude --bg` 正常。v0.48.4 起同一张卡连续失败 5 次后会**停止重试**并挪到「需输入」列,通知与卡片都写明原因(CONTRACT §4.1、§25 `claude_blind`)。
-
-**原因**(CONTRACT §55 第三幕):**不是**文件句柄。claude 是 Bun 编译的单文件程序,Bun 把它不认识的 errno 统一渲成这句猜测(真正的句柄耗尽它会写 `ProcessFdQuotaExceeded` / `EMFILE`)。这里的 errno 是 **EPERM**:macOS 按可执行文件路径授「完全磁盘访问」,终端里的 claude 继承终端的授权,launchd 起的 claude 只看它自己那一行——而 `~/.local/share/claude/versions/<版本>` 每次更新都是新路径,从来没被授权过。任务 repo 在外置卷(或 ~/Documents、~/Desktop、~/Downloads)上时,claude 一起来就在 `getcwd` 上被拒。2026-08-31 这台机器把 `~/Projects` 搬到外置卷后当天就撞上;当晚给 plist 加 8192 上限的 hotfix 生效后又失败了 11 次(`Current limit: 8192`),这才是证伪。
-
-**确认**:`python3 -m act.doctor` 的 `launchd claude` 行——它在一个一次性 launchd job 里以默认工作 repo 为 cwd 跑 `claude --version`(终端里跑永远是好的,只有 launchd 会话能复现):FAIL `claude_blind` = 就是本条;WARN 且写着 never exited = cwd 在 ~/Documents 这类会弹提示的目录,job 没有界面所以挂住。旁证:`~/.local/share/claude/versions/<版本>` 出现在「完全磁盘访问」列表里且**未打开**——被拒过一次 macOS 就会把它列出来。
-
-**修复**(两条路,选一):
-
-1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴 **`~/Library/Application Support/ZelinAIAssistant/bin/claude`**——这是 install.sh 维护的 claude **稳定副本**(CONTRACT §55 第五幕),后台任务起的就是它;路径永远不变,所以**授一次就够**,claude 更新后不用重做(见下一节)。文件还不存在就先 `bash install.sh` 一次(doctor `stable claude` 行会 WARN 提醒)。doctor `launchd claude` 行的 fix 文案会点名它刚刚探过的那条精确路径——照它写的加。
-2. 把任务 repo 放回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),改 `config.yaml` 的 `execution.default_target_repo`。
-
-然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。另一条结构性路线(有授权的 GUI app 托管后台服务、子进程全继承)记在 `docs/design/vnext2-plan.md` D20 / Q7,不再是 P6 的前提。
-
-## Claude Code 更新后派工被拒:`launchd claude` 行昨天还是绿的,今天又红了
-
-**症状**:前一天按上一节给 claude 开了完全磁盘访问、doctor 全绿、卡也派出去了;Claude Code 自动更新之后(终端里 `claude --version` 变了号)同一行又 FAIL `claude_blind`,派发又全数被拒。系统设置的「完全磁盘访问」列表里那一项还开着,但它指的是 `~/.local/share/claude/versions/<旧版本>`。
-
-**原因**(CONTRACT §55 第五幕,live 2026-09-02):macOS 对命令行可执行文件的完全磁盘访问**按路径**记账。`~/.local/bin/claude` 只是个符号链接,Claude Code 每次更新都把它指向新的 `~/.local/share/claude/versions/<新版本>`——授权留在旧路径上。签名本身是稳定的(Developer ID,identifier `com.anthropic.claude-code`),但 TCC 不按签名找人。
-
-**修法(自 §55 第五幕起是安装器的活,不是你的)**:install.sh 在第 2 步维护一份稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`——从登录 shell 的 claude 复制(只接受带有效 Apple 签名的二进制;npm 装的 node 脚本会被拒绝并保留旧副本),版本变了就**原地替换**(临时文件 + `mv`,同一路径),后台任务一律起这份副本(`config.resolve_claude_bin`:显式 pin → 稳定副本 → PATH),并带 `DISABLE_AUTOUPDATER=1` 不让它自更新。所以:
-
-1. 只需**一次**:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → 粘贴上面那条路径。之后 Claude Code 随便更新,路径不变、授权不变。
-2. 每次 `bash install.sh`(含每次自动部署跑的 `install.sh --non-interactive`)会把副本刷到当前版本;安装报告里是 `stable_claude=ok:refreshed: …`。两次部署之间副本可能落后一版——doctor `stable claude` 行会 WARN 说明,**这不是故障**:旧一版的 claude 照样派工。
-3. 想立刻刷新就手跑一次 `bash install.sh`;确认用 `python3 -m act.doctor`——`stable claude` 行 OK(或 WARN 落后一版)、`daemon claude` 行写着副本的路径、`launchd claude` 行 OK。
-
-**自动部署的通知里写着 `needs owner: stable claude`**(CONTRACT §56.3 第 10 步、§25 `row_class`,2026-09-03 起):部署本身是成功的——新版本已上机,只是副本还没拿到上面那条一次性授权;在 launchd 会话里 doctor 的 `stable claude` 行是 FAIL `claude_blind`(detail 写着副本没坏、是授权没点),而这类「只有 owner 能点」的行**永不**触发回滚(2026-09-03 v1.0.7 正是因它被误回滚一次)。照第 1 条授一次权,下一次 doctor 就绿了;在终端里跑 `python3 -m act.doctor` 看到该行 OK 不算数——终端借出自己的授权,等 timer 触发的下一轮部署或 `launchd claude` 行说话。若该行 FAIL 却**没有** `claude_blind` id,那是副本文件真坏了(detail 带失败输出首行),`bash install.sh` 重拷。
-
-**如果 `launchd claude` 行在刷新副本之后又红了**:那说明 TCC 把这次替换当成了新东西(理论上不会——副本仍满足授权时记下的 code requirement——但 macOS 版本行为可能变)。看列表里稳定路径那一项是否还开着;关掉再开一次;还不行就在本 repo 开 issue,附 doctor 输出。**不要**再回去给 `versions/<v>` 授权——那条路每次更新都断。
-
-**附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。
-
-## 外置盘 + launchd 权限:自动部署每 10 分钟原地打转,或「已 up_to_date」却还在跑旧版本
-
-**症状**(任一):① doctor `launchd volume access` 行 FAIL `deploy_blind_tcc`;② `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 里每 10 分钟一行 `volume_access=denied (errno 1) — launchd job lacks access to /Volumes/<卷>; grant Full Disk Access to <解释器>`;③ `autodeploy.launchd.log`(launchd 的 stderr,没时间戳)里 `PermissionError: [Errno 1] Operation not permitted`、`rm: … Operation not permitted`、或 `ModuleNotFoundError: No module named 'act'`;④ 顶栏/doctor 写着 `install_incomplete`——checkout 已在新 sha,`state/install_report.json` 与 `state/actd.heartbeat` 却还是旧版本。而你在终端里手跑 `bash scripts/auto-deploy.sh`(或 `launchctl kickstart` 之后马上看)**一切正常**。
-
-**原因**(CONTRACT §56.3 第 1 步、§55 第四幕):repo 住在外置卷(USB/APFS,`/Volumes/…`)上。macOS 按 **responsible executable** 给「可移动卷」授权,launchd 起的任务是它自己的 responsible process、**没有界面接弹窗**,于是默认被拒(errno 1,EPERM);而终端里跑的每一次都把终端(它有完全磁盘访问)的授权借给全部子进程,所以「我手跑是绿的」**对无人值守的运行什么都不证明**。2026-09-02 的实录:timer 起的一轮先把 checkout 推到 v0.48.11(git 碰巧读得到),然后 `bash install.sh` 拿到 EPERM(exit 126)、回滚被拒、`state/deploy_state.json` / 通知队列 / 锁全部写不进去;20 分钟后下一轮看到 HEAD == origin/main 就写了 `up_to_date`,而 actd 内存里还是 v0.48.8。
-
-v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(读 repo、在 `state/` 里 mkstemp),被拒就记 `blocked_tcc`、HEAD 不动、一天最多通知一次;判决和锁都先写进 `~/Library/Application Support/ZelinAIAssistant/`(TCC 从不拦 `$HOME`),repo 里的 `state/deploy_state.json` 只是尽力而为的投影;`up_to_date` 的定义收紧为「HEAD 到位 **且** install_report 与 actd 心跳都是这个版本且心跳新鲜」,否则 `install_incomplete` 并在本轮重跑一次 `install.sh`(连续 3 轮无效即停并通知)。
-
-**确认**:`python3 -m act.doctor` —— `launchd volume access` 行读的是**无人值守那一轮**留下的记录(镜像的 `unattended_status`),不是你刚在终端跑的那一轮;它会点名 plist 里那个解释器的精确路径。想直接看证据:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"`(看 `unattended_status` / `unattended_detail` / `interpreter` / `volume`)。
-
-**修复**(两条授权都要加):
-
-1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴路径,加**两条**:① 后台任务的解释器 = doctor 行给出的 `~/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist` 的 `ProgramArguments[0]`(这台机器上出过事的是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`;**按路径授权,换了解释器要重授**);② claude 的稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`(install.sh 维护、路径固定,授一次即跨 claude 更新有效——见上两节;文件还不存在就先跑一次 `bash install.sh`)。
-2. **等 timer 自己触发一轮(≤ 10 分钟)**,再 `python3 -m act.doctor` 看 `launchd volume access` 行变 OK、`auto-deploy` 行变 `deployed` / `up_to_date`(`tail -f ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 能看到那一轮)。**不要拿自己起的运行当证据**:2026-09-02 的观察是,从终端起的每一次——`bash scripts/auto-deploy.sh`、`python3 -m act.auto_deploy`、乃至在终端里敲的 `launchctl kickstart`——都绿,只有 timer 触发的那一次被拒:终端把自己的授权借给了它起的一切,绿了对 timer 触发的运行什么都不证明。从进程内部看 kickstart 与 timer 分不出来,所以一次终端 kickstart 可能让 doctor 行在下一次 timer 触发前短暂显示 OK——那不是修好。
-3. 替代路线:把 repo 搬回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),重跑 `bash install.sh` 重渲 plist。
-
-**别做**:不要用 `--force` 去「修」`blocked_tcc`——它只是从终端借了一次授权,下一轮 timer 照样被拒;也不要手动删 `~/Library/Application Support/ZelinAIAssistant/deploy_state.json`——那是脚本的记账(failed_sha / notified_sha / incomplete_sha 都在里面),删了它会忘掉哪个 sha 已经失败过。
-
-## 合并很密的时候自动部署几小时不动:日志里每轮都是「CI not green yet on <越来越新的 sha>」
-
-**症状**:`~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 连续几轮 `CI not green yet on <sha>: ci is in_progress`,而每轮的 sha 都不一样;顶栏 / doctor `auto-deploy` 行停在 `ci_pending`;GitHub 上 main 的好几个更早的 commit 早就绿了(release 也铸了 tag),机器却还跑着更旧的版本。2026-09-03T00:38Z→01:18Z 实录:每 10–20 分钟合一个 PR、`ci` 在 Actions 队列下要 20+ 分钟,五轮下来 v1.0.4–1.0.6 全绿却没有一个上机。
-
-**原因**:部署 job 每 10 分钟只看 origin/main **当时的 head**,head 的 `ci` 没跑完就等下一轮;合并密度一旦高于 CI 时长,head 在每个轮次都是「刚合进来、还没绿」的那个,永远等不到——旧闸门的结构性饿死(CONTRACT §56.3 第 3 步)。
-
-**2026-09-03 起脚本自己会绕过去**:head 不绿(还在跑 / 红了 / 已经失败过)就沿 first-parent 往回走(最多 `AUTODEPLOY_CI_WALK`,默认 30 个,不越过本机已部署的 HEAD),部署**最新的一个 CI 已绿的 commit**——它是 origin/main 的祖先,`merge --ff-only` 仍然是 fast-forward;下一轮再从那里往更新的绿走,head 绿了就到 head。日志里会看到 `deploying its newest green ancestor <sha> instead`,状态 `deployed` 的 detail 带 `(newest green ancestor of origin/main <head> — head CI not green yet (…))`,doctor `auto-deploy` 行 OK 但追加 `origin/main <sha> not deployed: <why>`;`deploy_state.json` 里多两键 `behind_main`(被跳过的 head)/ `behind_main_why`,部署到 head 或 `up_to_date` 时清掉。
-
-**确认**:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"` 看 `head` 是不是已经在 head 后面最新的绿 commit 上、`behind_main` 指着谁;`tail -n 30 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 里每轮会列出走过的每个 sha 与它的 CI 判定(`CI green on ancestor …` / `CI RED on main commit …` / `CI not green yet on ancestor …`)。
-
-**它还是不部署的三种情形**:① head 与它后面到本机 HEAD 之间**全红**(或全在跑)——detail 写 `no green commit between the deployed <sha> and it (N examined: …)`,红的每个 sha 会各通知一次「main 的 CI 红了」并中毒(镜像私账 `failed_shas`,`--force` 或 main 越过它们时清),修好 CI、合一个绿的提交即可;② 某个 commit **没有任何 `ci` run**(path filter 跳过、workflow 没触发)——它算 pending 不算绿,永远不会被当成「测过」;想让它上机就 re-run 那个 workflow,或合一个会触发 CI 的提交;③ GitHub API 额度用光——日志写 `check-runs API HTTP 403 via <gh|curl+token|anonymous curl> (x-ratelimit-remaining: 0)`,同样是 pending,下轮自愈。2026-09-03 06:03Z/06:14Z 起脚本带认证问(每轮开头一行 `check-runs API via gh api (authenticated)`,5,000 次/小时);要是那一行写的是 `via curl, UNAUTHENTICATED`,说明这台机器的 `gh` 没登录或不在 launchd 的 PATH 里——匿名额度只有 60 次/小时**按 IP 计、全机共享**(更新检查、你手上的 curl 都在花同一份),`gh auth login` 一次即可。`--force` 永远只部署 head 本身、跳过闸门与回走,别用它「催」一个还没绿的 head。
-
-## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
-
-**症状**:看板顶部横幅「后台服务卡住了」/ doctor `actd heartbeat` 行 FAIL `actd_stalled`;`state/dashboard.json` 与 `actd.log` 的 mtime 几小时不动,`launchctl list | grep actd` 却给出 pid,没有子进程。2026-08-31 22:31 这台机器就这样静默了 2.5 小时。
-
-**原因**:进程没死,主循环卡住了(卡在某个 pass 阶段,或 `time.sleep` 之后再没醒)。§47.3 的 `loop_health.json` 只数 pass **崩溃**,它没崩所以一路 0;`launchctl` 只知道 pid 在。v0.48.4 起 actd 在每个 pass 的每个阶段 touch `state/actd.heartbeat`(CONTRACT §47.4),心跳超过 `max(3 × interval, 90)` 秒没动 = 卡死。
-
-**确认**:`python3 -m act.doctor`(`actd heartbeat` 行会说最后一次心跳的阶段与多久之前);或 `curl -s http://127.0.0.1:47820/api/health`(`verdict: "stalled"`)。
-
-**修复**:kill+respawn,**不是** reload:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(Linux:`systemctl --user restart zelin-actd.service`)。重启后心跳恢复,横幅自动消。反复出现请把 `state/actd.heartbeat` 里的 `phase`(卡死时的阶段)带进 issue。
-
-## `launchctl list | grep zelin` 里有仓库早已删掉的 agent(孤儿)
-
-**症状**:doctor `launchd orphans` 行 FAIL/WARN `launchd_orphan`,或 `~/Library/Logs/zelin-ai-assistant/<name>.launchd.log` 疯长(2026-08-31 审计:`imessageradar` 退役 51 天还在跑,23,613 条 traceback、14.5 MB)。
-
-**原因**:旧版 install.sh 卸载退役 label 时把 `launchctl bootout` 的失败吞掉了。v0.48.4 起卸载会自证(失败就 `[ERR ]` + 安装报告 `launchd_retired=fail`),并列出带 `com.zelin.aiassistant.` 前缀却已无模板的 label(只报告不动手)。
-
-**修复**:重跑 `bash install.sh`(RETIRED 名单里的会被卸载并验证);不在名单里的孤儿手动 `launchctl bootout gui/$(id -u)/<label> && rm ~/Library/LaunchAgents/<label>.plist`。日志文件是取证材料,脚本不删——确认不需要后自己 `rm`。
-
-## `server.launchd.log` 里全是 `ConnectionResetError` 的 traceback,或想逐条看轮询请求(2026-09-14 起,issue #314 / D54)
-
-**症状**:`grep -c ConnectionResetError ~/Library/Logs/zelin-ai-assistant/server.launchd.log` 每关一次浏览器 tab 就加一,日志几个月就涨到 MB 级;或者请求行没有时间戳,对不上「我 14:34 点了哪个按钮」。
-
-**原因**:浏览器关 tab / 刷新时 keep-alive 连接被 reset,异常抛在 `handle_one_request` 读请求行时——在 Handler 之前,socketserver 的默认 `handle_error` 直接打整段 traceback。旧版的访问日志行也没有时间戳。
-
-**修复**:升级到带 CONTRACT §54.2 2026-09-14 追记的版本(`bash install.sh --non-interactive` 之后 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`)。之后连接类异常静默、其余异常仍打完整 traceback;行首带本地 ISO 时间戳;`/api/board` 与 `/api/health` 的访问行按 (path, 状态码) 分桶,同一路径同一状态码每 5 分钟最多一行,被采样掉的条数写在下一行末尾(`… 200 4096 (+57 suppressed in the last 300s)`)——状态码一变立刻写一行(200 → 404 不会被延迟),所以「看板一直 404」这种持续故障照样看得见,只是不再一秒一行地灌。
-
-**排障时要逐条看轮询**:给 server agent 加 env `ZAI_LOG_POLLS=1`(`launchctl setenv` 对已加载的 job 无效——改 `~/Library/LaunchAgents/com.zelin.aiassistant.server.plist` 的 `EnvironmentVariables` 加一行,然后 `launchctl bootout` + `bootstrap`,或直接前台跑 `ZAI_LOG_POLLS=1 python3 -m server`),采样即关闭、每条请求都写。查完记得改回去(plist 的真源是 `act/launchd/` 模板,重跑 `install.sh` 会覆盖你手改的那份)。
-
-**已经涨起来的那份日志**:server 永不写 / 删 / 轮转任何日志(CONTRACT §55 审计 L3),取证材料归你处置——确认不需要后自己 `rm`(或 `: > ~/Library/Logs/zelin-ai-assistant/server.launchd.log` 就地清空,launchd 的 fd 仍然有效)。
-
-## launchd 任务读不到 ~/Documents:radar 扫到空 vault,零报错
-
-**症状**:vault 里明明有新笔记,radar 却什么都扫不出来,日志无报错。
-
-**原因**:launchd 进程被 TCC 挡在 `~/Documents` 之外,Obsidian vault 恰好在里面。
-
-**修复**:读 Documents 的定时任务走 crontab(给 `/usr/sbin/cron` 授 完全磁盘访问权限,准确路径见 `docs/INSTALL.md` 步骤 6),launchd 只做不碰 Documents 的活。`install.sh` 装的 cron 链已按此设计。
-
-v0.14 起这个失败**不再静默**:cron 链每轮把真实读取结果写进 `state/cron_probe.json`(CONTRACT §25),app 主窗口「依赖检查」页的「定时任务磁盘权限」行会变红并给出一键引导(复制 `/usr/sbin/cron` + 打开授权面板 + 行内步骤);`python3 -m act.doctor` 的 `cron disk access` 检查同源。
-
-## 「让 AI 修 / Fix with AI」按钮做了什么(安全姿态)
-
-app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `python3 -m act.ai_fix --open`)。它做的事:
-
-1. 本地生成诊断包:`doctor --fast` 报告 + `state/actd.log` / `actd.launchd.log` / `radar.cron.log` / `~/.screenpipe/engine.log` 各末 40 行——写盘**之前**先过 `act/lib/sanitize.scrub`(掩掉 API key/token/私钥与你的词表);
-2. 在 `$TMPDIR` 生成一个 `.command` 并交给 Terminal:里面只是 `cd <repo> && claude "<诊断 prompt>"`,**不带** `--dangerously-skip-permissions`——AI 改任何文件、跑任何命令都要你确认;
-3. prompt 要求 AI:先一句人话说清根因 → 最小修复 → `doctor --fast` 复验 → 最后给一个预填好的 GitHub new-issue 链接(正文只含诊断行与结论,发不发由你)。
-
-不想要这个入口:config.yaml 里设 `doctor.ai_fix_enabled: false`(按钮隐藏、CLI 直接退出)。
-
-## Slack / Atlassian 接入在 headless 下不工作
-
-**症状**:前台会话里 MCP 能用,cron/launchd 跑起来就挂。
-
-**原因**:Slack/Atlassian MCP 的 OAuth 在 headless 下未验证。
-
-**修复**:走 token 兜底——Slack user token / Atlassian API token 写入 `config/secrets/`(推荐在 app 设置窗口粘贴保存,见 `docs/CONTRACT.md` §19 与 `docs/SLACK_SETUP.md`)。
-
-## store2 回滚:把卡片账本从 SQLite 切回 YAML(保留一个版本的开关)
-
-**什么时候用**:升级到 v0.48.8+ 后,actd 第一个 pass 会自动做「备份 → 迁移 → 逐字段比对 → 零差异才切换」,把卡片真源从 `act/registry/*.yaml` 切到 `state/store2.db`(CONTRACT §53.3)。如果切换后发现任何不对劲(卡不见了、doctor `store2` 行 FAIL `store2_db_missing`、或你就是想回去),按下面手动回滚——迁移永远先留完整备份,数据不会丢。
-
-**症状确认**:`python3 -m act.doctor` 的 `store2` 行;或 `python3 -m act.lib.store2.activate --report` 打印状态 JSON(`state` ∈ active / refused / db_missing / yaml_forced / pending)。
-
-**回滚步骤(照顺序做)**:
-
-1. **停守护**:`launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd`(Linux: `systemctl --user stop zelin-actd.service`);雷达是短命进程,不用管。
-2. **恢复备份**:激活时的完整 YAML 备份在 `state/backups/registry-<时间戳>/`(旁边的 `.manifest.json` 是逐文件 sha256 清单)。把它整目录拷回:
-
-       cp -R "state/backups/registry-<时间戳>/." act/registry/
-
-   注意:激活**不会**清空 `act/registry/`,里面通常还是切换当刻的原文件;真正需要拷贝的场景是你在 SQLite 上又跑了一段时间(那段时间的新卡只在 DB 里——想要它们的话先 `python3 -m act.lib.store2.activate --export-now`,把 `state/registry-export/` 里对应的 `R-*.yaml` 挑进 `act/registry/`)。
-3. **设回滚开关**:`config.yaml` 里加(或改):
-
-       registry:
-         backend: yaml
-
-   开关强制 YAML 为真源,store2 标记被无视、每日导出停止(CONTRACT §53.6)。server 的卡详情读(`/api/cards/{id}`)同样跟随开关(逐请求读 config,不用重启 server)。开关保留一个版本——它在的期间不会再自动迁移。
-4. **重启**:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(或重跑 `bash install.sh`)。`python3 -m act.doctor` 应显示 `store2: YAML 后端(registry.backend/env 强制)`。
-
-**想再切回 SQLite**:删掉 config 里的 `registry.backend` 键(或设 `auto`),删 `state/store2_truth.json` + `state/store2.db`,重启 actd——下一个 pass 重新走一遍完整激活协议(重新备份、重新比对)。
-
-**激活被拒(doctor FAIL `store2_refused`)**:这不是故障,是保护——某张卡的形态无法忠实入库(最常见:手编 YAML 里有拼错的未知字段名,或未加引号的日期值——`deadline: 2026-09-15` 会被 YAML 解析成日期对象,JSON 装不下,给值加引号即可)。`cat state/store2_activation.json` 看逐条 diff,修好点名的卡文件后等重试(数据类拒绝退避 6 小时;删掉 `state/store2_activation.json` 立即重试)。拒绝期间 YAML 一直是真源,管线照常。
-
-### schema 降级:代码回退到旧版本后账本打不开(v0.48.15 起)
-
-**症状**:每次 registry 调用都抛 `StoreError: db user_version=2, store2 supports 1`;actd 每个 pass 报同一条 traceback、heartbeat `phase` 永不到 idle,inbox 不处理、不派工、看板冻结。旧版 doctor 的 `store2` 行不真正开库,所以**照样显示绿**——别被它骗。
-
-**为什么**:v0.48.15 起 store2 有 schema 升级梯子(CONTRACT §53.1),新代码第一次开库就把 `user_version` 升上去,而升级是**单向的**——旧代码对更高版本 fail-closed,这是设计(带着不认识的 schema 盲写更糟)。自动部署(§56.3)的回滚跑的是**回滚目标那一版**的 `scripts/auto-deploy.sh`,所以「部署期间 `user_version` 升高 → 拒绝代码回滚」这道闸门(PR #130)只在 #130 已合并**并已部署到本机**之后才护得住跨升级的部署;在那之前的自动回滚,以及任何手动 `git reset` / `checkout` 到旧版,都会走到这一步。**数据本身完好**——v2 库无损,只是这份代码打不开它。
-
-**三条出路(选一,都先停守护 `launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd`)**:
-
-1. **向前滚(推荐)**:回到 ≥ 0.48.15 的代码——`git -C <repo> reset --hard <新版本 sha>` 后 `bash install.sh`,或 `bash scripts/auto-deploy.sh --force`。什么数据都不丢。
-2. **恢复升级前快照**:升级踏出前 store 自动留了 `state/store2.db.pre-v1`(旧代码打得开的 v1 副本,CONTRACT §53.1 单向门条款)。先把 v2 库**连同它的旁文件**挪走保存(升级之后新写的卡只在它里面;`-wal` 可能装着尚未 checkpoint 的已提交写入,**必须跟着主库走、同名后缀改名,什么都不删**):
-
-       for s in "" -wal -shm; do
-         [ -e "state/store2.db$s" ] && mv "state/store2.db$s" "state/store2.db.v2-stranded$s"
-       done
-
-   再 `cp state/store2.db.pre-v1 state/store2.db`(快照是单文件,没有旁文件),重启。想要 stranded 里的新卡,回到新代码后再比对/导出(`state/store2.db.v2-stranded` 连旁文件一起原样可开)。
-3. **YAML 回滚**:按上面「store2 回滚」的常规步骤(恢复 `state/backups/registry-<ts>/` + `registry.backend: yaml`)。注意旧代码开不了 v2 库,`--export-now` 只能在 ≥ 0.48.15 的代码下先跑。
-
-**绝对不要**:手改 `PRAGMA user_version` 把 v2 库伪装成 v1。实测后果:旧代码的 save 会把 payload 里的 `work_id` 剥掉而热列还留着(切回新代码后靠 §60.2 的采纳防御才能从热列把号找回,别赌);更致命的是旧 `next_id()` 会把已发的工作编号(比如 R-264)当主键铸新卡——主键与工作编号从此撞号,`resolve()` 出现歧义,这一步没有任何防御能救。
-
-**快照文件的收拾**:`state/store2.db.pre-v<n>` 一级只有一份,只在真的再次踏出该级升级时才被刷新(恒为「最近一次升级前」的状态);新版本跑顺(auto-deploy 报 deployed、看板正常)之后可以删。
-
-**升级本身被拒(`StoreError: SCHEMA_SNAPSHOT_FAILED`)**:新代码拍不下升级前快照(磁盘满、`state/` 不可写、外置卷瞬态 EPERM)就**不**踏出单向门——DB 留在旧版本,新旧代码都还能开它,下一次开库自动重试;排除写入障碍即可,不需要手动干预数据。
-
-## 生产 checkout 不在 main / 工作树脏:自动部署每 10 分钟拒一次,「一键更新」按钮灰着(issue #309,CONTRACT §56.5 追记 / §68.6 追记)
-
-**症状**:关于页的「一键更新」按钮**灰的**,下面一行写着「更新链路断着:不在 main,部署暂停 — HEAD is on 'release', not main」(或「工作树有改动,部署暂停」);顶栏部署小字同一句;`cat state/deploy_state.json` 是 `status: refused_branch` / `refused_dirty`;`tail ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 每 10 分钟一行 `HEAD is not on main (got 'release') — refusing to touch this checkout`。上游早就修好的 bug 到不了这台机器——2026-09-05 → 09-09 实录:**539 次**拒绝,机器卡在 v1.0.23 而 main 已到 v1.0.98。
-
-**原因**:自动部署**只在 `main` 上、只用 `merge --ff-only` 运作**,且拒绝碰有改动的 tracked 文件(§56.5 首条 + §56.3 第 4 步)。D55 明确**不做**「以最新 tag 为目标 + rebase 本地 commit」的部署模型:那要让后台任务在 live checkout 上重写历史。`AUTODEPLOY_BRANCH=release` **不是**解法——脚本把 `origin/$BRANCH` 当目标并要求本地能 ff 到它,本地 `release` 带数据 commit、与 `origin/release` 分叉,落到的是「fast-forward … impossible (local BRANCH diverged?) — refusing」。
-
-**根治**(长期):把工作数据 commit 挪出代码 checkout,让生产机回到 `main`——之后自动部署自己恢复,不需要任何手工动作。
-
-**手工升级 SOP**(owner 2026-09-09 亲手走过一次,`release` 分支形态;每一步都在 repo 根跑):
-
-1. **先备份两样东西**:`git branch backup/release-pre-vX.Y.Z`(升级前的 `release` 原样留一个分支)+ 卡片账本 `cp state/store2.db ~/Downloads/zaa-pre-vX.Y.Z-store2-<MMDD>.db`(§53 真源;YAML 后端则备份 `act/registry/`)。
-2. `git fetch --tags --force origin`(`--force`:本机一个与 origin 同名不同指的旧 tag 会让 `fetch --tags` 以 rc 1 拒绝)。
-3. `git rebase vX.Y.Z release` —— 把 `release` 上的本地数据 commit 重放到新 tag 上。09-09 实录:102 个数据 commit、13 个文件、**零冲突**。冲突了就 `git rebase --abort` 回到第 1 步的备份分支,别硬解。
-4. `bash install.sh` —— 手动装(**不是** `--non-interactive`):它会重盖 `act/_version.py`、重渲 launchd、重建 web/dist 与壳。09-09 实录结果:`1.0.98+102`(`+102` = 那 102 个数据 commit,§56.1 追记:它不会出现在关于页的版本行里)。
-5. `python3 -m act.doctor` 验收。09-09 实录:35 ok / 3 warn / 0 fail。
-6. 用完删掉备份分支(`git branch -D backup/release-pre-vX.Y.Z`)之前,先在新版本上跑够一天。
-
-**`refused_dirty` 的那一半**:`git status --porcelain` 看是哪些 tracked 文件脏了。是真改动 → commit 或 revert;是运行时数据落进了 tracked 路径 → 那是 bug,开 issue(数据不该住在 tracked 文件里)。清干净之后**不必等 10 分钟**:`bash scripts/auto-deploy.sh --force` 立刻跑一轮。
-
-**别做**:不要把「一键更新」当解法——`refused_branch` / `refused_dirty` / `blocked_tcc` 三种状态下 server **根本不会** kickstart(409 `deploy_refused`),它提前跑一轮也只是让脚本以同样的理由再拒一次。这正是 #309 修掉的那个谎:修之前按钮会说「已触发自动部署——几分钟后这里的版本会变」。
-
-## 整棵 checkout 莫名回退到一个旧版本:一批 tracked 文件同时"被改",还多出一堆没人写过的旧源码(issue #333,CONTRACT §74)
-
-**症状**:`git status` 里几十上百个 tracked 文件同时脏了,`git diff` 显示它们变成了**更旧**的某个 tag 的内容;`ls -lT` 看这批文件的 mtime 齐刷刷是同一秒(= 那个 tag 的 commit 时间,`git archive` 盖的章),ctime 齐刷刷是另一个同一分钟;同一批还多出十几个 untracked、**没被 .gitignore 掉**的旧源码文件(它们 import 的函数在今天的代码里已经不存在,于是 `npm run build` / `tsc` 必红、自动部署每轮回滚);`state/deploy_state.json` 从那一刻起 `refused_dirty`;`launchctl list | grep actd` 的 pid 是那一分钟起的新进程。2026-09-07 实录:232 个文件回退到 v1.0.14、18 个残留文件、四张假 `pr_red` 卡烧掉四个 agent session。
-
-**原因**:一个 **.pkg 装进了你的开发 checkout**。安装器的 postinstall 会把载荷 `rsync` 进 `~/Projects/zelin-ai-assistant`——如果那条路径(或它的某一级)是指向 checkout 的符号链接,载荷就直接盖在工作树上,然后重启守护进程。发起者通常不是你:`/Applications/Zelin's AI Assistant (old).app`(D3 退役中的旧菜单栏 app)里的 Sparkle 自动检查更新并静默安装 .pkg。**这条路已经堵了**(CONTRACT §74):新 .pkg 的 postinstall 与 `install.sh --pkg-postinstall` 都会先判目的地是不是工作树,是就整段跳过并在 `/var/log/install.log` 里点名;发布的 appcast 也换成了永远答「已是最新」的终止版 feed。**但已经装在你机器上的那个旧 bundle 仍带着旧 Info.plist**(自动更新开着),它要到下一次 release 之后才读到终止版 feed。
-
-**确认是不是它**:`grep -i 'Autoupdate\|installer' /var/log/install.log | tail -40`(Current Path 指向 `…(old).app/Contents/Frameworks/Sparkle.framework/…/Autoupdate` = 就是它)、`pkgutil --pkg-info com.zelin.aiassistant.pipeline`(install-time + 版本 = 被装进来的那一版)。
-
-**收拾现场**(在 repo 根,逐条确认再跑):
-
-1. `git status --porcelain` 存一份下来:`git status --porcelain > ~/Downloads/reverted-$(date +%m%d).txt`——分清哪些是你自己的改动,哪些是被盖的。
-2. 被盖的 tracked 文件:`git checkout -- <路径…>`(确定整批都是被盖的才 `git checkout -- .`)。
-3. 残留的 untracked 旧源码:逐个核对「今天的代码里还有没有人 import 它」,确认是遗骸再删——`git clean -n` 先看一遍,**永远不要**直接 `git clean -fdx`(它会连 `state/` 与本机配置一起清掉)。
-4. 恢复之后自动部署会自己从 `refused_dirty` 走出来;等不及就 `bash scripts/auto-deploy.sh --force` 跑一轮。
-5. **今天就关窗**(两条命令,现在就能跑,不用等下一个 release):守卫与终止版 feed 都是**随下一个产物**才生效的——此刻 `/releases/latest/download/appcast.xml` 仍是当前最新 tag 那份**上了膛的**单条目 feed(指向一个守卫出生之前的 .pkg),而已装的 `(old).app` 里 `SUEnableAutomaticChecks` / `SUAutomaticallyUpdate` 仍是 true。所以:
-   - **把线上那份 appcast 现在就换成终止版**(零 `<item>` 的那份 XML,取自 `release.yml` 的生成步):`gh release upload <当前 latest tag> appcast.xml --clobber`(或者干脆 `gh release delete-asset <tag> appcast.xml`——代价是客户端每天拿一次 404 并记成「链路坏了」,所以首选 --clobber)。
-   - **就地把那台机器上的自动更新关掉**:`defaults write com.zelin.ai-engineer SUAutomaticallyUpdate -bool false && defaults write com.zelin.ai-engineer SUEnableAutomaticChecks -bool false`。偏好住在 `~/Library/Preferences/`,**不在**签名封条内(封条内的 Info.plist 一个字节都不许动,§54),Sparkle 读用户默认值优先于 Info.plist——这一条立刻生效、可逆(`defaults delete` 还原)。
-6. **彻底断掉复发**(owner 的手,§74.4 不代拍):要么把 `/Applications/Zelin's AI Assistant (old).app` 删掉(D3 说了等你明确下令才删),要么至少别再启动它——它每次启动都会去检查更新。
-
-## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(2026-09-02 切到 tag 真源之后)
-
-版本的真源是 main 上的 git tag(CONTRACT §56.1),**没有任何文件里写着版本**。`act.__version__` 按 `act/_version.py`(生成文件、git-ignored)→ `git describe` → `act/__init__.py` 的烘焙回落行解析;守护进程只读 stamp。三种症状:
-
-- **`no act/_version.py`**:从没跑过 install.sh(或跑失败)。修:`bash install.sh --non-interactive`(重盖章 + 重启 daemons),或只盖章 `python3 scripts/version_stamp.py --write` 再 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.actd`。
-- **stamp 与 checkout 不一致**(`act/_version.py 说 v0.48.16,checkout 是 v0.48.17`):手动 `git pull` 了但没跑 install.sh。同上修法。
-- **报 `X.Y.Z+N`**:HEAD 领先最近的 tag N 个 commit——本地 tag 没跟上(`git fetch --tags origin`)或这是一个未发版的开发分支。live 机器上 auto-deploy 的 fetch 自带 `--tags --force`;手动 `git fetch --tags --force origin && bash install.sh --non-interactive`(`--force`:本机一个与 origin 同名不同指的旧 tag 会让不带它的 `fetch --tags` 以 rc 1 拒绝,auto-deploy 就会每轮 `fetch_failed`)。
-
-**首次部署切换到 tag 真源的那一版被回滚**:那一轮跑的是旧部署脚本,它用 sed 读 `act/__init__.py` 的字面行当期望版本(§56.1 过渡条款)。若 release-on-merge 迟到或号猜错导致 `actd:no_heartbeat_from_new_version` 回滚,手动一次即可:`git -C <repo> merge --ff-only origin/main && bash install.sh --non-interactive`——新脚本上机后不再依赖这一切。
-
-## 开发注意(新组件必读)
-
-执行器必须注入 auto-memory 的 program map 与约束(例如:eval 走统一 CLI、数据放固定目录、云端资源命名规则等)——否则执行 agent 会自行发明布局。对应 config 键 `execution.memory_inject`(默认开),实现在 `act/executor.py`。
+在 owner 的 checkout 上不要直接跑 `install.sh`：它会重载 server agent、重写 crontab。验证安装改动时在一份 repo 拷贝里用临时
+`$HOME` 跑 `bash install.sh --non-interactive --no-launchd`；判例（`tests/test_install_*.py`、`tests/test_upgrade_script.py`）
+都用假 `launchctl` / `crontab` / `pgrep` / `pkill`，从不碰真机。

@@ -1,9 +1,10 @@
 # Security Policy
 
-This project records your screen, reads your Slack and Gmail, stores API keys on
-disk, and dispatches autonomous agents that bypass permission prompts. We take
-reports about any of that seriously. For the full data-flow and trust model
-(what leaves your machine, when, and how to turn it off), see
+This project (lite 2.0) records your screen and audio, turns the recordings
+into Obsidian notes and meeting recaps with headless `claude -p` runs, stores an
+Anthropic API key on disk and serves a local web UI on 127.0.0.1. We take reports
+about any of that seriously. For the full data-flow and trust model (what leaves
+your machine, when, and how to turn it off), see
 [`docs/PRIVACY.md`](docs/PRIVACY.md) — this file only covers how to report
 vulnerabilities and what is in scope.
 
@@ -38,22 +39,31 @@ release notes unless you prefer otherwise.
 **In scope** (examples, not exhaustive):
 
 - **Secrets handling** — anything that exposes the contents of
-  `config/secrets/` (token files, permissions, logging leaks); see
-  `act/lib/secrets.py` and CONTRACT §19.
+  `config/secrets/anthropic-api-key.txt` (permissions, logging leaks, the key
+  copy in `install.sh`); see `act/lib/secrets.py` and CONTRACT §19.
+- **Isolation of the headless runs** (CONTRACT §78) — any way a headless
+  `claude -p` started by this app loads or writes the owner's Claude Code
+  configuration (`~/.claude`, `~/.claude.json`, hooks, plugins, MCP servers,
+  project settings), runs outside `claude-config/cwd`, or runs without the
+  isolation flags; any way the app itself reads or writes `~/.claude` beyond
+  the two documented exceptions (install.sh unlinking its own 1.x skills
+  links, the doctor listing them).
+- **Resident footprint** — a LaunchAgent, cron line or login item installed
+  outside the closed list in CONTRACT §78, or one that `uninstall.sh` leaves
+  behind.
+- **Local web surface** — bypasses of the server's loopback-only binding,
+  token authentication or request limits (CONTRACT §49).
 - **Egress masking** — bypasses of the built-in secret-pattern masking or the
   opt-in term redaction in `act/lib/sanitize.py` on a covered prompt boundary.
-- **Executor boundary violations** — ways a dispatched agent escapes the
-  documented model beyond what `docs/PRIVACY.md` already discloses (e.g. the
-  `execution.skip_permissions: false` mode not actually restoring permission
-  prompts, or worktree isolation writing outside the target repo).
-- **Prompt-injection paths with concrete impact** — third-party content (a
-  received email, a Slack message, screen content) reliably escalating into
-  unintended tool actions or data exfiltration in the ingest/radar/executor
-  chain.
+- **Prompt-injection paths with concrete impact** — screen or audio content
+  reliably escalating into unintended tool actions or data exfiltration in the
+  ingest or recap chain (the recap run has no tools at all; the ingest run has
+  file tools scoped to the vault).
 - **Undisclosed data egress** — any network flow of user data not listed in
   `docs/PRIVACY.md`.
-- **Install-time integrity** — `install.sh` / launchd / cron manipulation that
-  a local unprivileged attacker could exploit.
+- **Install / upgrade integrity** — `install.sh`, `scripts/upgrade.sh`,
+  launchd or cron manipulation that a local unprivileged attacker could exploit
+  (for example making the upgrader fast-forward to an untagged commit).
 
 **Out of scope:**
 
@@ -62,19 +72,15 @@ release notes unless you prefer otherwise.
 - Attacks requiring an already-compromised local user account or physical
   access (the threat model assumes your Mac and account are yours).
 - The **documented** design trade-offs in `docs/PRIVACY.md` — e.g. that screen
-  capture is app-agnostic, or that `--dangerously-skip-permissions` is the
-  default dispatch mode. Reports that *bypass a documented control* (a feature
-  flag, redaction, `skip_permissions: false`) are in scope; reports that the
-  trade-off exists are not.
+  capture is app-agnostic, or that the ingest agent can write into the vault.
+  Reports that *bypass a documented control* (the ignored-apps list, redaction,
+  the isolation flags) are in scope; reports that the trade-off exists are not.
 - Social engineering, spam, or denial-of-service against your own machine.
 
 ## Hardening tips for users
 
 Before deploying on a machine you care about, read
-[`docs/PRIVACY.md`](docs/PRIVACY.md) — in particular the "执行权限 / Execution
-permissions" section (approval is the security boundary for manually approved
-cards; the two auto-dispatch lanes — hand capture and the repo's own
-`self_improve` draft-PR lane, CONTRACT §51/§65 — spell out their deterministic
-backstops and residual risk there) and the available off-switches (recording
-mode, per-radar feature flags, `execution.create_github_repo`,
-`self_improve.enabled`, redaction).
+[`docs/PRIVACY.md`](docs/PRIVACY.md) and keep recording off until the
+ignored-apps list covers the apps you consider sensitive. `bash install.sh
+--check` reports the isolation footprint and whether the installed `claude`
+supports the isolation flags.
