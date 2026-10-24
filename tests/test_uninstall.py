@@ -1,11 +1,17 @@
-"""uninstall.sh safety contract（CONTRACT §77.7 覆盖跑者沙箱纪律：apps-dir seam）.
+"""uninstall.sh safety contract (CONTRACT §78 uninstall list; apps-dir seam).
 
 The uninstaller is the most dangerous script after install.sh, so the tests
 pin its safety properties rather than its cosmetics: (a) --dry-run changes
 NOTHING while listing every planned action, (b) without a TTY and without
---yes it refuses to act, (c) unknown flags abort. The script is copied into
-a sandbox dir and run with HOME redirected there, so the real machine's
-LaunchAgents/app/state are never at risk even if a regression slips in.
+--yes it refuses to act, (c) unknown flags abort, (d) a real `--yes` run removes
+exactly the §78 list — both agent prefixes, our cron lines (the owner's own
+lines stay), the logs / caches / bin / claude-config dirs — and leaves the
+recording engine alone unless `--stop-engine` is passed (the engineHandoff key
+is written first so the quitting shell leaves it too), and prints the
+tccutil / login item / transcript commands it never runs. The script is copied
+into a sandbox dir and run with HOME redirected there and every system tool
+it could reach (launchctl, crontab, pkill, pgrep, defaults) faked on PATH, so
+the real machine's LaunchAgents/crontab/engine are never at risk.
 """
 import os
 import shutil
@@ -112,6 +118,91 @@ class UninstallDryRunTestCase(unittest.TestCase):
         proc = self._run("--nuke-everything")
         self.assertEqual(proc.returncode, 2)
         self.assertTrue(self.plist.exists())
+
+
+FAKE_TOOL = '#!/bin/bash\necho "$(basename "$0") $*" >> "$CALLS"\n'
+FAKE_CRONTAB = ('#!/bin/bash\necho "crontab $*" >> "$CALLS"\n'
+                'case "${1:-}" in -l) cat "$CRON" 2>/dev/null ;; -) cat > "$CRON" ;; -r) rm -f "$CRON" ;; esac\n')
+OWNER_LINE = "0 9 * * * /Users/x/Projects/podcast/update.sh >> /Users/x/update.log 2>&1"
+
+
+class UninstallRealRunTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="uninstall-real-")
+        self.home = Path(self.tmp.name)
+        shutil.copy(SCRIPT, self.home / "uninstall.sh")
+        (self.home / "state").mkdir()
+        self.la = self.home / "Library" / "LaunchAgents"
+        self.la.mkdir(parents=True)
+        for label in ("com.zelin.aiassistant.server", "com.zelin.aiassistant.actd",
+                      "com.zelin.screenpipe-prune", "com.vendor.keep"):
+            (self.la / (label + ".plist")).write_text("<plist/>", encoding="utf-8")
+        self.support = self.home / "Library" / "Application Support" / "ZelinAIAssistant"
+        for d in ("bin", "claude-config/cwd"):
+            (self.support / d).mkdir(parents=True)
+        (self.support / "home.txt").write_text(str(self.home) + "\n", encoding="utf-8")
+        (self.support / "deploy_state.json").write_text("{}", encoding="utf-8")
+        (self.home / "Library" / "Logs" / "zelin-ai-assistant").mkdir(parents=True)
+        self.bin = self.home / "fakebin"
+        self.bin.mkdir()
+        for name in ("launchctl", "pkill", "pgrep", "defaults", "osascript"):
+            (self.bin / name).write_text(FAKE_TOOL, encoding="utf-8")
+            (self.bin / name).chmod(0o755)
+        (self.bin / "crontab").write_text(FAKE_CRONTAB, encoding="utf-8")
+        (self.bin / "crontab").chmod(0o755)
+        self.calls = self.home / "calls.log"
+        self.cron = self.home / "crontab.txt"
+        self.cron.write_text(
+            "*/30 * * * * cd %s && ./ingest/screenpipe-export.sh >> %s/state/ingest.cron.log 2>&1\n%s\n"
+            % (self.home, self.home, OWNER_LINE), encoding="utf-8")
+        self.tmpfiles = self.home / "tmpfiles"
+        self.tmpfiles.mkdir()
+        (self.tmpfiles / "export.lock").write_text("999999999\n", encoding="utf-8")   # a dead pid
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, *args):
+        env = {"HOME": str(self.home), "PATH": "%s:/usr/bin:/bin" % self.bin,
+               "CALLS": str(self.calls), "CRON": str(self.cron),
+               "AIASSISTANT_UI_APPS_DIR": str(self.home / "Applications"),
+               "PROCESS_SCREENPIPE_LOCK": str(self.tmpfiles / "process.lock"),
+               "ZAI_SCREENPIPE_EXPORT_LOCK": str(self.tmpfiles / "export.lock"),
+               "PROCESS_SCREENPIPE_LOG": str(self.tmpfiles / "auto.log")}
+        proc = subprocess.run(["bash", str(self.home / "uninstall.sh"), "--yes", *args],
+                              cwd=self.home, env=env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout, self.calls.read_text(encoding="utf-8")
+
+    def test_removes_the_footprint_and_leaves_the_engine_recording(self):
+        out, calls = self._run()
+        self.assertEqual(sorted(p.name for p in self.la.iterdir()), ["com.vendor.keep.plist"])
+        self.assertEqual(self.cron.read_text(encoding="utf-8").strip(), OWNER_LINE)
+        for gone in ("bin", "claude-config", "deploy_state.json"):
+            self.assertFalse((self.support / gone).exists(), gone)
+        self.assertTrue((self.support / "home.txt").exists(), "only --purge removes the pointer dir")
+        self.assertFalse((self.home / "Library" / "Logs" / "zelin-ai-assistant").exists())
+        self.assertFalse((self.tmpfiles / "export.lock").exists(), "a dead pid's lock goes")
+        self.assertTrue((self.home / "state").is_dir())
+        self.assertRegex(calls, r"defaults write com\.zelin\.ai-board engineHandoff -string ")
+        self.assertLess(calls.index("defaults write"), calls.index("pkill -TERM -x ZelinAIBoard"))
+        self.assertNotRegex(calls, r"pkill -f screenpipe", "the engine keeps recording by default")
+        self.assertIn("tccutil reset All com.zelin.ai-board", out)
+        self.assertIn("Login Items", out)
+        self.assertIn("rm -rf ~/.claude/projects/", out)
+
+    def test_stop_engine_stops_it_without_the_handoff(self):
+        _, calls = self._run("--stop-engine")
+        self.assertRegex(calls, r"pkill -f screenpipe\.\*\[r\]ecord")
+        self.assertNotIn("defaults write", calls)
+
+    def test_a_live_lock_is_kept(self):
+        live = self.tmpfiles / "process.lock"
+        live.write_text("%d\n" % os.getpid(), encoding="utf-8")
+        out, _ = self._run()
+        self.assertTrue(live.exists())
+        self.assertIn("in use by pid %d" % os.getpid(), out)
 
 
 if __name__ == "__main__":
