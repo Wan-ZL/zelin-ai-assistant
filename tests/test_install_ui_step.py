@@ -141,6 +141,8 @@ case "$*" in
 esac
 """
 FAKE_OPEN = "#!/bin/bash\nprintf 'open %s\\n' \"$*\" >> \"$CALLS\"\nexit \"${FAKE_OPEN_RC:-0}\"\n"
+# `defaults` fake: the relaunch writes the §61.8 engineHandoff key before the SIGTERM
+FAKE_DEFAULTS = "#!/bin/bash\nprintf 'defaults %s\\n' \"$*\" >> \"$CALLS\"\n"
 
 
 def _install_sh_text():
@@ -198,6 +200,7 @@ class InstallUiStepTestCase(unittest.TestCase):
         self._write_exec(self.fakebin / "pgrep", FAKE_PGREP)
         self._write_exec(self.fakebin / "pkill", FAKE_PKILL)
         self._write_exec(self.fakebin / "open", FAKE_OPEN)
+        self._write_exec(self.fakebin / "defaults", FAKE_DEFAULTS)
         self.toolbin = self.tmp / "toolbin"   # npm/node/swiftc live here (or not)
         self.toolbin.mkdir()
         self.running_flag = self.tmp / "app.running"
@@ -601,6 +604,17 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertTrue(opens[0].startswith("open -g "), "relaunch must not steal focus")
         self.assertIn(SHELL_APP, opens[0])
         self.assertLess(calls.index("pkill -TERM -x ZelinAIBoard"), calls.index(opens[0]))
+        # §61.8 upgrade handoff: the key is written BEFORE the shell gets its SIGTERM,
+        # otherwise the quitting shell stops the engine it spawned
+        handoff = [c for c in calls if c.startswith("defaults write ")]
+        self.assertEqual(len(handoff), 1, calls)
+        self.assertRegex(handoff[0], r"^defaults write com\.zelin\.ai-board engineHandoff -string \d{4}-\d\d-\d\dT")
+        self.assertLess(calls.index(handoff[0]), calls.index("pkill -TERM -x ZelinAIBoard"))
+
+    def test_the_handoff_key_literal_matches_the_shell(self):
+        swift = (REPO / "shell" / "Sources" / "EngineOwnership.swift").read_text(encoding="utf-8")
+        self.assertIn('static let handoffKey = "engineHandoff"', swift)
+        self.assertIn('UI_ENGINE_HANDOFF_KEY="engineHandoff"', _install_sh_text())
 
     @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")
     def test_non_interactive_does_not_relaunch_when_the_app_is_not_running(self):

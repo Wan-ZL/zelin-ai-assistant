@@ -502,6 +502,7 @@ install_mac_app() {
 UI_APP_NAME="Zelin's AI Assistant"      # bundle folder — id com.zelin.ai-board (§54)
 UI_BUNDLE_ID="com.zelin.ai-board"
 UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
+UI_ENGINE_HANDOFF_KEY="engineHandoff"   # = shell EngineOwnership.handoffKey (§61.8 upgrade handoff)
 UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the frozen menu-bar app (D3, R2.2.4)
 UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12 — deliberately unchanged
 # v2.0.0 (CONTRACT §61.8): the installer never signals the screenpipe engine — the next
@@ -844,8 +845,11 @@ install_ui() {
 # step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
 # it into a regular NSApp.terminate, i.e. applicationWillTerminate runs: the
 # server is launchd's; the shell stops the screenpipe engine only if it spawned
-# it and no engineHandoff is set (§61.8) — a surviving engine is adopted by the
-# relaunched shell, never killed here.
+# it and no engineHandoff is set (§61.8). So BEFORE the SIGTERM this function
+# writes the engineHandoff preference (key literal = EngineOwnership.handoffKey,
+# pinned by tests/test_shell_engine_orphan.py): the quitting shell then leaves
+# its engine recording (ppid becomes 1) and the relaunched shell adopts it and
+# clears the key. The installer itself never signals the engine.
 # `open -g` relaunches without stealing focus, and `--args
 # --background` tells the shell itself not to order its window front or activate
 # (D38, shell LaunchPolicy): `-g` alone only asks LaunchServices not to switch —
@@ -856,6 +860,10 @@ relaunch_shell_app() {
     [ "$UI_SHELL_INSTALLED" -eq 1 ] || return 0
     [ -n "$UI_APP_PATH" ] || return 0
     pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || return 0
+    # §61.8 upgrade handoff: without it the quitting shell stops an engine it spawned.
+    # A failed write only costs a recording gap; a failed relaunch leaves a stale key
+    # that the next shell launch clears.
+    defaults write "$UI_BUNDLE_ID" "$UI_ENGINE_HANDOFF_KEY" -string "$(date -u +%FT%TZ)" 2>/dev/null || true
     pkill -TERM -x "$UI_EXEC_NAME" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || break
