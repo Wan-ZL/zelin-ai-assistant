@@ -1753,11 +1753,12 @@ CRON_CLAUDE_DIR="$HOME/.local/bin"
 [ -n "$CLAUDE_LOGIN_BIN" ] && CRON_CLAUDE_DIR="$(dirname "$CLAUDE_LOGIN_BIN")"
 
 # process-screenpipe.sh exits 3 when another run holds the lock — that's a
-# skip, not a failure, so it must not break the chain (radar still runs).
+# skip, not a failure. The whole chain's output lands in state/ingest.cron.log
+# (CONTRACT §18; the radar tail and its radar.cron.log retired in v2.0.0).
 # AIASSISTANT_CRON=1 arms the FDA probe in screenpipe-export.sh (CONTRACT §25):
 # only real cron runs may write state/cron_probe.json — a manual in-app run
 # has the app's own disk access and would falsify the verdict.
-INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
+INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && { ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; }; } >> $REPO_ROOT/state/ingest.cron.log 2>&1"
 # Daily 09:07 fire WITHOUT --now (CONTRACT §17 D19): act.digest self-gates on
 # digest.frequency (off | daily | every2days | weekly, default off) + its
 # state/digest.json marker, so a cadence change in Settings needs no crontab

@@ -6,13 +6,18 @@ against a sandboxed HOME (fake vault) + sandboxed AIASSISTANT_HOME — with a st
 inbox the way the /unprocessed-ingest skill would (moves the note to ``2 - raw``),
 and never touches the network. Pinned behavior:
 
-  - both credential branches pass the same claude flags (``-p <prompt>`` +
-    ``--allowedTools Read,Write,Edit,Bash,Glob,Grep``); the prompt names the
-    inbox dir and falls back to the repo's SKILL.md when the vault has none;
+  - §78 isolation (constitution art.13): claude runs from the headless cwd (an
+    empty dir under the sandboxed CLAUDE_CONFIG_DIR, outside the repo tree) with
+    ``CLAUDE_CONFIG_DIR`` exported (an inherited value is overridden),
+    ``DISABLE_AUTOUPDATER=1`` and the argv ``-p <prompt> *ISOLATION_ARGV --add-dir
+    <vault> [--append-system-prompt-file <vault>/CLAUDE.md] --allowedTools
+    Read,Write,Edit,Bash,Glob,Grep`` (element for element ``act.llm.ISOLATION_ARGV``,
+    the empty ``--setting-sources`` value included); the prompt names the inbox, the
+    SKILL.md (the repo's copy when the vault has none) and says "Never run git.";
   - key file present (``config/secrets/anthropic-api-key.txt`` first, legacy
     ``~/.config/anthropic-key.txt`` second) → ``ANTHROPIC_API_KEY`` exported to
-    claude; no key file → the variable is NOT set and the log says so (fallback
-    to the CLI's own credentials, CONTRACT §19 order);
+    claude; no key at all → exit 1 with a line saying so and claude never launched
+    (``--bare`` reads no OAuth / keychain, so the 1.x CLI-credential fallback retired);
   - success → exit 0, "✅ Processing complete", the note left the inbox;
   - claude non-zero → the same exit code propagates + "❌ Processing failed";
   - inbox dir missing (vault gone / unconfigured) → exit 1 with a line naming
@@ -48,6 +53,8 @@ if [ -n "${ANTHROPIC_API_KEY+x}" ]; then
 else
     printf 'unset\n' > "$STUB_KEY"
 fi
+printf 'cwd=%s\nconfig=%s\nautoupdater=%s\n' "$(pwd -P)" "${CLAUDE_CONFIG_DIR:-}" \
+    "${DISABLE_AUTOUPDATER:-}" > "$STUB_ENV"
 if [ -n "${STUB_INBOX:-}" ] && [ -d "$STUB_INBOX" ]; then
     for f in "$STUB_INBOX"/*; do
         [ -f "$f" ] && mv "$f" "$STUB_RAW"/
@@ -56,6 +63,11 @@ fi
 echo "stub claude: ingest done"
 exit "${STUB_EXIT:-0}"
 """
+
+# act.llm.ISOLATION_ARGV, spelled here so this file never imports act (the tuple
+# equality itself is pinned by tests/test_ingest_claude_isolation.py)
+ISOLATION_ARGV = ["--bare", "--no-session-persistence", "--setting-sources", "",
+                  "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
 
 
 def setUpModule():
@@ -92,6 +104,8 @@ class IngestSmokeTestCase(unittest.TestCase):
         stub.chmod(0o755)
         self.argv_log = base / "claude.argv"
         self.key_log = base / "claude.key"
+        self.env_log = base / "claude.env"
+        self.claude_config = base / "claude-config"
         self.lock = base / "process.lock"
         self.log = base / "auto.log"
 
@@ -110,6 +124,10 @@ class IngestSmokeTestCase(unittest.TestCase):
             "PROCESS_SCREENPIPE_LOG": str(self.log),
             "STUB_ARGV": str(self.argv_log),
             "STUB_KEY": str(self.key_log),
+            "STUB_ENV": str(self.env_log),
+            "AIASSISTANT_CLAUDE_CONFIG_DIR": str(self.claude_config),
+            # a cron started from inside the owner's own Claude Code session inherits this
+            "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
             "STUB_INBOX": str(self.inbox),
             "STUB_RAW": str(self.raw),
         })
@@ -126,14 +144,31 @@ class IngestSmokeTestCase(unittest.TestCase):
     def _argv(self):
         return self.argv_log.read_text(encoding="utf-8").rstrip("\n").split("\n")
 
-    def _assert_claude_flags(self):
+    def _stub_env(self):
+        return dict(line.split("=", 1) for line in
+                    self.env_log.read_text(encoding="utf-8").splitlines())
+
+    def _assert_claude_flags(self, vault_claude_md=False):
         argv = self._argv()
         self.assertEqual(argv[0], "-p")
         prompt = argv[1]
         self.assertIn(str(self.inbox), prompt)
         # vault has no skill copy → the repo's SKILL.md is the fallback
         self.assertIn(str(REPO_SKILL), prompt)
-        self.assertEqual(argv[2:], ["--allowedTools", "Read,Write,Edit,Bash,Glob,Grep"])
+        self.assertIn("Never run git.", prompt)
+        tail = ["--add-dir", str(self.vault)]
+        if vault_claude_md:
+            tail += ["--append-system-prompt-file", str(self.vault / "CLAUDE.md")]
+        tail += ["--allowedTools", "Read,Write,Edit,Bash,Glob,Grep"]
+        self.assertEqual(argv[2:], ISOLATION_ARGV + tail)
+        env = self._stub_env()
+        cwd = Path(env["cwd"])
+        self.assertEqual(cwd, (self.claude_config / "cwd").resolve())
+        self.assertEqual(list(cwd.iterdir()), [], "the headless cwd stays empty")
+        self.assertNotIn(REPO.resolve(), (cwd, *cwd.parents))
+        self.assertEqual(env["config"], str(self.claude_config))
+        self.assertEqual(env["autoupdater"], "1")
+        self.assertFalse((self.home / ".claude").exists(), "the owner's Claude Code home untouched")
 
     def test_key_file_present_exports_the_key_and_processes(self):
         secrets = self.ai_home / "config" / "secrets"
@@ -158,14 +193,33 @@ class IngestSmokeTestCase(unittest.TestCase):
         self._assert_claude_flags()
         self.assertEqual(self.key_log.read_text(encoding="utf-8").strip(), "set:sk-ant-legacy-1111")
 
-    def test_no_key_file_falls_back_to_cli_credentials_with_same_flags(self):
+    def test_no_key_fails_loudly_without_launching_claude(self):
+        proc = self._run()
+        self.assertEqual(proc.returncode, 1, proc.stderr + self._log())
+        self.assertFalse(self.argv_log.exists(), "claude must not launch without a key")
+        self.assertIn("❌ no Anthropic API key", self._log())
+        self.assertNotIn("falling back to the claude CLI's own credentials", self._log())
+        self.assertTrue((self.inbox / "meeting.md").exists(), "nothing consumed")
+
+    def test_a_key_already_in_the_environment_is_used(self):
+        proc = self._run(ANTHROPIC_API_KEY="sk-ant-env-2222")
+        self.assertEqual(proc.returncode, 0, proc.stderr + self._log())
+        self.assertEqual(self.key_log.read_text(encoding="utf-8").strip(), "set:sk-ant-env-2222")
+
+    def test_the_vault_claude_md_is_appended_when_present(self):
+        (self.vault / "CLAUDE.md").write_text("# vault conventions\n", encoding="utf-8")
+        self._key()
         proc = self._run()
         self.assertEqual(proc.returncode, 0, proc.stderr + self._log())
-        self._assert_claude_flags()
-        self.assertEqual(self.key_log.read_text(encoding="utf-8").strip(), "unset")
-        self.assertIn("no API key file — falling back to the claude CLI's own credentials", self._log())
+        self._assert_claude_flags(vault_claude_md=True)
+
+    def _key(self):
+        secrets = self.ai_home / "config" / "secrets"
+        secrets.mkdir(parents=True, exist_ok=True)
+        (secrets / "anthropic-api-key.txt").write_text("sk-ant-test-0000\n", encoding="utf-8")
 
     def test_claude_failure_propagates_exit_code(self):
+        self._key()
         proc = self._run(STUB_EXIT="2")
         self.assertEqual(proc.returncode, 2)
         self.assertIn("❌ Processing failed (exit 2)", self._log())
