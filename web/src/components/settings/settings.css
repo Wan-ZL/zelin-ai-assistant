@@ -1,6 +1,6 @@
 /*
  * 设置页样式（§59 首个 section「模型」）。只引用 tokens.css 已有变量，不造新色值
- * （web/CONVENTIONS.md §主题）。页面骨架对齐回收站页（trash-page 的宽度/间距节拍）。
+ * （web/CONVENTIONS.md §主题）。页面骨架的宽度/间距节拍沿用 1.x 回收站页（v2.0.0 随看板退役）。
  */
 
 .settings-page {

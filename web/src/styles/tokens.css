@@ -228,11 +228,10 @@
   --type-card-fine-mono: var(--w-regular) calc(9px * var(--text-scale))/1.4 var(--font-mono);
   --type-chip: var(--w-semibold) calc(10px * var(--text-scale))/calc(16px * var(--text-scale)) var(--font-sans);
   --type-button: var(--w-regular) calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--font-sans);
-  /* 卡面小节头（合并建议卡 / chrome.css 沿用；详情侧栏自有 detail.css，D34） */
-  /* 列 */
+  /* 区块标题 / 说明（各页的区头与帮助句沿用 1.x 的列头字级） */
   --type-lane-title: var(--w-semibold) calc(12px * var(--text-scale))/1.4 var(--font-sans);
   --type-lane-help: var(--w-regular) calc(12px * var(--text-scale))/1.55 var(--font-sans);
-  /* 列顶输入框 */
+  /* 正文输入 / 提示（对话框正文、输入框；沿用 1.x 列顶输入框的字级） */
   --type-composer: var(--w-regular) calc(12px * var(--text-scale))/1.4 var(--font-sans);
   --type-composer-hint: var(--w-regular) calc(10px * var(--text-scale))/1.4 var(--font-sans);
   /* 侧栏 / 顶栏 */
