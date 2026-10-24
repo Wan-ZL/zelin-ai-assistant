@@ -270,7 +270,7 @@
       "id": "contract:§19",
       "source": "contract",
       "scenario": "凭证与 secrets（跨组件契约，两侧逐字一致）",
-      "proof": "unittest:tests.test_checks_environment_mutation_kills_train,tests.test_doctor,tests.test_launchd_render,tests.test_llm_boundary",
+      "proof": "unittest:tests.test_checks_environment_mutation_kills_train,tests.test_doctor,tests.test_ingest_claude_isolation,tests.test_launchd_render",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1530,11 +1530,11 @@
       "id": "contract:§72.5",
       "source": "contract",
       "scenario": "边界（明确不做）",
-      "proof": "unittest:tests.test_background_jobs_mutation_kills_train,tests.test_config_cli,tests.test_config_cli_print,tests.test_config_load_blocks",
+      "proof": "unittest:tests.test_isolation_footprint",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "parent-cite"
+      "note": null
     },
     {
       "id": "contract:§73",
