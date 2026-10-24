@@ -108,12 +108,12 @@ claude CLI 有两套互不相通的凭据，而这个项目的不同组件用到
 | **OAuth（Pro/Max 订阅）** | `claude` 登录后存进 macOS Keychain 的订阅凭据 | 只有你 GUI 登录会话里的进程（交互终端等） | 计入订阅额度，不另付费 |
 | **API key（`sk-ant-…`）** | [console.anthropic.com](https://console.anthropic.com) 签发的 metered key，以文件形式存放 | 任何进程，包括 cron / launchd 的 daemon session | 按 token 计费（API 账单） |
 
-**为什么 headless 必须用 key 文件**：cron 和 launchd agents 跑在 daemon session 里，macOS 有两层沙箱把 OAuth 挡死——Keychain 只对 GUI 会话开放，而 `launchctl asuser` 也无法从 cron 的 daemon audit session 桥接过去（细节见 `ingest/process-screenpipe.sh` 顶部注释块）。因此：
+**为什么 headless 必须用 key 文件**：cron 和 launchd agents 跑在 daemon session 里，macOS 有两层沙箱把 OAuth 挡死——Keychain 只对 GUI 会话开放，而 `launchctl asuser` 也无法从 cron 的 daemon audit session 桥接过去（细节见 CONTRACT §19 与 §78）。因此：
 
 - **需要 key 文件**的组件（全部 headless，under cron/launchd）：ingest 链（`process-screenpipe.sh`）、各 radar、状态 digest、actd 派发的 `claude --bg` 执行。
 - **订阅凭据就够**的场景：你在终端手动跑 `claude`（交互 session 读得到 Keychain）。
 
-**ingest 的 fallback 行为**（其余 headless 组件同理）：按 CONTRACT §19 顺序解析 key——`config/secrets/anthropic-api-key.txt` → 旧路径 `~/.config/anthropic-key.txt`；**两个文件都没有时不会立刻失败**，而是回落到 claude CLI 自己存储的凭据试跑。在常年保持登录的 Mac（如 Mac mini）上这条兜底路经常能通（此时计入订阅额度）；不通时错误只落在 `/tmp/screenpipe-auto.log`，表面症状是「radar 静默数天不出卡」。**别赌这条兜底**——贴一个 key 文件才是可靠路径。
+**没有 key 时的行为**：按 CONTRACT §19 顺序解析 key——进程环境里的 `ANTHROPIC_API_KEY` → `config/secrets/anthropic-api-key.txt` → 旧路径 `~/.config/anthropic-key.txt`。每一次 headless `claude -p` 都带 `--bare` 在应用自己的 `CLAUDE_CONFIG_DIR` 里运行（§78），它**永不读** claude CLI 存的 OAuth 凭据或钥匙串，所以没有回落路径：三处都没有 key 时 ingest 以退出码 1 失败，`/tmp/screenpipe-auto.log` 里一行 `❌ no Anthropic API key`，claude 不起；会议纪要同样失败并写进 `state/recap.log`。
 
 **计费预期**：key 文件存在时，所有 headless 用量按 API 计费（不消耗订阅额度）。量级参考：ingest 每 30 分钟一次 headless 调用（≈48 次/天，时长随积压素材量波动）+ 每张批准的卡一个执行 session。建议在 console.anthropic.com 设 spend limit，观察第一周的实际用量再调。
 

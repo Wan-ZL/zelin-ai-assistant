@@ -28,7 +28,10 @@
    （§63.6；tests/test_recap_store.py）
 2. **一切可逆**：用户可见的破坏性动作都有回程票——纪要的每一版进 history、可回退（§63.9），
    归档 / 忽略可恢复（§63.5）。自动删除只许经设置页可见的保留期旋钮（§72）与 §63.5 的 90 天
-   纪要清理，每轮留回执。（tests/test_recap_revert.py；tests/test_screenpipe_retention.py）
+   纪要清理，每轮留回执。唯一的第三处是 §72.5 的 a11y 日清（owner 2026-10-23 决定并入 cron 链）：
+   只清引擎自己的无障碍树 / 无障碍文本 / ui_events 缓存（早于 1 天），OCR 文本与音频转写一行不碰，
+   每天一张回执。（tests/test_recap_revert.py；tests/test_screenpipe_retention.py；
+   tests/integration/test_cleanup_a11y_prune.py）
 3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类，
    「坏掉的通道」与「没有新数据」严格区分。（§25 的 lite id 子集；§72.4 清理回执；
    tests/test_failures.py、tests/test_server_health.py）
@@ -65,7 +68,9 @@
    `claude -p` 都经 `act/llm.py` 或 `ingest/claude-env.sh` 的**同一组常量**（`CLAUDE_CONFIG_DIR`、
    `HEADLESS_CWD`、`ISOLATION_ARGV`）运行；不依赖 owner 用的任何 Claude Code 前端或第三方
    session 索引器；常驻足迹是一张封闭清单（§78）——清单之外的任何 LaunchAgent / cron 行 /
-   登录项都属违宪；卸载逐项删干净。（§78；tests/test_isolation_footprint.py）
+   登录项都属违宪；卸载逐项删干净。例外只有 §78 点名的两处，都只针对本 repo 留下的 skills 软链：
+   install.sh 的 1.x 迁移 unlink 它们，doctor 的足迹行只列名字与链接目标（不读内容、不写）。
+   （§78；tests/test_isolation_footprint.py）
 
 ## 1. 注册表（卡片账本）— 真源与字段 —（retired v2.0.0，全文见 tag full）
 
@@ -308,6 +313,34 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 ## 17. 周一 digest + Manager pack —（retired v2.0.0，全文见 tag full）
 
 ## 18. 定时任务归一（ingest 切换）
+
+> **§18 v2.0.0 修订（PR-D；本块为准，下文是历史正文）**：
+> - **crontab 一行**（`install.sh` `INGEST_CHAIN`）：`*/30 … cd <repo> && export PATH=<claude 目录>:$PATH
+>   AIASSISTANT_CRON=1 && { ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh &&
+>   { ./ingest/process-screenpipe.sh || [ $? -eq 3 ]; }; } >> <repo>/state/ingest.cron.log 2>&1`。
+>   `&& python -m act.radar --once` 尾巴与 `state/radar.cron.log` 随雷达退役；整条链的输出落
+>   `state/ingest.cron.log`（此前 export / cleanup / process 的 stdout 只进 cron 邮件）。
+>   `process-screenpipe.sh` 自己的日志 `$PROCESS_SCREENPIPE_LOG`（默认 `/tmp/screenpipe-auto.log`）不变。
+> - **ingest 的 claude 按 §78 运行**：`process-screenpipe.sh` source `ingest/claude-env.sh`（`CLAUDE_CONFIG_DIR`、
+>   `DISABLE_AUTOUPDATER=1`、`ANTHROPIC_API_KEY`、`CLAUDE_BIN` = `python3 -m act.lib.config --print-value claude_bin`、
+>   `HEADLESS_CWD` = `--print-path headless_cwd`、`ISOLATION_ARGV` bash 数组），然后
+>   `cd "$HEADLESS_CWD"` 再起 `"$CLAUDE_BIN" -p <prompt> "${ISOLATION_ARGV[@]}" --add-dir "$VAULT"
+>   [--append-system-prompt-file "$VAULT/CLAUDE.md"] --allowedTools Read,Write,Edit,Bash,Glob,Grep`。cwd 在 repo
+>   树外，vault（direct 模式是真 vault，mirror 模式是 `state/vault-mirror/`）经 `--add-dir` 进来；`--bare` 关了
+>   CLAUDE.md 自动发现，所以 vault 自己的 CLAUDE.md（wiki 约定）显式注入，**文件在才带**（claude 拒收不存在的
+>   文件）；SKILL.md 照旧按绝对路径写进 prompt。prompt 末尾多一句 `Never run git.`（mirror 在 repo 的 git 树里，
+>   本机出现过 10 个来源不明的空 ledger commit）。
+> - **凭证分支退役**：「两个 key 文件都没有 → 回落到 claude CLI 自带凭据」那条路删除（`--bare` 不读 OAuth /
+>   钥匙串）。**没有 key = 退出码 1**，日志一行 `❌ no Anthropic API key (…)`，claude 不起；退出码词表因此是
+>   `0` 完成 / 空 inbox，`1` inbox 不可读 / vault 不可达 / 找不到 claude / 没有 key / headless cwd 进不去，`3` 另一轮持锁，
+>   其余 = claude 自己的退出码。claude 的二进制不再由脚本自己找（`/opt/homebrew/bin` 等候选退役），与 recap 用同一个
+>   `config.resolve_claude_bin`。
+> - **cron 链第二步多一件事**：每天一次的 a11y 瘦身（§72.5），取代仓外的 `com.zelin.screenpipe-prune`
+>   LaunchAgent；`ingest/launchd/` 两个 plist 删除（`com.zelin.screenpipe-process` 早已不用）。
+> - 判例：`tests/integration/test_ingest_smoke.py`（桩 claude 记 argv / cwd / env：argv 逐元素 = `ISOLATION_ARGV`
+>   + vault 旗标，cwd = 沙箱 `claude-config/cwd`，继承来的 `CLAUDE_CONFIG_DIR` 被覆盖，没有 key → exit 1 且 claude
+>   不起）、`tests/test_ingest_claude_isolation.py`（两个脚本的字面量）、`tests/integration/test_cleanup_a11y_prune.py`。
+
 install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 内脚本，并在链尾追加 `&& python -m act.radar --once`（cron 有 FDA，radar 可读 ~/Documents）。Screenpipe-Export.command 改为调 repo 脚本（主窗口"立即导出"同源）。
 
 2026-07-14 追加（add-only）：**vault-mirror 模式（claude TCC 身份隔离）**。事故：
@@ -369,6 +402,9 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 > `--bare` 不读它们）。`slack-user-token.txt` / `gmail-app-password.txt` 两行随雷达退役：文件留在盘上也
 > 永不被读，`PUT /api/secrets/<它们>` = 404。字幕的两把火山 key 暂留在 `server/secrets_store.py` 的
 > 表里，随 Live captions 在 PR-B 退役。
+> **shell 侧（PR-D）**：ingest 链的读取方是 `ingest/claude-env.sh`（`process-screenpipe.sh` source 它），顺序与
+> `act/llm.runner_env` 逐条相同（环境 → secrets 文件 → `~/.config/anthropic-key.txt`，各取首个非空行并去空白）；
+> 没有 key 时 ingest 以退出码 1 失败（§18 v2.0.0 修订），不再回落到 claude CLI 自带凭据。
 
 - **SECRETS 目录** = `<AIASSISTANT_HOME>/config/secrets/`，目录权限 **0700**、文件权限 **0600**（App 设置窗口写入方与 `act/lib/secrets.write_secret` 均强制）。gitignore：`config/secrets/`。
 - **固定文件名**（各一行纯 token）：
@@ -1778,7 +1814,9 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
 - 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧
   `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
 - `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
-  无 WorkingDirectory、bash 绝对路径）本就合规，不动。
+  无 WorkingDirectory、bash 绝对路径）本就合规，不动。**v2.0.0 追记**：该模板与
+  `com.zelin.screenpipe-process.plist` 一并删除（retired v2.0.0），a11y 日清并入 cron 链第二步（§72.5）；
+  装在机器上的同名 plist 属 §78 封闭足迹之外，doctor 的 `isolation footprint` 行报它。
 
 **第三幕：claude 可执行文件对任务目录 TCC-blind（v0.48.4；live 事故 2026-08-31，
 2026-09-01 审查证伪首版结论后修订）**：launchd 起的 actd 每次 `claude --bg`
@@ -2952,7 +2990,7 @@ exit 0、`actd --once` 全部通过。
   导出标记 = `~/.screenpipe/export_markers/last_frame_id` / `last_audio_id`（`ingest/screenpipe-export.sh` 每轮推进）：
   **id 在标记之前 = 它的文本已写进 vault `2 - raw`**，那份笔记就是这条数据的回程票——本节据此**不修宪**（宪法第 2 条
   「绝无不可恢复的自动删除」：删的只是 vault 里已有副本的引擎缓存行；未导出的一行不碰、标记缺席 = 0 = 一行不删）。
-  `video_chunks` / `audio_chunks` 元数据行与 a11y 日清（本机 launchd `com.zelin.screenpipe-prune`，§55 提到的 plist）不在本节范围。
+  `video_chunks` / `audio_chunks` 元数据行与 a11y 日清（v2.0.0 起是 cleanup 脚本的每日一步，§72.5）不在本节范围。
 - **怎么删**：分批短事务（`BATCH` 条 / 笔，`PRAGMA busy_timeout`——引擎同时在写）+ 单轮时间预算 `MAX_SECONDS`
   （用尽即停、回执 `budget_exhausted: true`，下一轮 30 分钟 cron 接着删）；**不 VACUUM**（要独占锁）——释放的页由新数据复用，
   文件大小到达稳态而不是立刻缩小，§72.1 的「可复用」字节就是这个数。`--dry-run` 只数不删。
@@ -3047,7 +3085,20 @@ exit 0、`actd --once` 全部通过。
 - **不删备份**：`db.sqlite.bak*` 只报路径与大小（§72.1），永不提供删除按钮——不可恢复的删除留给用户在访达里亲手做（宪法第 2 条）。
 - **不 VACUUM、不压缩 db.sqlite**：要独占锁，引擎同时在写；释放的页由新数据复用，设置页用 `freelist` 字节解释「为什么没变小」（§72.1/§72.2）。
 - **不按「磁盘快满了」自动调保留期**：删数据的决定不替用户做（宪法第 2 条）；软件只把数字和回执摆出来。
-- **不给清理另起 launchd 任务**：`ingest/launchd/com.zelin.screenpipe-prune.plist` 指向一个不在本仓库的 a11y 脚本，与 §18 cron 链的这一步无关，本节不动它。
+- **不给清理另起 launchd 任务**（v2.0.0 改写）：a11y 日清是 `ingest/screenpipe-cleanup.sh` 的第三步，不再是
+  独立 LaunchAgent。SQL 原样搬自仓外的 `~/.local/bin/screenpipe-prune-a11y.sh`（`com.zelin.screenpipe-prune` 每天
+  04:00 跑它；该 agent 随 §78 封闭足迹退役，`ingest/launchd/` 两个 plist 删除）：
+  - **清什么**：早于 1 天的帧把 `accessibility_tree_json` / `accessibility_text` 置 NULL，删它们的
+    `elements`（`source='accessibility'`）与早于 1 天的 `ui_events`；OCR 文本、OCR elements、音频转写与帧本身一行
+    不碰（宪法第 2 条修宪段点名的第三处自动删除）。这个引擎版本采集时关不掉 a11y 树，不清会把库撑大、写入变慢。
+  - **多久一次**：每个本地日一次。看回执的 `date`：是今天就跳过；不论成败一天只试一次，失败写进回执，第二天再试。
+  - **怎么删**：`PRAGMA busy_timeout=120000`，引擎录制中照样安全（等锁、触发器照常、`*_fts` 一致）；**不 VACUUM**。
+  - **回执** `state/screenpipe_a11y_prune.json`（覆盖写 + 原子 rename，单文件无增长）：`ts`（UTC）/ `date`（本地）/
+    `state`（`ok | error | no_db | no_sqlite`）/ `rc` / `db` / `before` / `after`（各是
+    `{a11y_frames, a11y_elements, ui_events}`，数不出来 = null）。没有 db = `no_db`，不当失败，也不建库。
+  - 本步同样**永远 exit 0**（脚本的老规矩）；sqlite3 = `/usr/bin/sqlite3`，否则 PATH 上的；env 缝
+    `ZAI_SCREENPIPE_A11Y_RECEIPT` / `ZAI_SQLITE3` 只为判例。设置页暂不投影这张回执（只有 doctor / 人读）。
+    判例 `tests/integration/test_cleanup_a11y_prune.py`。
 - **不动录制引擎自己的 `--retention-days`**：那是 screenpipe 的旋钮（docs/PRIVACY.md 记着），本节只管本软件的两步清理。
 - **不在首次运行向导里加这一屏**（issue 的 optional 项）：设置页那一区就是落点，向导不预支。
 - **不给媒体清理发系统通知**：`stale` 只在设置页显示——打扰要有资格（宪法第 10 条），一个清理没跑不需要半夜弹窗。
@@ -3181,8 +3232,12 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 `act/lib/config.py`（`APP_SUPPORT_DIR` / `CLAUDE_CONFIG_DIR` / `HEADLESS_CWD`，`claude_config_dir()` /
 `headless_cwd()`；环境变量 `AIASSISTANT_CLAUDE_CONFIG_DIR` 整体搬家，测试沙箱用它），经
 `python3 -m act.lib.config --print-path claude_config_dir|headless_cwd` 与 `--print-value claude_bin` 暴露给 shell；
-shell 侧由 `ingest/claude-env.sh`（PR-D）读同一组值。`tests/test_isolation_footprint.py` 钉 Python 侧字面量，并在
-`ingest/claude-env.sh` 存在时断言两侧逐字相等。
+两个目录都在第一次取用时建好（0700）。shell 侧是 `ingest/claude-env.sh`：`CLAUDE_CONFIG_DIR` 写同一个字面量
+（`$HOME/Library/Application Support/ZelinAIAssistant/claude-config`，同一条 `AIASSISTANT_CLAUDE_CONFIG_DIR` 缝，
+继承来的 `CLAUDE_CONFIG_DIR` 一律覆盖），`HEADLESS_CWD` / `CLAUDE_BIN` 经上面的 CLI 取（python 不可用时回落到
+`<CLAUDE_CONFIG_DIR>/cwd` 与 PATH），`ISOLATION_ARGV` 是一个 bash 数组（`--setting-sources` 的空串参数在字符串里
+会被分词吃掉），另导出 `DISABLE_AUTOUPDATER=1` 与 §19 顺序解析出的 `ANTHROPIC_API_KEY`。`tests/test_isolation_footprint.py`
+断言两侧路径与 argv 逐字相等，`tests/test_ingest_claude_isolation.py` 对两个 ingest 脚本做字面量检查。
 
 **argv**：`ISOLATION_ARGV = ("--bare", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
 "--mcp-config", '{"mcpServers":{}}')`（`act/llm.py`）。`--bare` 跳过 hooks、plugin 同步、钥匙串与 CLAUDE.md 自动发现；
@@ -3198,16 +3253,23 @@ key = doctor `anthropic key` 行 FAIL、`claude auth` 行如实写跳过。
 
 **不读不写 owner 的 Claude Code 目录**：`act/`、`server/`、`ingest/`、`shell/`、`web/src/`、`scripts/` 里不出现
 `~/.claude`、`.claude/settings`、`.claude/skills`、`.claude/projects`、`.claude.json`（tombstone 注释除外；vault 自己的
-`$VAULT/.claude/skills/...` 不是 owner 的目录）。`install.sh` 是唯一例外——1.x 迁移时只 unlink `~/.claude/skills`
-里**指向本 repo** 的软链。尚未清干净、由后续切片删除的文件登记在判例的 `PENDING` 表里（只许缩）。
+`$VAULT/.claude/skills/...` 不是 owner 的目录）。例外两处，都只针对本 repo 留下的 skills 软链：`install.sh`（不在
+grep 门的扫描范围）1.x 迁移时只 unlink `~/.claude/skills` 里**指向本 repo** 的软链；doctor 的足迹探针
+（`act/lib/checks/launchd.py` `owner_skills_dir` / `repo_skill_links`）只 `listdir` + `lstat` / `readlink`，列出指进本
+repo 的软链名，不读文件内容、不写。判例钉住 act/ server/ ingest/ 里只有这一个文件写 `".claude"` 字面量。尚未清干净、
+由后续切片删除的文件登记在判例的 `PENDING` 表里（只许缩）。
 
 **封闭的常驻足迹**（清单之外的任何 agent / cron 行 / 登录项都属违宪）：
 1. launchd `com.zelin.aiassistant.server`——唯一的 LaunchAgent 模板（`act/launchd/`），唯一的 `RESIDENT_LABELS`；
 2. crontab 一行：`*/30` ingest 链（export → cleanup → process），无 radar 尾巴；
 3. `SMAppService` 登录项（opt-in，壳内切换）；
 4. screenpipe 引擎：壳 detached 派生或接管现成进程。
-doctor 的 `isolation footprint` 行（WARN `isolation_footprint_violation`）指出模板集合之外的 `com.zelin.*` plist、
-退役模块的 cron 行与第二条 ingest 链；`launchd orphans` 行同 id。
+doctor 的 `isolation footprint` 行（WARN `isolation_footprint_violation`）是真探测：`~/Library/LaunchAgents` 里模板
+集合之外的 `com.zelin.aiassistant.*` / `com.zelin.screenpipe-*` plist（1.x agent、退役的 ingest / prune agent），
+退役模块的 cron 行与第二条 ingest 链，以及 owner skills 目录里指进本 repo 的软链（1.x `skills_sync.sh` 的残留）。
+缺 ingest 链不算足迹项，由 `cron ingest chain` 行 FAIL；`launchd orphans` 行同 id。`claude bare supported` 行跑
+`claude --help`，五个隔离旗标缺一 = FAIL，`--help` 没输出 = WARN，没有 claude = 不出这一行（`claude CLI` 行已 FAIL）。
+判例 `tests/test_doctor.py`、`tests/test_doctor_default_probes.py`。
 
 **install.sh 的 1.x 迁移义务**（PR-D 落地）：bootout + 删除 1.x 的 actd / autodeploy / 雷达 / syncd / weeklydigest
 agent 与 `com.zelin.screenpipe-{process,prune}`，剥掉 `act.radar` / `act.digest` / `act.analytics_sync` cron 行，
