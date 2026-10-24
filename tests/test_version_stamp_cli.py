@@ -1,15 +1,16 @@
-"""scripts/version_stamp.py 的纯文本部分判例（CONTRACT §56.1）：iOS pin 盖章与占位门。
+"""scripts/version_stamp.py 的纯文本部分判例（CONTRACT §56.1）：占位门。
 
-  - stamp_pins：project.yml 的 `MARKETING_VERSION: "0.0.0-dev"` 与 pbxproj 的
-    `MARKETING_VERSION = 0.0.0-dev;` 两种形状都换值、别的键不动；
-  - pin_values 抽出每处当前值；
-  - do_check_pins：仓库里提交的两份 pin 文件此刻必须全是占位（本判例同时钉住
-    真源树——有人手 bump 就在这里红）；
-  - do_ios 在 fixture 副本上改写、真源树零触碰；找不到 pin = rc 1。
+  - v2.0.0 起 ``version.PIN_FILES`` 为空（iOS 的两处 MARKETING_VERSION 占位随 ios/
+    退役）：``--check-pins`` 对真源树恒 rc 0，``--ios`` 已不是合法参数；
+  - pin_values 抽出每处当前值（yml 与 pbxproj 两种形状）；
+  - do_check_pins 的判定本身仍在：注入一份 pin 文件清单时，全是占位 → 0，
+    出现别的值或一处都没有 → 1（将来哪个构建物再要提交的 pin，加进
+    PIN_FILES 就复用这把尺）。
 零 subprocess（git 夹具在 tests/integration/test_version_git_fixture.py）。
 """
+import contextlib
+import io
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -36,60 +37,55 @@ PBX = '''\t\t\t\tMARKETING_VERSION = 0.0.0-dev;
 '''
 
 
-class StampPinsTestCase(unittest.TestCase):
+class PinValuesTestCase(unittest.TestCase):
     def test_yaml_shape(self):
-        new, n = version_stamp.stamp_pins(YML, "0.48.17")
-        self.assertEqual(n, 1)
-        self.assertIn('MARKETING_VERSION: "0.48.17"', new)
-        self.assertIn('CURRENT_PROJECT_VERSION: "1"', new)
-        self.assertEqual(version_stamp.pin_values(new), ["0.48.17"])
+        self.assertEqual(version_stamp.pin_values(YML), ["0.0.0-dev"])
 
     def test_pbxproj_shape_both_configurations(self):
-        new, n = version_stamp.stamp_pins(PBX, "0.48.17+3")
-        self.assertEqual(n, 2)
-        self.assertEqual(new.count("MARKETING_VERSION = 0.48.17+3;"), 2)
-        self.assertIn("PRODUCT_BUNDLE_IDENTIFIER = com.zelin.ai;", new)
-        self.assertEqual(version_stamp.pin_values(new), ["0.48.17+3", "0.48.17+3"])
+        self.assertEqual(version_stamp.pin_values(PBX), ["0.0.0-dev", "0.0.0-dev"])
 
-    def test_no_pin_no_change(self):
-        self.assertEqual(version_stamp.stamp_pins("nothing here\n", "1.2.3"), ("nothing here\n", 0))
+    def test_no_pin(self):
+        self.assertEqual(version_stamp.pin_values("nothing here\n"), [])
 
 
-class PinFilesOnDiskTestCase(unittest.TestCase):
+class NoCommittedPinsTestCase(unittest.TestCase):
+    def test_pin_files_are_empty_since_ios_retired(self):
+        self.assertEqual(ver.PIN_FILES, ())
+        self.assertEqual(ver.PIN_PLACEHOLDER, "0.0.0-dev")
+
+    def test_check_pins_on_the_real_tree_passes(self):
+        self.assertEqual(version_stamp.do_check_pins(REPO), 0)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(version_stamp.main(["--check-pins", "--repo-root", str(REPO)]), 0)
+
+    def test_ios_flag_is_gone(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            version_stamp.main(["--ios"])
+        self.assertEqual(cm.exception.code, 2)
+
+
+class CheckPinsJudgementTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="pins-"))
-        for rel in ver.PIN_FILES:
-            dst = self.tmp / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(str(REPO / rel), str(dst))
+        (self.tmp / "a.yml").write_text(YML, encoding="utf-8")
+        (self.tmp / "b.pbxproj").write_text(PBX, encoding="utf-8")
+        self.files = ("a.yml", "b.pbxproj")
 
-    def test_committed_pins_are_the_placeholder(self):
-        # the real tree: a hand bump anywhere in the two files turns this red
-        self.assertEqual(version_stamp.do_check_pins(REPO), 0)
-        for rel in ver.PIN_FILES:
-            values = version_stamp.pin_values((REPO / rel).read_text(encoding="utf-8"))
-            self.assertTrue(values, rel)
-            self.assertEqual(set(values), {ver.PIN_PLACEHOLDER}, rel)
+    def _check(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            return version_stamp.do_check_pins(self.tmp, self.files)
 
-    def test_do_ios_rewrites_the_copy_only(self):
-        self.assertEqual(version_stamp.do_ios("0.48.17", self.tmp), 0)
-        for rel in ver.PIN_FILES:
-            self.assertEqual(set(version_stamp.pin_values((self.tmp / rel).read_text(encoding="utf-8"))),
-                             {"0.48.17"}, rel)
-            # the real tree is untouched
-            self.assertEqual(set(version_stamp.pin_values((REPO / rel).read_text(encoding="utf-8"))),
-                             {ver.PIN_PLACEHOLDER}, rel)
-        self.assertEqual(version_stamp.do_check_pins(self.tmp), 1, "stamped copies must fail the placeholder gate")
+    def test_all_placeholders_pass(self):
+        self.assertEqual(self._check(), 0)
 
-    def test_do_ios_fails_when_layout_changed(self):
-        (self.tmp / ver.PIN_FILES[0]).write_text("settings: {}\n", encoding="utf-8")
-        self.assertEqual(version_stamp.do_ios("0.48.17", self.tmp), 1)
+    def test_mixed_values_fail(self):
+        path = self.tmp / "b.pbxproj"
+        path.write_text(PBX.replace("0.0.0-dev", "0.48.17", 1), encoding="utf-8")
+        self.assertEqual(self._check(), 1)
 
-    def test_check_pins_fails_on_mixed_values(self):
-        path = self.tmp / ver.PIN_FILES[1]
-        text = path.read_text(encoding="utf-8").replace("MARKETING_VERSION = 0.0.0-dev;", "MARKETING_VERSION = 0.48.17;", 1)
-        path.write_text(text, encoding="utf-8")
-        self.assertEqual(version_stamp.do_check_pins(self.tmp), 1)
+    def test_a_file_without_any_pin_fails(self):
+        (self.tmp / "a.yml").write_text("settings: {}\n", encoding="utf-8")
+        self.assertEqual(self._check(), 1)
 
 
 if __name__ == "__main__":
