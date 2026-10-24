@@ -125,7 +125,7 @@ enum NotifyRelay {
         guard !overflow.isEmpty else { return }
         let content = UNMutableNotificationContent()
         content.title = L("还有 \(overflow.count) 条通知", "+\(overflow.count) more notifications")
-        content.body = L("打开 App 查看看板", "Open the app to see the board")
+        content.body = L("打开 App 查看会议纪要", "Open the app to see the recaps")
         center.add(UNNotificationRequest(identifier: "notify-relay-overflow-\(UUID().uuidString)",
                                          content: content, trigger: nil))
         for e in overflow { try? fm.removeItem(atPath: e.path) }

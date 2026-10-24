@@ -120,7 +120,9 @@
 > 优先级最高；写者 = server（`PUT /api/settings/{section}` / `/api/settings/models` / `/api/settings/display` /
 > `/api/settings/recap`），值等于「不含该 override 的 effective 值」= 删键；**壳不写 overrides**。
 > ② **`language`**（`"zh"|"en"`）：唯一的界面语言开关，web 设置页写、壳与 Python 侧读（§61.1 `setLanguage` 只同步
-> 壳的 `L()` 镜像）。
+> 壳的 `L()` 镜像）。目录 help 随看板退役改写为「界面、系统通知与修法句共用这一把开关：顶栏切换与这里改的都是同一个值。」
+> / "One switch for the interface, system notifications and fix sentences: …"（`server/settings_catalog.py`；
+> e2e `languageSingleSource.spec.ts` 钉中文半句）。
 > ③ **录制三态** `recordingMode` ∈ `"off"|"screen"|"screen_audio"` + `lastActiveRecordingMode`（壳 UserDefaults，域
 > `com.zelin.ai-board`）；fresh install 无键 = `off`（P0-11）；**consent** 的落点 = web 权限页的录制同意块
 > （`RecordingConsentSection`）经桥 `setRecording`。§61 re-home 注记照旧：引擎住 `shell/`，`shell/Sources/Recording.swift`
@@ -856,6 +858,8 @@ release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并�
 > `tests/test_server_notify_preferences_settings.py`。`notify_catalog` 里只为 §66.2 探针存在的
 > `kind_names` / `fragments` / `same_template` / `sentences` / `has_sentence` 不是活的 server 面：唯一
 > 生产调用方 `scripts/ui/parity_check.py` 已不在门里（§66 墓碑），PR-C 删 `scripts/ui/` 时一并删除。
+> 中继汇总那条（`relay_overflow`）的正文随看板退役改为「打开 App 查看会议纪要」/「Open the app to see the
+> recaps」（PR-B；`server/notify_catalog.py` 与 `shell/Sources/NotifyRelay.swift` 逐字同改），标题不变。
 
 **目标**：python daemons 的系统通知以 **Zelin's AI Assistant** 的身份/图标弹出，
 不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方）

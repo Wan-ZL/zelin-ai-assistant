@@ -6,3 +6,4 @@ type: changed
 - **升级和重启壳不再打断录制**：壳启动时如果已有本 app 配方（`screenpipe@0.3.349 record … --ignored-windows …`）的录制引擎在跑，就直接接管它（记下 pid，写进 `~/Library/Application Support/ZelinAIAssistant/engine.pid`），不再先杀再起；别的引擎只记一行日志、不碰。手动退出壳时只停壳自己启动、此刻还在跑的那一台；安装器重启壳（自动部署路径）和升级脚本都会先写下 `engineHandoff` 偏好，这时一台都不停，新壳接管后清掉它。在页面上关闭录制照旧立即生效。
 - **壳的连接探针改为 `GET /api/health`**；签名证书的一次性生成脚本搬到 `shell/scripts/make-signing-cert.sh`（签名身份与 bundle id `com.zelin.ai-board` 不变，屏幕录制授权不受影响）。
 - **设置页「不录制的应用 / 窗口」对录制引擎本身生效**：壳在启动录制时先读这一项，再读 config.yaml 的 `recording.ignored_apps`。
+- **不再提到看板的文案**：通知太多时的汇总通知正文改为「打开 App 查看会议纪要」，权限页「完全磁盘访问」里壳那一行写作「app（壳）」，通用设置里语言开关的说明改为「界面、系统通知与修法句共用这一把开关」，关于页「登录时启动」的推荐理由改为「重启后录制才能自动恢复」（不再说菜单栏助手常驻）。
