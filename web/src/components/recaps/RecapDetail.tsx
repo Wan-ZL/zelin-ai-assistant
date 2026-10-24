@@ -1,19 +1,20 @@
 // 会议纪要页右侧详情（CONTRACT §63 / §63.10 / §63.11 / issue #129 §3）：segmented 中文 | English、正文、
-// 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」/ 开关开着时「投到 Slack 草稿」。
+// 复制 / 标记已发送 / 重新生成（≤500 字纠正备注）/ OPEN 行「现在生成」。
 // 唯一出口是剪贴板：复制 = navigator.clipboard + 本地标记（§63.5 追记：写出去的是「一行表头 + 5 行正文」，
-// 表头与 h3 同一个 recapHeader(row, language)——所见即所复制；存储仍恰是 5 行）；重新生成 / 投草稿走 inbox 特形动作
-// （recap_generate / recap_slack_draft，字段逐字按 §63，多一个键 server 400）。
+// 表头与 h3 同一个 recapHeader(row, language)——所见即所复制；存储仍恰是 5 行）；重新生成 = `POST /api/recaps/generate`
+// （server 派生 act.recap，字段逐字按 §63，多一个键 server 400）。v2.0.0：「投到 Slack 草稿」随 §63.4 退役（§78 隔离下的
+// claude 没有 Slack MCP）。
 // §63.8（issue #297）：重新生成排队后面板不再装死——状态行说「排队中 / 正在生成」、两颗生成按钮禁用，
-// 新版本随 board 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没人接手说
-// 「actd 可能没在跑」并解锁按钮；actd 回执 lost / noop 各一句人话。
+// 新版本随 /api/recaps 回流落地时闪一句「已更新到第 N 版」（落地无正文则按 quality 说清）；90 s 没落地说
+// 「recap 子进程可能没起来」并解锁按钮；server 回执 lost / noop 各一句人话。
 // §63.3 追记（issue #298）：needs_review 不再只有一句「校验未通过」——脚注按 wire 的结构化 problems[]
 // 逐条说清语言 + 行号 + 超出量（纠正备注可以照着写），落地前被自动修剪的行按 repairs[] 一并摊开。
 // §63.9（issue #300）：「上一版…」打开版本面板——`GET /api/recaps/history?key=` 读存着的每一版（正文只在
-// 这条路上，看板投影只带标量句柄 history_versions），当前版与选中的旧版并排、逐行标出改动（纯字符串比较，
-// 零模型），一颗「回退到这一版」= inbox recap_revert（server 永不写纪要文件，§63.6）；正文下方五颗引用 chip
+// 这条路上，列表投影只带标量句柄 history_versions），当前版与选中的旧版并排、逐行标出改动（纯字符串比较，
+// 零模型），一颗「回退到这一版」= `POST /api/recaps/revert`（server 派生 act.recap、永不写纪要文件，§63.6）；正文下方五颗引用 chip
 // 复制 `2026-08-31 Zoom #D`（行位置即身份，粘出去的五行一字不变；逐条 id D1 / A2 等 #303 的多条目格式）。
-// 回退没有 daemon 台账（它不是一次生成），所以面板自己记一条乐观回执：排队中一直说话并每 5 s 补拉，
-// 90 s 没落地就落回 §63.8 那句「actd 可能没在跑」——闪一句就消失、之后面板装死是这一条要消灭的事。
+// 回退没有台账（它不是一次生成），所以面板自己记一条乐观回执：排队中一直说话并每 5 s 补拉，
+// 90 s 没落地就落回 §63.8 那句「recap 子进程可能没起来」——闪一句就消失、之后面板装死是这一条要消灭的事。
 // 帽的诚实口径：`_push_history` 在历史满 5 版时会挤掉最早那一版，所以回退**也**会老化掉一个回退目标——
 // 面板照直说，不许只把老化归因于「下一次生成」。
 // §63.5 追记（issue #301）：CLOSED 行多一颗「忽略 / 恢复」（POST /api/recaps/mark dismissed，与
@@ -22,7 +23,7 @@
 // §63.10（issue #303）：正文显示的是 daemon 渲染好的 `copy_*`（空的那几行 / 那几节已略掉，
 // 可发送长版还带节标题与跨节连续编号）——所见即所复制，渲染只有 act/lib/recap_text 一处。
 // 「重新生成」面板多一个形状选择器（快速五行 / 可发送长版），按下时把 `shape` 一并送进
-// inbox recap_generate；备注预检因此也按形状收口（可发送长版删得掉一节、写得长一点，
+// POST /api/recaps/generate；备注预检因此也按形状收口（可发送长版删得掉一节、写得长一点，
 // 再说「做不到」就是错的那句拒绝），命中五行专属那几类时多一句「换成可发送长版就能办到」。
 // §63.12（issue #300 的后半）：可发送长版的每一条带一个跨版稳定的标签（`D1. …`，daemon 派发、
 // 渲染进 `copy_*`）——正文下方因此给逐条引用 chip（`2026-08-31 Zoom #D1`，正文一字不变），
@@ -32,11 +33,11 @@
 // `answers` 一并送出；正文上方多一排「转写原版 | 我记录的版本」——`row.baseline` 在时才出现，
 // 复制跟着切换走（`recapClipboardText(row, language, view)`，所见即所复制不因两版并存失效）。
 import { useEffect, useRef, useState } from "react";
-import { ApiError, fetchRecapHistory, postAction } from "../../api";
-import { useI18n, type Language } from "../../i18n";
-import { markRecap, markRecapPending, refreshBoard } from "../../store";
-import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
+import { ApiError, fetchRecapHistory, postRecapGenerate, postRecapRevert, type RecapGenerateBody } from "../../api";
 import { copyText } from "../../copyText";
+import { useI18n, type Language } from "../../i18n";
+import { markRecap, markRecapPending, refreshRecaps } from "../../store";
+import type { RecapHistory, RecapRow, RecapSettings, RecapVersion } from "../../types";
 import { fixableByLongShape, noteConflicts, type NoteConflictId } from "./noteCheck";
 import { RecapIntentPanel } from "./RecapIntent";
 import {
@@ -46,12 +47,11 @@ import {
   problemLabel,
   recapClipboardText, recapHeader, recapProblems, recapQuestions, recapRepairs, recapShape,
   recapViewBody, RECAP_SHAPES, RECAP_VIEWS,
-  repairLabel, REVERT_POLL_MS, revertPhase, slackDraftLabel, versionLabel, type GenerationPhase,
+  repairLabel, REVERT_POLL_MS, revertPhase, versionLabel, type GenerationPhase,
   type RecapShape, type RecapView, type RevertPending, type RevertPhase,
 } from "./recapText";
 
 const NOTE_MAX = 500;
-const CHANNEL_RE = /^[CDG][A-Z0-9]{6,20}$/;
 
 type Bilingual = (zh: string, en: string) => string;
 
@@ -92,7 +92,7 @@ export interface RecapDetailProps {
   phase?: GenerationPhase;
 }
 
-type Panel = null | "note" | "slack" | "history";
+type Panel = null | "note" | "history";
 type Text = (zh: string, en: string) => string;
 
 /**
@@ -112,9 +112,9 @@ function versionLines(entry: RecapVersion | null, language: Language): string[] 
 export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Text): string | null {
   switch (phase) {
     case "queued":
-      return text("已排队，等待后台接手…", "Queued, waiting for the daemon to pick it up…");
+      return text("已排队，等待后台接手…", "Queued, waiting for the background run to start…");
     case "unclaimed":
-      return text("后台 90 秒没有接手：actd 可能没在跑（看「依赖检查」区的管线活性）。可以再试一次。", "Nothing picked this up in 90 s: actd may not be running (see Pipeline liveness under Dependency check). You can try again.");
+      return text("90 秒没有动静：recap 子进程可能没起来（看 state/recap.log）。可以再试一次。", "Nothing happened in 90 s: the recap process may not have started (see state/recap.log). You can try again.");
     case "running":
       return isOpen
         ? text("正在生成阶段稿，落地后这里自动更新（通常 1–3 分钟）。", "Generating the partial recap. It lands here by itself (usually 1–3 min).")
@@ -122,19 +122,19 @@ export function generationNote(phase: GenerationPhase, isOpen: boolean, text: Te
     case "lost":
       return text("上次生成没有落地：超过 10 分钟没写出新版本——后台进程崩了或模型调用失败（看 state/recap.log）。可以再试一次。", "The last generation never landed: no new version for over 10 minutes. The process crashed or the model call failed (see state/recap.log). You can try again.");
     case "noop":
-      return text("上次生成没起来：后台进程启动失败（看 state/actd.log）。可以再试一次。", "The last generation did not start: the background process failed to launch (see state/actd.log). You can try again.");
+      return text("上次生成没起来：后台进程启动失败（看 state/recap.log）。可以再试一次。", "The last generation did not start: the background process failed to launch (see state/recap.log). You can try again.");
     default:
       return null;
   }
 }
 
 /** §63.9 回退的回执行（idle 不说话；落地由 landedNote 的闪句 + 脚注体现）。
- *  「没人接手」那一句**直接复用 §63.8 的 unclaimed 文案**——同一件事（actd 没在跑 / 起不来 /
+ *  「没人接手」那一句**直接复用 §63.8 的 unclaimed 文案**——同一件事（子进程起不来 /
  *  锁等超时）只有一句话，不起第二套说法。 */
 export function revertNote(phase: RevertPhase, version: number, text: Text): string | null {
   if (phase === "queued") {
     return text(`已排队回退到第 ${version} 版，等待后台接手…（当前这一版会先存进历史，可以再回退回来）`,
-                `Revert to version ${version} is queued, waiting for the daemon… (the current text is pushed into history first, so this is undoable)`);
+                `Revert to version ${version} is queued, waiting for the background run… (the current text is pushed into history first, so this is undoable)`);
   }
   return phase === "unclaimed" ? generationNote("unclaimed", false, text) : null;
 }
@@ -225,14 +225,13 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   // §63.11 意图问答：owner 点过的答案（没点过的问题不在表里 = 不发答案）+ 正在看哪一版
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [view, setView] = useState<RecapView>("current");
-  const [channel, setChannel] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
-  // §63.9：存着的每一版（点开「上一版」才拉；正文不在看板投影里）+ 选中的那一版
+  // §63.9：存着的每一版（点开「上一版」才拉；正文不在列表投影里）+ 选中的那一版
   const [history, setHistory] = useState<RecapHistory | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [picked, setPicked] = useState<number | null>(null);
-  // §63.9：排队中的回退（daemon 侧没有台账——面板自己的最小乐观回执）+ 逼渲染的秒表
+  // §63.9：排队中的回退（没有台账——面板自己的最小乐观回执）+ 逼渲染的秒表
   const [revertPending, setRevertPending] = useState<RevertPending | null>(null);
   const [, setRevertTick] = useState(0);
   // 上一次渲染看到的 {key, version}：同一行版本号涨了 = 新版本落地，闪一句
@@ -309,13 +308,13 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
   const reverting = revertPhase(row, revertPending, Date.now());
   const revertProgress = revertNote(reverting, revertPending?.version ?? 0, text);
 
-  // 排队中每 5 s 补拉一次看板（SSE 掉线时的保险，与 §63.8 同款）并逼一次渲染——90 s 那条判线
-  // 必须自己会到，不能等下一次 board 回流；unclaimed / 落地后就停（不在途时零请求）
+  // 排队中每 5 s 补拉一次列表（SSE 掉线时的保险，与 §63.8 同款）并逼一次渲染——90 s 那条判线
+  // 必须自己会到，不能等下一次回流；unclaimed / 落地后就停（不在途时零请求）
   useEffect(() => {
     if (reverting !== "queued") return;
     const timer = setInterval(() => {
       setRevertTick((n) => n + 1);
-      void refreshBoard();
+      void refreshRecaps();
     }, REVERT_POLL_MS);
     return () => clearInterval(timer);
   }, [reverting]);
@@ -365,28 +364,27 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
              "Regeneration queued — the flagged parts cannot be honored and will not change")
       : text("已排队重新生成，落地后这里自动更新", "Regeneration queued; this panel updates when it lands"),
     async () => {
-      const payload: Record<string, unknown> = { action: "recap_generate", meeting_key: row.key,
-                                                 shape: pickedShape };
-      if (note.trim()) payload.note = note.trim().slice(0, NOTE_MAX);
+      const body: RecapGenerateBody = { key: row.key, shape: pickedShape };
+      if (note.trim()) body.note = note.trim().slice(0, NOTE_MAX);
       // §63.11：只带**点过**的答案（一条也没点 = 键不在，wire 与旧行为一字不差）
       const answers = answersFor(questions, picks);
-      if (answers.length) payload.answers = answers;
-      await postAction(payload);
+      if (answers.length) body.answers = answers;
+      await postRecapGenerate(body);
       markRecapPending(row);
+      void refreshRecaps(); // server 回执已落台账：立刻拉一次，行上的「生成中」改由 generate_request 说话
     });
   const generateNow = () => run(text("已排队生成阶段稿，落地后这里自动更新", "Partial recap queued; this panel updates when it lands"), async () => {
-    await postAction({ action: "recap_generate", meeting_key: row.key, partial: true });
+    await postRecapGenerate({ key: row.key, partial: true });
     markRecapPending(row);
+    void refreshRecaps();
   });
-  const slackDraft = () => run(text("已排队投到 Slack 草稿", "Slack draft queued"), () =>
-    postAction({ action: "recap_slack_draft", meeting_key: row.key, channel_id: channel.trim() }));
-  // §63.9 回退 = inbox recap_revert（server 永不写纪要文件，§63.6）；非破坏——当前正文先进 history。
+  // §63.9 回退 = POST /api/recaps/revert（server 派生 act.recap、永不写纪要文件，§63.6）；非破坏——当前正文先进 history。
   // 闪句只说「已排队」——「落地后自动更新」那句承诺改由上面那条**留在面板上**的回执行兑现：
-  // 排队中一直说话，90 s 没落地就说「actd 可能没在跑」，不再闪一下就装死。
+  // 排队中一直说话，90 s 没落地就说「recap 子进程可能没起来」，不再闪一下就装死。
   const revert = (version: number) => run(
     text(`已排队回退到第 ${version} 版`, `Revert to version ${version} queued`),
     async () => {
-      await postAction({ action: "recap_revert", meeting_key: row.key, version });
+      await postRecapRevert(row.key, version);
       setRevertPending({ version, base: row.version ?? 0, at: Date.now() });
     },
   );
@@ -556,11 +554,6 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
             {generating ? text("生成中…", "Generating…") : text("重新生成…", "Regenerate…")}
           </button>
         )}
-        {settings?.slack_draft_enabled && hasText && !isOpen && (
-          <button type="button" className="btn" disabled={busy} onClick={() => setPanel(panel === "slack" ? null : "slack")}>
-            {text("投到 Slack 草稿…", "Place in Slack drafts…")}
-          </button>
-        )}
       </div>
 
       {panel === "note" && !generating && (
@@ -701,39 +694,7 @@ export function RecapDetail({ row, settings, phase = "idle" }: RecapDetailProps)
         </div>
       )}
 
-      {panel === "slack" && (
-        <div className="recap-panel">
-          <label className="recap-panel-label" htmlFor="recap-channel">
-            {text("Slack 会话 id（C… / D… / G…）——草稿进你的「Drafts & Sent」，发送键仍在你手里", "Slack conversation id (C… / D… / G…) — the draft lands in your Drafts & Sent; sending stays yours")}
-          </label>
-          <input
-            id="recap-channel"
-            className="settings-input"
-            value={channel}
-            placeholder="C0123456789"
-            spellCheck={false}
-            onChange={(event) => setChannel(event.target.value.trim())}
-          />
-          <div className="recap-panel-actions">
-            <button type="button" className="btn btn-primary" disabled={busy || !CHANNEL_RE.test(channel)} onClick={() => void slackDraft()}>
-              {text("投到草稿", "Place draft")}
-            </button>
-          </div>
-        </div>
-      )}
-
       <footer className="recap-meta">
-        {row.slack_draft?.status && (
-          <span className="recap-meta-item">
-            {slackDraftLabel(row.slack_draft.status, text)}
-            {row.slack_draft.channel_link && (
-              <>
-                {" · "}
-                <a href={row.slack_draft.channel_link} target="_blank" rel="noreferrer">{text("打开会话", "Open conversation")}</a>
-              </>
-            )}
-          </span>
-        )}
         {row.dismissed_at && (
           <span className="recap-meta-item">
             {text("已忽略：会比其他纪要更早被自动删除；按「恢复」撤销。",

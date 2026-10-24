@@ -1,15 +1,14 @@
-// 会议纪要页（CONTRACT §63；?page=recaps 深链，顶栏入口）。数据源 = board.recaps（dashboard.json
-// 顶层 add-only recaps[]，SSE 回流），本地标记（recapMarks）乐观覆盖；三把旋钮经 refreshRecapSettings。
-// 页面骨架：返回链接 + 标题 + 分栏过滤器 + 左列表 / 右详情。业务态只有「选中的 key」与「看哪一栏」
+// 会议纪要页（CONTRACT §63；v2.0.0 起是缺省页 = 左侧导航栏第一项）。数据源 = `GET /api/recaps`（server 现读
+// state/recap/，SSE recaps.updated 回流，store.refreshRecaps），本地标记（recapMarks）乐观覆盖；旋钮经 refreshRecapSettings。
+// 页面骨架：标题 + 分栏过滤器 + 左列表 / 右详情。业务态只有「选中的 key」与「看哪一栏」
 // ——都放本地 useState（纯瞬态，不进 localStorage：默认永远从活跃栏开始）。
 // §63.8（issue #297）：每行的生成态 = server 回执 generate_request × 本地乐观 recapPending；只要还有行
-// 在生成，就每 5 s 补拉一次 /api/board（SSE 之外的保险，新版本落地即停），版本号变了面板自然换内容。
+// 在生成，就每 5 s 补拉一次 /api/recaps（SSE 之外的保险，新版本落地即停），版本号变了面板自然换内容。
 // §63.5 追记（issue #301）：三栏 活跃 / 已归档（sent_at 派生）/ 已忽略（dismissed_at），默认只看活跃；
 // 刚被归档 / 忽略的那一行**留在右侧**（带着 toast 与撤销按钮）、只离开左列——不然人按下去什么反馈都没有。
-// 同一条追记的诚实口径：投影每栏有上限，被切掉的行数由 board.recap_counts（真实总数）减出来，
+// 同一条追记的诚实口径：投影每栏有上限，被切掉的行数由 recap_counts（真实总数）减出来，
 // 计数带 `+`、栏里多一句「另有 N 条更早的没列出来」——上限可以是硬的，界面不许悄悄少东西。
 import { useEffect, useState } from "react";
-import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import "../components/recaps/recaps.css";
 import { RecapDetail } from "../components/recaps/RecapDetail";
@@ -19,11 +18,10 @@ import {
   type GenerationPhase, type RecapLane,
 } from "../components/recaps/recapText";
 import { useI18n } from "../i18n";
-import { buildAppUrl } from "../route";
-import { clearRecapPending, refreshBoard, refreshRecapSettings, useAppState, type RecapMark, type RecapPending } from "../store";
+import { clearRecapPending, refreshRecaps, refreshRecapSettings, useAppState, type RecapMark, type RecapPending } from "../store";
 import type { RecapLaneTotals, RecapRow } from "../types";
 
-/** 生成中的补拉间隔：actd pass 是 10 s，一半足够及时；不在生成时零请求 */
+/** 生成中的补拉间隔：一份纪要通常 1–3 分钟落地，5 s 足够及时；不在生成时零请求 */
 export const GENERATING_POLL_MS = 5000;
 
 function withMarks(rows: RecapRow[], marks: Record<string, RecapMark>): RecapRow[] {
@@ -44,11 +42,11 @@ function phasesFor(rows: RecapRow[], pending: Record<string, RecapPending>, now:
 
 /**
  * 某一栏被投影预算切掉了多少行（§63.5 追记 issue #301）：server 报的真实总数
- * `board.recap_counts` 减掉它**实际发来**的行数。两边都是 server 数据——不拿本地乐观
+ * `recap_counts` 减掉它**实际发来**的行数。两边都是 server 数据——不拿本地乐观
  * 标记后的行数去减（那会在刚按下「忽略」的一瞬间算出一个假的差额），也不在这里写死上限
- * （防腐 #10：分栏组成是 server 数据，不是 client 代码）。老 daemon 无此键 = 0，不说话。
+ * （防腐 #10：分栏组成是 server 数据，不是 client 代码）。缺这个键 = 0，不说话。
  */
-function hiddenByCap(totals: RecapLaneTotals | undefined, shipped: Record<RecapLane, number>, id: RecapLane): number {
+function hiddenByCap(totals: RecapLaneTotals | null, shipped: Record<RecapLane, number>, id: RecapLane): number {
   const total = totals?.[id];
   return typeof total === "number" ? Math.max(0, total - shipped[id]) : 0;
 }
@@ -74,7 +72,7 @@ function emptyLaneLine(lane: RecapLane, text: (zh: string, en: string) => string
 
 export function RecapsPage() {
   const { text, language } = useI18n();
-  const { board, recapSettings, recapMarks, recapPending, boardLoading } = useAppState();
+  const { recaps, recapCounts, recapsError, recapsLoading, recapSettings, recapMarks, recapPending } = useAppState();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [lane, setLane] = useState<RecapLane>("active");
 
@@ -82,13 +80,13 @@ export function RecapsPage() {
     void refreshRecapSettings();
   }, []);
 
-  const shippedRows = Array.isArray(board?.recaps) ? board.recaps : [];
+  const shippedRows = recaps ?? [];
   const rows = withMarks(shippedRows, recapMarks);
   const counts = laneCounts(rows);
   // 预算切掉的行数按**server 发来的**那一份算（乐观标记只影响显示的计数，不影响「被切掉多少」）
   const shipped = laneCounts(shippedRows);
   const hidden = RECAP_LANES.reduce((acc, entry) => {
-    acc[entry.id] = hiddenByCap(board?.recap_counts, shipped, entry.id);
+    acc[entry.id] = hiddenByCap(recapCounts, shipped, entry.id);
     return acc;
   }, {} as Record<RecapLane, number>);
   const totalHidden = RECAP_LANES.reduce((sum, entry) => sum + hidden[entry.id], 0);
@@ -97,7 +95,7 @@ export function RecapsPage() {
   const selected = rows.find((row) => row.key === selectedKey) ?? visible[0] ?? null;
   const phases = phasesFor(rows, recapPending, Date.now());
   const anyGenerating = Object.values(phases).some(isGenerating);
-  // 乐观「排队中」的收尾：actd 回执接管 / 新版本落地 / 10 分钟退场 / 行消失 → 本地表里这一键退场
+  // 乐观「排队中」的收尾：server 回执接管 / 新版本落地 / 10 分钟退场 / 行消失 → 本地表里这一键退场
   // （unclaimed 仍留着——「后台未接手」那句要靠它显示，直到新回执 / 新版本 / 再按一次覆盖）
   const settled = Object.keys(recapPending).filter((key) => phases[key] !== "queued" && phases[key] !== "unclaimed");
   const settledKey = settled.join("\n");
@@ -113,21 +111,18 @@ export function RecapsPage() {
     if (selectedNow) setSelectedKey(selectedNow);
   }, [selectedNow]);
 
-  // 生成中每 5 s 补拉一次看板（SSE 掉线 / 被合并时的保险）；没有行在生成就不拉
+  // 生成中每 5 s 补拉一次列表（SSE 掉线 / 被合并时的保险）；没有行在生成就不拉
   useEffect(() => {
     if (!anyGenerating) return;
-    const timer = setInterval(() => void refreshBoard(), GENERATING_POLL_MS);
+    const timer = setInterval(() => void refreshRecaps(), GENERATING_POLL_MS);
     return () => clearInterval(timer);
   }, [anyGenerating]);
 
   return (
     <main className="recaps-page">
-      <a className="trash-back-link" href={buildAppUrl(window.location.href, "board", null).toString()}>
-        {text("← 返回看板", "← Back to board")}
-      </a>
-      <div className="trash-page-head">
-        <h2 className="trash-page-title">{text("会议纪要", "Meeting recaps")}</h2>
-        <span className="trash-page-count">{`${rows.length}${totalHidden > 0 ? "+" : ""}`}</span>
+      <div className="page-head">
+        <h2 className="page-title">{text("会议纪要", "Meeting recaps")}</h2>
+        <span className="page-count">{`${rows.length}${totalHidden > 0 ? "+" : ""}`}</span>
       </div>
       <p className="settings-helper">
         {text(
@@ -138,10 +133,19 @@ export function RecapsPage() {
           <> {text("（会议纪要已在设置里关闭）", "(Meeting recaps are turned off in Settings)")}</>
         )}
       </p>
+      {recapsError && (
+        <p className="settings-error" role="alert">
+          {text("读不到会议纪要：", "Could not read the recaps: ")}{recapsError}
+          {" "}
+          <button type="button" className="btn" onClick={() => void refreshRecaps()}>{text("重试", "Retry")}</button>
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="recap-empty">
-          {boardLoading
+          {recapsLoading
             ? text("读取中…", "Loading…")
+            : recapsError
+            ? text("连上本地服务后这里会自动恢复。", "This recovers by itself once the local server is reachable.")
             : text("还没有会议纪要。开着录屏 + 音频参加一场 10 分钟以上的 Zoom / Teams / Meet，结束后回来看。", "No recaps yet. Join a 10+ minute Zoom / Teams / Meet with screen + audio recording on and come back after it ends.")}
         </p>
       ) : (

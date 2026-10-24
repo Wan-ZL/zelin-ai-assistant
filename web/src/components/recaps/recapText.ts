@@ -4,7 +4,7 @@
 // §63.9（issue #300）的行级引用标签 D/S/L/C/O、版本标题、两版逐行差异与回退的回执态判定、
 // §63.11（issue #302）意图问答的词表与答案拼装 + 「转写原版 / 我记录的版本」两版切换的正文、
 // §63.12（issue #300 的后半）可发送长版的逐条标签：行首标签的读出、按标签的两版差异、逐条引用串。
-// 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 dashboard.json 顶层 recaps[]。
+// 无 React、无 fetch——vitest node 环境可直测。wire 字段来自 GET /api/recaps 的 recaps[]。
 import type { Language } from "../../i18n";
 import type { RecapPending } from "../../store";
 import type { RecapProblem, RecapQuestion, RecapRepair, RecapRow, RecapSection } from "../../types";
@@ -74,17 +74,17 @@ export interface Badge {
 
 /**
  * §63.8 行的生成态（issue #297）：
- *   queued    = 本地刚按下、actd 还没回执（乐观）；
- *   unclaimed = 按下 90 s 仍无回执也无新版本——actd 大概没在跑（按钮解锁、一句人话；10 分钟后退场）；
- *   running   = actd 回执 running，新版本还没落地；
- *   lost / noop = actd 回执说丢了 / 没起；idle = 没在生成（含 done）。
- * server 回执只要比按下时看到的新就以它为准；本地 pending 只填 actd 还没接手的那几秒。
+ *   queued    = 本地刚按下、还没看到新回执（乐观）；
+ *   unclaimed = 按下 90 s 仍无新回执也无新版本——recap 子进程大概没起来（按钮解锁、一句人话；10 分钟后退场）；
+ *   running   = 回执 running（server 派生了 act.recap），新版本还没落地；
+ *   lost / noop = 回执说丢了 / 没起；idle = 没在生成（含 done）。
+ * server 回执只要比按下时看到的新就以它为准；本地 pending 只填回执回流之前的那几秒。
  */
 export type GenerationPhase = "idle" | "queued" | "unclaimed" | "running" | "lost" | "noop";
 
-/** 没人接手的判线：actd pass 是 10 s，90 s 与 VoiceGenerate / §48.7「立即测试一轮」同款 */
+/** 没人接手的判线：server 当场派生、回执随 POST 回来，90 s 还没动静就不是在路上了 */
 export const PICKUP_TIMEOUT_MS = 90_000;
-/** 乐观「排队中」的退场线（与 daemon 侧 recap_requests.LOST_AFTER_S 同款 10 分钟） */
+/** 乐观「排队中」的退场线（与 act/lib/recap_requests.LOST_AFTER_S 同款 10 分钟） */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function generationPhase(row: RecapRow, pending: RecapPending | undefined, now: number): GenerationPhase {
@@ -109,12 +109,12 @@ export function isGenerating(phase: GenerationPhase): boolean {
 }
 
 /**
- * §63.9（issue #300）**回退的回执**。回退是 detached inbox 动作，daemon 侧**没有**台账
+ * §63.9（issue #300）**回退的回执**。回退是 server 分离派生的一次 act.recap，**没有**台账
  * （`recap_revert` 不进 §63.8 的 `generate_request`：回退不是一次生成，行上不该出现「生成中」），
  * 所以面板自己记一条最小乐观回执——按下时记 `{version, base, at}`：
- *   queued    = 已排队、新版本还没落地（面板一句「排队中」+ 每 `REVERT_POLL_MS` 补拉一次看板）；
- *   unclaimed = 按下 90 s 仍没有新版本（actd 没在跑 / 子进程起不来 / 锁等超时都长这样）——
- *               与 §63.8 **同一条判线、同一句**「actd 可能没在跑…可以再试一次」；
+ *   queued    = 已排队、新版本还没落地（面板一句「排队中」+ 每 `REVERT_POLL_MS` 补拉一次列表）；
+ *   unclaimed = 按下 90 s 仍没有新版本（子进程起不来 / 锁等超时都长这样）——
+ *               与 §63.8 **同一条判线、同一句**「recap 子进程可能没起来…可以再试一次」；
  *   idle      = 版本号涨了（回退落地）/ 10 分钟退场。
  * 两个时限与 §63.8 共用常量，绝不另起第二套。
  */
@@ -306,7 +306,7 @@ export function answersFor(questions: RecapQuestion[], picks: Record<string, str
 /**
  * §63.11 「转写原版」的正文（`baseline.copy_*`，daemon 出稿时渲染好的那一份）。
  * 那一版缺这门语言就退到另一门——空 `<pre>` 配一颗可用的复制键比一份英文正文差得多
- * （与 daemon 侧 Slack 草稿正文的同一条口径）。
+ * （recap 侧出稿的同一条口径）。
  */
 export function baselineBody(row: RecapRow, language: Language): string {
   const baseline = row.baseline;
@@ -522,7 +522,7 @@ export function versionLabel(entry: { version: number; generated_at?: string | n
 /**
  * §63.3 追记：wire 上的发现行（老 daemon 无此键、手改过的文件可能是任意东西）——只留说得出话的对象：
  * `code` 非空（或至少 `text` 非空——词表外的 code 靠它兜底，§63.5 追记「永不显示一行空白」），
- * `text` 若在必须是字符串（一个对象进了 JSX 会让整块看板崩掉，宪法第 11 条）。
+ * `text` 若在必须是字符串（一个对象进了 JSX 会让整页崩掉，宪法第 11 条）。
  */
 export function recapProblems(row: RecapRow): RecapProblem[] {
   const rows = Array.isArray(row.problems) ? row.problems : [];
@@ -616,20 +616,3 @@ export function repairLabel(repair: RecapRepair, text: Bilingual): string {
               `Trimmed ${at} automatically: ${repair.removed} characters off the end (it was ${over} over the cap)`);
 }
 
-/** §63.4 草稿回执文案（wire status 词表 add-only；未知值按字符串兜底） */
-export function slackDraftLabel(status: string | undefined, text: (zh: string, en: string) => string): string {
-  switch (status) {
-    case "posted":
-      return text("已投草稿", "Draft placed");
-    case "draft_already_exists":
-      return text("Slack 已有草稿", "Slack already has a draft");
-    case "no_target":
-      return text("未投草稿：无目标会话", "No draft: no target conversation");
-    case "disabled":
-      return text("未投草稿：开关已关", "No draft: toggle is off");
-    case "failed":
-      return text("投递失败", "Draft failed");
-    default:
-      return status ?? "";
-  }
-}

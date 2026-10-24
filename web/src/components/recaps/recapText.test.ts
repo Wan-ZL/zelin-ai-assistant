@@ -15,8 +15,7 @@ import {
   hasBaseline, hasRecapText, isGenerating, itemCitation, itemTag, laneCounts,
   lineCitation, pickLanguage, pickShape, problemLabel, questionLabel, recapBody, recapClipboardText,
   recapHeader, recapLane, recapProblems, recapQuestions, recapRepairs, recapSections, recapShape,
-  recapViewBody, repairLabel, revertPhase, rowLabel, slackDraftLabel,
-  versionLabel,
+  recapViewBody, repairLabel, revertPhase, rowLabel, versionLabel,
 } from "./recapText";
 
 function row(over: Partial<RecapRow> = {}): RecapRow {
@@ -93,7 +92,7 @@ describe("recapText", () => {
   it("generation phase: a fresh server receipt wins, local pending only bridges the gap (§63.8)", () => {
     const T = 1_000_000;
     const pending = { version: 1, requested_at: null, at: T };
-    // 没按过、没回执 = idle；按下后 actd 还没接手 = queued
+    // 没按过、没回执 = idle；按下后新回执还没回流 = queued
     expect(generationPhase(row(), undefined, T)).toBe("idle");
     expect(generationPhase(row(), pending, T + 1000)).toBe("queued");
     // 回执落地：running → 以它为准；done 且版本涨了 → idle
@@ -226,15 +225,6 @@ describe("recapText", () => {
     expect(recapRepairs(row({ repairs: [{ line: 1 }, { lang: "en", line: 1 }, noRemoved] as unknown as [] }))).toEqual([noRemoved]);
   });
 
-  it("slack draft receipt copy", () => {
-    const text = (_zh: string, en: string) => en;
-    expect(slackDraftLabel("posted", text)).toBe("Draft placed");
-    expect(slackDraftLabel("draft_already_exists", text)).toBe("Slack already has a draft");
-    expect(slackDraftLabel("no_target", text)).toBe("No draft: no target conversation");
-    expect(slackDraftLabel("weird", text)).toBe("weird");
-    expect(slackDraftLabel(undefined, text)).toBe("");
-  });
-
   // ----- §63.5 追记（issue #301）：一条纪要落在哪一栏 ------------------------------------------ //
 
   it("files a recap by its two marks: dismissed beats archived, archived is derived from sent", () => {
@@ -349,7 +339,7 @@ describe("recapText", () => {
     expect(revertPhase(stored, null, at)).toBe("idle");                       // 没按过 = 不说话
     expect(revertPhase(stored, pending, at + 1_000)).toBe("queued");
     expect(revertPhase(stored, pending, at + PICKUP_TIMEOUT_MS)).toBe("queued");
-    // 90 s 没有新版本 = actd 没在跑 / 起不来 / 锁等超时——与 §63.8 同一条判线
+    // 90 s 没有新版本 = 子进程起不来 / 锁等超时——与 §63.8 同一条判线
     expect(revertPhase(stored, pending, at + PICKUP_TIMEOUT_MS + 1)).toBe("unclaimed");
     expect(revertPhase(stored, pending, at + PENDING_TIMEOUT_MS + 1)).toBe("idle");   // 10 分钟退场
     // 版本号涨了 = 落地（闪句与脚注接手），回退本身也可能落地成任何一版
