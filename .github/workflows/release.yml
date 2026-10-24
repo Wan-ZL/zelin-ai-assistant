@@ -188,7 +188,7 @@ jobs:
             <channel>
               <title>Zelin's AI Assistant (retired feed)</title>
               <link>https://github.com/${GITHUB_REPOSITORY}/releases/latest</link>
-              <description>This Sparkle feed is retired and intentionally carries no items: the 1.x menu-bar app never auto-installs anything again (CONTRACT 74.3). To move to the current release, check out its tag in your clone and run install.sh (docs/INSTALL.md).</description>
+              <description>This Sparkle feed is retired and intentionally carries no items: the 1.x menu-bar app never auto-installs anything again (CONTRACT 74.3). To move to the current release, bring main in your clone up to the release tag and run install.sh (docs/INSTALL.md, moving from 1.x).</description>
             </channel>
           </rss>
           EOF
@@ -268,7 +268,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
           ```
 
-          One command (clones the repo, runs `install.sh`, builds the Dock app on your Mac). The app runs against its checkout: the board server, the ingest scripts and the recap code all live there, so the bootstrap is the install path. `ZelinAIAssistant-@TAG@-macos.zip` is the same app built and attested on CI; it carries no Apple Developer ID signature, so macOS asks once (right-click the app, Open, Open).
+          One command (clones the repo, runs `install.sh`, builds the Dock app on your Mac). The app runs against its checkout: the local server, the ingest scripts and the recap code all live there, so the bootstrap is the install path. `ZelinAIAssistant-@TAG@-macos.zip` is the same app built and attested on CI; it carries no Apple Developer ID signature, so macOS asks once (right-click the app, Open, Open).
 
           已经装过 2.x：关于页的「立即升级」（`scripts/upgrade.sh`，CONTRACT §79）。Already on 2.x: About, Upgrade now.
 
@@ -278,7 +278,7 @@ jobs:
           cd ~/Projects/zelin-ai-assistant && git fetch --tags origin && git checkout main && git merge --ff-only origin/main && bash install.sh
           ```
 
-          本地 main 有自己的提交、快进不了时，见 docs/INSTALL.md 的升级一节（脚本从不替你 reset）。If the fast-forward refuses (local commits on main), see the upgrade section of docs/INSTALL.md; nothing here resets your checkout. 最后一个 1.x 在 git tag `full`。The last 1.x is at git tag `full`. Guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · uninstall: `bash uninstall.sh`
+          本地 main 有自己的提交、快进不了时，见 docs/INSTALL.md「从 1.x 迁移」一节（先留备份分支；脚本从不替你 reset）。If the fast-forward refuses (local commits on main), see "从 1.x 迁移" (moving from 1.x) in docs/INSTALL.md: keep a backup branch first; no script resets your checkout. 最后一个 1.x 在 git tag `full`。The last 1.x is at git tag `full`. Guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · uninstall: `bash uninstall.sh`
 
           NOTES
           sed -i '' "s/@TAG@/${GITHUB_REF_NAME}/g" /tmp/release-notes.md
