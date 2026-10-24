@@ -1,22 +1,21 @@
-// 录制与数据接入页（CONTRACT §15.2 / §48 / §54.4 / §61.1 / §68.3 / §68.4；?page=ingest，左侧导航栏第四项）：原生 Pages.swift
+// 录制与导入页（CONTRACT §15.2 / §54.4 / §61.1 / §68.3 / §68.4；?page=ingest，左侧导航栏第二项）：原生 Pages.swift
 // IngestView 的 web 版——「Screenpipe 录制」（模式三态 + 引擎状态一句 + screenpipe db「最近写入 HH:mm」+ 刷新 + 重启 /
 // 去授权，经 §61 桥；进场与「刷新」都经桥 `refreshRecording` 立刻探一次引擎（TCC 自愈判定 + pgrep 活性，原生
 // rec.refreshEngineState()），老壳不认识就退回纯读 getState；consent-race 自愈后的绿色 ✓ 句（`self_heal_note`）；
 // TCC 被收回的横幅、还没授权的原因句、引擎死因行 EngineDiagnosisRow（§25 句子来自 GET /api/failures，npm 首次下载 =
 // 安静的 spinner 进行中而不是错误；ffmpeg 缺失 = 安装 ffmpeg + 装好了，重启引擎 + 查看引擎日志；崩了 = 查看引擎日志；
-// 壳给的 `log_tail` 非空时原文照印成 6 行等宽可选中的日志尾——诚实优先于好看）；浏览器里打开如实说只在看板 app 里可控）、
+// 壳给的 `log_tail` 非空时原文照印成 6 行等宽可选中的日志尾——诚实优先于好看）；浏览器里打开如实说只在 app（壳）里可控）、
 // 「手动触发」（立即导出 / 立即 ingest = POST /api/ingest/{export,run}：server 在后台线程起 ingest/ 下同一条脚本、同一套
 // 退出码，页面拿 job id 每 2 s 轮询 GET /api/ingest/jobs/{id}——运行中… / 完成 ✓（2.5 s 后淡出）/ 已有 ingest 在运行，本次跳过 /
 // 失败 (exit N) + 尾巴 + 查看日志；一轮跑完立刻重拉最近活动（原生完成回调里的 refreshLabels()）；ingest 的「查看日志」
 // 直接翻开 §68.4 日志清单里 ingest 脚本自己的 `screenpipe-auto.log`——导出脚本没有日志文件，尾巴就是全部，链接只到清单）、
-// 数据源健康（§48 radar_sources 投影）+ 到各接入设置区的深链、「最近活动」（vault「1 - unprocessed」最新文件 /
-// state/actd.log 更新于，时间戳 = GET /api/diagnostics 的 add-only `activity`；server 永不读 ~/Documents，读不到时如实说）。
+// 「最近活动」（vault「1 - unprocessed」最新文件 / state/recap.log 更新于，时间戳 = GET /api/diagnostics 的 add-only `activity`；
+// server 永不读 ~/Documents，读不到时如实说）。v2.0.0 退役（全文见 tag full）：数据源健康（§48 radar_sources 投影，雷达随 Act
+// 管线退役）与到 Slack / Gmail 接入区的深链、state/actd.log 那一行（换成 add-only 的 recap_log）。
 import { useEffect, useRef, useState } from "react";
-import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { fetchIngestJob, postIngestExport, postIngestRun } from "../api";
 import { FailureActionButton } from "../components/settings/failureAction";
-import { HealthLine } from "../components/settings/sourceHealth";
 import { errorMessage } from "../components/settings/useToast";
 import { useI18n } from "../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../route";
@@ -168,7 +167,7 @@ function EngineDiagnosisRow({ failureId, message, logTail, onRestart }: { failur
 
 export function IngestPage() {
   const { text, language } = useI18n();
-  const { board, diagnostics, failures } = useAppState();
+  const { diagnostics, failures } = useAppState();
   const shell = useShellState();
   const present = hasShellBridge();
   const [error, setError] = useState<string | null>(null);
@@ -199,29 +198,22 @@ export function IngestPage() {
 
   const restart = () => void callShell("restartRecording").catch((e) => setError(String(e)));
   const rec = shell?.recording;
-  const health = board?.radar_sources;
   const activity = diagnostics?.activity ?? null;
   const dbStamp = activity?.screenpipe_db.mtime ?? null;
-  const actdStamp = activity ? activity.actd_log.mtime : (diagnostics?.logs.find((log) => log.name === "actd.log")?.mtime ?? null);
+  const recapStamp = activity?.recap_log?.mtime ?? null;
   const failureText = (id: string) => failures?.failures[id]?.[language === "zh" ? "zh" : "en"] ?? id;
   const depsHref = buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString();
-  const settingsLink = (anchor: string, label: string) => {
-    const url = buildAppUrl(window.location.href, "settings", null);
-    url.searchParams.set("anchor", anchor);
-    return <a key={anchor} className="settings-link" href={url.toString()}>{label}</a>;
-  };
   // 原生两颗「刷新」：最近活动块的只 refreshLabels()；引擎状态行的还 rec.refreshEngineState()（立刻探引擎，不等 5 s tick）
   const refreshActivity = () => void refreshDiagnostics(true);
   const refresh = () => { refreshActivity(); if (present) void probeRecording(); };
-  // 原生 runExport / runIngest 完成回调里的 refreshLabels()：一轮跑完立刻重拉 db / vault / actd.log 三个时间戳（+ 纯读一次壳快照）
+  // 原生 runExport / runIngest 完成回调里的 refreshLabels()：一轮跑完立刻重拉 db / vault / recap.log 三个时间戳（+ 纯读一次壳快照）
   const afterRun = () => { refreshActivity(); if (present) void callShell("getState").catch(() => undefined); };
   const ingestLogHref = logTailHref(window.location.href, INGEST_LOG_NAME);
 
   return (
     <main className="settings-page">
-      <a className="trash-back-link" href={buildAppUrl(window.location.href, "board", null).toString()}>{text("← 返回看板", "← Back to board")}</a>
       <div className="settings-page-head">
-        <h2 className="settings-page-title">{text("录制与数据接入", "Recording & Data Sources")}</h2>
+        <h2 className="settings-page-title">{text("录制与导入", "Recording & import")}</h2>
       </div>
 
       <section className="settings-section" aria-labelledby="ingest-recording-title">
@@ -272,11 +264,11 @@ export function IngestPage() {
               <EngineDiagnosisRow failureId={rec.diagnosis} message={failureText(rec.diagnosis)} logTail={rec.log_tail ?? ""} onRestart={restart} />
             ) : null}
             {error && <p className="settings-warning" role="alert">{error}</p>}
-            <p className="settings-helper">{text("顶栏右上角的录制按钮可随时切换。", "The recording button at the top-right of the board can switch modes anytime.")}</p>
+            <p className="settings-helper">{text("顶栏右上角的录制按钮可随时切换。", "The recording button at the top right can switch modes anytime.")}</p>
           </>
         ) : (
           <p className="settings-warning">
-            {text("录制引擎只在看板 app（壳）里可控——这是浏览器里打开的看板，看不到引擎。", "The recording engine is only controllable inside the board app (shell) — this board is open in a browser and cannot see it.")}
+            {text("录制引擎只在 app（壳）里可控——这是浏览器里打开的页面，看不到引擎。", "The recording engine is only controllable inside the app (shell) — this page is open in a browser and cannot see it.")}
           </p>
         )}
       </section>
@@ -289,20 +281,6 @@ export function IngestPage() {
         <p className="settings-helper">{text("与定时任务跑的是同一条脚本（ingest/screenpipe-export.sh · ingest/process-screenpipe.sh）；ingest 含一次 headless claude，可能要几分钟。", "The same scripts the scheduled jobs run (ingest/screenpipe-export.sh · ingest/process-screenpipe.sh); ingest includes one headless claude call and can take minutes.")}</p>
       </section>
 
-      <section className="settings-section" aria-labelledby="ingest-sources-title">
-        <h3 id="ingest-sources-title" className="settings-section-title">{text("数据源", "Data sources")}</h3>
-        {health ? (
-          <ul className="settings-health" aria-label={text("来源健康", "Source health")}>
-            {(["gmail", "slack", "obsidian"] as const).map((src) => <HealthLine key={src} source={src} health={health[src]} />)}
-          </ul>
-        ) : <p className="settings-helper">{text("无数据", "No data")}</p>}
-        <div className="settings-actions">
-          {settingsLink("slack", text("Slack 接入", "Slack"))}
-          {settingsLink("gmail", text("Gmail 接入", "Gmail"))}
-          {settingsLink("obsidian", text("笔记库", "Notes vault"))}
-        </div>
-      </section>
-
       <section className="settings-section" aria-labelledby="ingest-activity-title">
         <h3 id="ingest-activity-title" className="settings-section-title">{text("最近活动", "Recent Activity")}</h3>
         <p className="settings-helper">
@@ -310,12 +288,12 @@ export function IngestPage() {
           {activity?.unprocessed.mtime != null
             ? <code>{stamp(activity.unprocessed.mtime, true)}</code>
             : activity && !activity.unprocessed.readable
-              ? <span title={activity.unprocessed.path}>{text("看板服务读不到这个目录（Documents 授权只给壳与定时任务的助手）", "The board server cannot read that folder (the Documents grant belongs to the shell and the scheduled helper)")}</span>
+              ? <span title={activity.unprocessed.path}>{text("本机服务读不到这个目录（Documents 授权只给壳与定时任务的助手）", "The local server cannot read that folder (the Documents grant belongs to the shell and the scheduled helper)")}</span>
               : <span>{text("无文件", "No files")}</span>}
         </p>
         <p className="settings-helper">
-          <span>{text("state/actd.log 更新于：", "state/actd.log updated: ")}</span>
-          {actdStamp !== null ? <code>{stamp(actdStamp, true)}</code> : <span>{text("无日志", "No log")}</span>}
+          <span>{text("state/recap.log 更新于：", "state/recap.log updated: ")}</span>
+          {recapStamp !== null ? <code>{stamp(recapStamp, true)}</code> : <span>{text("无日志", "No log")}</span>}
         </p>
         <div className="settings-actions">
           <button type="button" className="btn btn-quiet" onClick={refreshActivity}>{text("刷新", "Refresh")}</button>

@@ -1,6 +1,6 @@
-// 设置页 section「会议纪要」（CONTRACT §63，issue #129 拍板）。三把旋钮：
-//   enabled（会后自动出稿）、default_language（auto/zh/en）、slack_draft_enabled（**默认关**——
-//   开了以后 recap 作为草稿进你自己 Slack 的「Drafts & Sent」，发送键仍在人手里）。
+// 设置页 section「会议纪要」（CONTRACT §63，issue #129 拍板）。两把旋钮：
+//   enabled（会后自动出稿）、default_language（auto/zh/en）。v2.0.0：slack_draft_enabled 随 §63.4 退役
+//   （§78 隔离下的 claude 没有 Slack MCP 可以放草稿）。
 // 数据经 store（refreshRecapSettings/saveRecapSettings）；这里只存草稿 + toast 瞬态。
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
@@ -11,13 +11,12 @@ import type { RecapSettings } from "../../types";
 interface Draft {
   enabled: boolean;
   default_language: string;
-  slack_draft_enabled: boolean;
 }
 
 const TOAST_MS = 6000;
 
 function draftFrom(s: RecapSettings): Draft {
-  return { enabled: s.enabled, default_language: s.default_language, slack_draft_enabled: s.slack_draft_enabled };
+  return { enabled: s.enabled, default_language: s.default_language };
 }
 
 export function RecapSection() {
@@ -52,8 +51,7 @@ export function RecapSection() {
   }
 
   const isDirty = draft.enabled !== recapSettings.enabled
-    || draft.default_language !== recapSettings.default_language
-    || draft.slack_draft_enabled !== recapSettings.slack_draft_enabled;
+    || draft.default_language !== recapSettings.default_language;
 
   async function save() {
     if (!draft) return;
@@ -77,8 +75,8 @@ export function RecapSection() {
       <h3 id="settings-recap-title" className="settings-section-title">{title}</h3>
       <p className="settings-helper">
         {text(
-          "会议（Zoom / Teams / Meet / Webex / FaceTime / Slack Huddle，≥10 分钟）结束后 5–35 分钟自动出一份 5 行纯文本纪要，你只做一件事：复制粘贴。默认没有任何发送路径。",
-          "5–35 minutes after a meeting (Zoom / Teams / Meet / Webex / FaceTime / Slack Huddle, ≥10 min) a 5-line plain-text recap appears; you copy and paste. There is no send path by default.",
+          "会议（Zoom / Teams / Meet / Webex / FaceTime / Slack Huddle，≥10 分钟）结束后 5–35 分钟自动出一份 5 行纯文本纪要，你只做一件事：复制粘贴。没有任何发送路径。",
+          "5–35 minutes after a meeting (Zoom / Teams / Meet / Webex / FaceTime / Slack Huddle, ≥10 min) a 5-line plain-text recap appears; you copy and paste. There is no send path.",
         )}
       </p>
 
@@ -107,21 +105,6 @@ export function RecapSection() {
         </div>
         <p className="settings-helper">{text("中英两版每次同时产出，这里只决定详情页先显示哪一版。", "Both languages are always produced; this only picks which one the page shows first.")}</p>
       </div>
-
-      <label className="settings-check">
-        <input
-          type="checkbox"
-          checked={draft.slack_draft_enabled}
-          onChange={(event) => setDraft({ ...draft, slack_draft_enabled: event.target.checked })}
-        />
-        <span>{text("把纪要放进 Slack 草稿箱（默认关）", "Place the recap in my Slack drafts (default off)")}</span>
-      </label>
-      <p className="settings-helper">
-        {text(
-          "开了以后，纪要以草稿形式出现在你自己 Slack 的「Drafts & Sent」里、附着到对应会话——不会发送，按发送键的仍然是你。目标会话来自 config.yaml recap.slack_draft.targets 或详情页手选；两者都没有就不投。走 Slack MCP 白名单（只允许建草稿），不是 prompt 约束。",
-          "When on, the recap appears as a draft in your own Slack Drafts & Sent, attached to the conversation — never sent; you press send. Targets come from config.yaml recap.slack_draft.targets or a manual pick on the detail page; neither → no draft. Enforced by a Slack MCP tool allowlist (draft only), not by a prompt.",
-        )}
-      </p>
 
       <div className="settings-actions">
         <button type="button" className="btn btn-primary" disabled={!isDirty || isSaving} onClick={() => void save()}>

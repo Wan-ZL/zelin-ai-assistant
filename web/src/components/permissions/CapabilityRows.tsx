@@ -51,10 +51,10 @@ function rowWhy(kind: Kind, text: Text): string {
       return text("授权一次，后台管线就永远经由 App 的稳定身份读写 Obsidian 笔记库——此后 claude/python 升级不会再弹任何权限窗口。",
         "Grant once and the background pipeline reaches your Obsidian vault through the app's stable identity forever — claude/python updates can never trigger new permission prompts again.");
     case "notifications":
-      return text("有新提案卡、任务完成或需要你输入时,用系统通知第一时间提醒你。",
-        "System notifications alert you the moment a new proposal card arrives or a task finishes / needs your input.");
+      return text("会议纪要生成好、或录制 / 笔记整理坏到需要你修时,用系统通知第一时间提醒你。",
+        "System notifications tell you the moment a meeting recap is ready, or when recording / note processing breaks and needs you.");
     default:
-      return text("实时字幕的麦克风转写。", "Live-captions microphone transcription.");
+      return text("「屏幕+音频」模式下会议音频的转写（会议纪要的原料）。", "Transcribing meeting audio in Screen + Audio mode (what meeting recaps are made from).");
   }
 }
 
@@ -74,8 +74,8 @@ export function CapabilityRows({ onError }: { onError?: (message: string | null)
   if (!present || !shell) {
     return (
       <p className="settings-warning">
-        {text("屏幕录制 / 笔记库 / 通知的真相只有看板 app（壳）自己探得到——请在 app 里打开本页。",
-          "Screen Recording / Notes vault / Notifications can only be probed by the board app itself — open this page inside the app.")}
+        {text("屏幕录制 / 笔记库 / 通知的真相只有 app（壳）自己探得到——请在 app 里打开本页。",
+          "Screen Recording / Notes vault / Notifications can only be probed by the app (shell) itself — open this page inside the app.")}
       </p>
     );
   }

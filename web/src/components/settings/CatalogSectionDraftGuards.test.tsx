@@ -2,7 +2,7 @@
 //   (a) 同 section 别处即时写（Slack 勾选器 / 目录「创建」）刷新目录 → 用户改过的键留草稿、没改的键跟新 effective；
 //       同一个键两边都动了（文本框 vs 勾选器写 slack_channels）以 server 为准；自己「保存」成功 → 草稿对齐回执；
 //   (b) 有未保存改动才挂 beforeunload（rail / ⌘数字 / /open 都是整页导航，这就是离页守卫），存净即摘；
-//   (c) telemetry 联动禁用：level 在 enabled 关时禁用，capture_input 在 enabled 关或 level ≠ detailed 时禁用（只禁不改值）；
+//   (c) 跨字段联动禁用的机制留着、v2.0.0 起表是空的（唯一的一组 telemetry level / capture_input 随遥测退役）；
 //   (d) number / int 草稿非法（负数 / 空 / 非整数）→ 「保存」禁用、该键不进 PUT；trash_retention_days 用原生整句提示；
 //       只计用户改过的键——config.yaml 里既有的越界 effective 不锁整区。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -30,15 +30,6 @@ const slackSection = (channels: string[] = [], owner = ""): SettingsSection => (
   fields: [
     field({ key: "owner_slack_user_id", kind: "string", label: bilingual("你的 Slack 用户 ID", "Your Slack user id"), default: "", effective: owner }),
     field({ key: "slack_channels", kind: "list", label: bilingual("监控频道", "Watched channels"), default: [], effective: channels }),
-  ],
-});
-
-const telemetrySection = (enabled = true, level = "detailed"): SettingsSection => ({
-  id: "telemetry", title: bilingual("产品改进计划", "Product improvement program"), help: bilingual("", ""),
-  fields: [
-    field({ key: "telemetry.enabled", kind: "bool", label: bilingual("参与产品改进", "Product improvement"), default: true, effective: enabled }),
-    field({ key: "telemetry.level", kind: "enum", label: bilingual("行为事件级别", "Behavior-event level"), default: "detailed", choices: ["basic", "detailed"], effective: level }),
-    field({ key: "telemetry.capture_input", kind: "bool", label: bilingual("上传我输入的文本", "Upload the text I type"), default: false, effective: false }),
   ],
 });
 
@@ -163,50 +154,11 @@ describe("CatalogSection leave guard (b)", () => {
   });
 });
 
-describe("telemetry cross-field gating (c)", () => {
-  it("disables level when the switch is off, and capture_input unless enabled + detailed — from the draft, without changing values", async () => {
-    primeCatalog(telemetrySection());
-    renderEn(<CatalogSection sectionId="telemetry" />);
-    const enabled = await screen.findByRole("switch", { name: "Product improvement" }) as HTMLInputElement;
-    const level = screen.getByRole("combobox") as HTMLSelectElement;
-    const capture = screen.getByRole("switch", { name: "Upload the text I type" }) as HTMLInputElement;
-    expect(level.disabled).toBe(false);
-    expect(capture.disabled).toBe(false);
-
-    fireEvent.change(level, { target: { value: "basic" } });     // 原生：level != detailed → capture 禁用
-    expect(capture.disabled).toBe(true);
-    expect(level.disabled).toBe(false);
-    expect(capture.checked).toBe(false);                         // 只禁不改值
-
-    fireEvent.change(level, { target: { value: "detailed" } });
-    expect(capture.disabled).toBe(false);
-
-    fireEvent.click(enabled);                                    // 原生：!telemetryEnabled → 两个都禁用
-    expect(enabled.checked).toBe(false);
-    expect(level.disabled).toBe(true);
-    expect(capture.disabled).toBe(true);
-    expect(level.closest(".settings-field")?.classList.contains("is-gated")).toBe(true);
-
-    fireEvent.click(enabled);
-    expect(level.disabled).toBe(false);
-    expect(capture.disabled).toBe(false);
-  });
-
-  it("gates from the server snapshot too (enabled=false on load)", async () => {
-    primeCatalog(telemetrySection(false, "detailed"));
-    renderEn(<CatalogSection sectionId="telemetry" />);
-    await screen.findByRole("combobox");
-    expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByRole("switch", { name: "Upload the text I type" }) as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("switch", { name: "Product improvement" }) as HTMLInputElement).disabled).toBe(false);
-  });
-
-  it("isGated only knows the telemetry pair; other keys are never gated", () => {
-    expect(isGated("telemetry.level", { "telemetry.enabled": false })).toBe(true);
-    expect(isGated("telemetry.level", { "telemetry.enabled": true })).toBe(false);
-    expect(isGated("telemetry.capture_input", { "telemetry.enabled": true, "telemetry.level": "basic" })).toBe(true);
-    expect(isGated("telemetry.capture_input", { "telemetry.enabled": true, "telemetry.level": "detailed" })).toBe(false);
+describe("cross-field gating (c) — v2.0.0: the only pair (telemetry) retired, the mechanism stays empty", () => {
+  it("isGated knows no keys any more; nothing is ever gated", () => {
+    expect(isGated("telemetry.level", { "telemetry.enabled": false })).toBe(false);
     expect(isGated("language", { language: "zh" })).toBe(false);
+    expect(isGated("quiet_hours_start", { quiet_hours_enabled: false })).toBe(false);
   });
 });
 

@@ -1,22 +1,19 @@
-// 向导末步「最后检查」（原生 SetupWizard.swift finaleStep 六行健康检查的 web 版，§68.5）：
-//   屏幕录制权限（壳探针）· AI 引擎（GET /api/setup/engine）· 后台服务（GET /api/health 心跳）· 首次数据
-//   （health.dashboard）· 定时任务磁盘权限（doctor `cron disk access` 行，经 GET /api/permissions）· 录制引擎
-//   （壳录制状态，只在录制开着时出行）。每个红行带一颗修复按钮：去授权… / 去配置… / 启动后台服务（POST
-//   /api/repair/actd，之后与横幅一键修复同一状态机 useRepairActd：15 × 1 s 问 health，已恢复 / 没恢复各有下场，§68.8）
-//   / 立即生成一次（POST /api/setup/seed-dashboard）/ 去授权…（cron：原生 CronFDA.beginGrant = 复制 /usr/sbin/cron
-//   + 开面板，failureAction.grantCronFda 唯一实现；浏览器里复制 + 权限体检页深链）· 查看诊断 / 启动引擎。
+// 向导末步「最后检查」（原生 SetupWizard.swift finaleStep 健康检查的 web 版，§68.5）：
+//   屏幕录制权限（壳探针）· AI 引擎（GET /api/setup/engine）· 定时任务磁盘权限（doctor `cron disk access` 行，经
+//   GET /api/permissions）· 录制引擎（壳录制状态，只在录制开着时出行）。每个红行带一颗修复按钮：去授权… / 去配置… /
+//   去授权…（cron：原生 CronFDA.beginGrant = 复制 /usr/sbin/cron + 开面板，failureAction.grantCronFda 唯一实现；浏览器里
+//   复制 + 权限体检页深链）· 查看诊断 / 启动引擎。
 // 「—」= 中性（没选录制 / 定时任务还没跑过），不算红；全绿才出「🎉 一切就绪!」。文案逐字镜像 SetupWizard.swift:1014–1242。
+// v2.0.0 退役（全文见 tag full）：后台服务（actd 心跳）行与它的「启动后台服务」、首次数据（dashboard.json）行与「立即生成一次」、
+// 「导入 Claude Code 已有工作…」入口。
 import { useState, type ReactNode } from "react";
-import { postSeedDashboard } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR } from "../../route";
 import { callShell, hasShellBridge, useShellState, schedulePaused } from "../../shellBridge";
-import { refreshBoard, refreshHealth, useAppState } from "../../store";
-import type { DoctorRow, HealthSnapshot, SetupEngine } from "../../types";
-import { RelativeTime } from "../shell/RelativeTime";
+import { useAppState } from "../../store";
+import type { DoctorRow, SetupEngine } from "../../types";
 import { grantCronFda } from "../settings/failureAction";
 import { errorMessage } from "../settings/useToast";
-import { useRepairActd } from "../shell/repairActd";
 import { authLabel } from "./EngineStep";
 
 type Text = (zh: string, en: string) => string;
@@ -30,16 +27,6 @@ interface RowSpec {
   /** href = 深链 <a>（可带 onClick 顺手做事，不拦导航）；否则 <button> */
   fix?: { label: string; onClick?: () => void; href?: string };
 }
-
-/** 后台服务：心跳在且没停 → 在跑；没心跳 / 卡住 → 没在跑（server verdict 同一判据，§47.4） */
-export function daemonRunning(health: HealthSnapshot | null): boolean | null {
-  if (!health) return null;
-  return Boolean(health.heartbeat && !health.heartbeat.stale);
-}
-
-/** 「启动后台服务」轮询的恢复判据 = 本行的 daemonRunning（§68.5），不是横幅的 isRecovered：横幅对 `unknown`（无心跳、
- *  看板新鲜——刚点过「立即生成一次」也会这样）闭嘴即算恢复，本行却仍判「没在跑」——两条判据不一致，行就会绿 6 s 再翻红。 */
-const daemonBack = (health: HealthSnapshot) => daemonRunning(health) === true;
 
 /** 定时任务磁盘权限：doctor `cron disk access` 行 → ok / fail(blocked | stale) / neutral(无探针) */
 export function cronVerdict(rows: DoctorRow[] | undefined): "ok" | "blocked" | "stale" | "neutral" | "checking" {
@@ -78,50 +65,25 @@ export interface FinaleStepProps {
 
 export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps) {
   const { text } = useI18n();
-  const { health, permissions } = useAppState();
+  const { permissions } = useAppState();
   const shell = useShellState();
   const present = hasShellBridge();
-  const [seeding, setSeeding] = useState(false);
-  // 原生 fixNote = 前缀 + 原因；按行各存一条（启动与生成可以先后都失败，互不覆盖）
+  // 原生 fixNote = 前缀 + 原因；按行各存一条（互不覆盖）
   const [notes, setNotes] = useState<Record<string, { prefix: string; detail: string }>>({});
   const setFixNote = (key: string, note: { prefix: string; detail: string } | null) =>
     setNotes((prev) => { const next = { ...prev }; if (note) next[key] = note; else delete next[key]; return next; });
 
-  // 「启动后台服务」= 横幅一键修复的同一状态机（§68.8：POST kickstart → 15 × 1 s 问 health → 已恢复 / 没恢复），
-  // 恢复判据换成本行自己的 daemonBack；它的失败 note（server 拒绝 / 15 s 没转好 → 原生 fixNote 前缀「启动失败: 」+ 原因）
-  // 直接从 phase 派生，再点一次即清
-  const repair = useRepairActd(daemonBack);
-  const fixingDaemon = repair.phase.kind === "running";
-  const daemonNote = repair.phase.kind === "failure" ? { prefix: text("启动失败: ", "Start failed: "), detail: repair.phase.detail } : null;
-
   const rec = present ? shell?.recording ?? null : null;
   const recOn = Boolean(rec && rec.mode !== "off");
   const screen = present ? shell?.permissions.screen ?? "unknown" : "unknown";
-  // 轮询看到心跳回来的那 6 s 里 store 还没刷（横幅要把「已恢复 ✓」说完）——行按轮询结果先转绿
-  const running = repair.phase.kind === "success" ? true : daemonRunning(health);
-  const dashboard = health ? health.dashboard : undefined;
   const cron = cronVerdict(permissions?.doctor);
-
-  async function seed() {
-    setSeeding(true);
-    setFixNote("data", null);
-    try {
-      const receipt = await postSeedDashboard();
-      if (!receipt.ok) setFixNote("data", { prefix: text("生成失败: ", "Seeding failed: "), detail: receipt.error ?? "" });
-      else await Promise.all([refreshHealth(), refreshBoard()]);
-    } catch (err) {
-      setFixNote("data", { prefix: text("生成失败: ", "Seeding failed: "), detail: errorMessage(err) });
-    } finally {
-      setSeeding(false);
-    }
-  }
 
   const shellCall = (method: "requestPermission" | "openPane" | "restartRecording", args: Record<string, unknown> = {}) => {
     setFixNote("shell", null);
     void callShell(method, args).catch((err) => setFixNote("shell", { prefix: "", detail: errorMessage(err) }));
   };
 
-  const permissionsHref = buildAppUrl(window.location.href, "permissions", null).toString();
+  const permissionsHref = buildAppUrl(window.location.href, "permissions").toString();
   const depsHref = buildSettingsUrl(window.location.href, DEPS_ANCHOR).toString(); // 依赖检查 = 设置页一区（D30）
 
   const rows: RowSpec[] = [];
@@ -143,27 +105,8 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
     ? { key: "engine", state: "checking", name: text("AI 引擎", "AI engine"), detail: text("检测中…", "Detecting…") }
     : engine.ready
       ? { key: "engine", state: "ok", name: text("AI 引擎", "AI engine"), detail: authLabel(engine.auth, text) }
-      : { key: "engine", state: "fail", name: text("AI 引擎", "AI engine"), detail: text("没有 AI 引擎,提案永远不会被执行", "Without an AI engine, proposals will never be executed"),
+      : { key: "engine", state: "fail", name: text("AI 引擎", "AI engine"), detail: text("没有 AI 引擎,会议纪要与笔记整理都不会运行", "Without an AI engine, neither meeting recaps nor note processing will run"),
         fix: { label: text("去配置", "Configure…"), onClick: goEngine } });
-
-  // 后台服务
-  rows.push(running === null
-    ? { key: "daemon", state: "checking", name: text("后台服务", "Background service"), detail: text("检测中…", "Checking…") }
-    : running
-      ? { key: "daemon", state: "ok", name: text("后台服务", "Background service"), detail: text("在后台运行,几秒内处理你的每个操作", "Running in the background, handling your actions within seconds") }
-      : { key: "daemon", state: "fail", name: text("后台服务", "Background service"), detail: text("没有运行——批准的卡片不会被执行", "Not running — approved cards won't execute"),
-        fix: { label: fixingDaemon ? text("启动中…", "Starting…") : text("启动后台服务", "Start it"), onClick: repair.run } });
-
-  // 首次数据
-  rows.push(dashboard === undefined
-    ? { key: "data", state: "checking", name: text("首次数据", "First data"), detail: text("检测中…", "Checking…") }
-    : dashboard
-      ? { key: "data", state: "ok", name: text("首次数据", "First data"),
-        detail: typeof dashboard.age_s === "number"
-          ? <><span>{text("已生成(", "Generated (")}</span><RelativeTime epoch={Date.now() / 1000 - dashboard.age_s} /><span>)</span></>
-          : text("已生成", "Generated") }
-      : { key: "data", state: "fail", name: text("首次数据", "First data"), detail: text("还没有——后台服务启动后约 10 秒自动生成", "Not yet — appears ~10 s after the background service starts"),
-        fix: { label: seeding ? text("生成中…", "Seeding…") : text("立即生成一次", "Generate now"), onClick: () => { if (!seeding) void seed(); } } });
 
   // 定时任务磁盘权限（§25 cron FDA 探针，真相 = 真 cron 跑出来的 state/cron_probe.json）
   const cronName = text("定时任务磁盘权限", "Cron disk access");
@@ -199,27 +142,21 @@ export function FinaleStep({ engine, engineChecking, goEngine }: FinaleStepProps
   }
 
   const allGreen = rows.every((r) => r.state === "ok" || r.state === "neutral");
-  const importUrl = buildAppUrl(window.location.href, "settings", null);
-  importUrl.searchParams.set("anchor", "claude_import");
 
   return (
     <>
       <ul className="setup-health">
         {rows.map((spec) => <Row key={spec.key} spec={spec} />)}
       </ul>
-      {Object.entries(daemonNote ? { daemon: daemonNote, ...notes } : notes).map(([key, note]) => (
+      {Object.entries(notes).map(([key, note]) => (
         <p key={key} className="settings-warning" role="alert"><span>{note.prefix}</span><span>{note.detail}</span></p>
       ))}
       {allGreen && (
         <div className="setup-card">
           <h4 className="setup-card-title">{text("🎉 一切就绪!", "🎉 All set!")}</h4>
-          <p className="settings-helper">{text("点「完成」后看板不再回到向导；设置 → 关于 里可以重跑。", "After Done the board stops returning here; re-run from Settings → About.")}</p>
+          <p className="settings-helper">{text("点「完成」后 app 不再回到向导；关于页里可以重跑。", "After Done the app stops returning here; re-run it from the About page.")}</p>
         </div>
       )}
-      <div className="settings-actions">
-        <a className="btn" href={importUrl.toString()}>{text("导入 Claude Code 已有工作…", "Import existing Claude Code work…")}</a>
-        <span className="settings-helper">{text("(可选:把你在终端里跑过的 Claude 会话变成卡片)", "(optional: turn Claude sessions you ran in Terminal into cards)")}</span>
-      </div>
     </>
   );
 }

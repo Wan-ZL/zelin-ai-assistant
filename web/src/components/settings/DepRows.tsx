@@ -1,15 +1,15 @@
-// 依赖检查页的「依赖」快速行 + 「雷达健康」三行（原生 Pages.swift DepsModel.check / radarDetail 的 web 版；
-// CONTRACT §15.1 / §68.4 追记）。每行 ✅ / ⚠️ + 名字 + 探针说明 + 一颗对症按钮（下载页 / 去录制页 / 去授权 / 显示 / 去设置）。
-// 数据来源按行诚实：
-//   · doctor 行（node/npx · claude CLI · gh CLI · daemon python = PyYAML · obsidian vault）——说明 = doctor 的 detail 原句；
-//   · 壳（录制引擎 · 屏幕录制权限 · 麦克风权限）——浏览器里如实说只在看板 app 里可探；
-//   · GET /api/secrets（Slack token · Gmail 应用密码 · Anthropic API key）：（App 内管理）/（App 内管理；当前用旧路径）/
-//     （App 内管理；未设置）——原生 credRow 的 hasSecret || hasLegacy 三态，`legacy` 是 §68.3 追记的 add-only 键；
+// 依赖检查页的「依赖」快速行（原生 Pages.swift DepsModel.check 的 web 版；CONTRACT §15.1 / §68.4 追记）。每行 ✅ / ⚠️ +
+// 名字 + 探针说明 + 一颗对症按钮（下载页 / 去录制页 / 去授权 / 显示 / 去设置）。数据来源按行诚实：
+//   · doctor 行（node/npx · claude CLI · daemon python = PyYAML · obsidian vault）——说明 = doctor 的 detail 原句；
+//   · 壳（录制引擎 · 屏幕录制权限 · 麦克风权限）——浏览器里如实说只在 app（壳）里可探；
+//   · GET /api/secrets（Anthropic API key）：（App 内管理）/（App 内管理；当前用旧路径）/（App 内管理；未设置）——原生
+//     credRow 的 hasSecret || hasLegacy 三态，`legacy` 是 §68.3 追记的 add-only 键；
 //   · state/cron_probe.json（定时任务磁盘权限）：没探针 / 探针过期 / 能读 / 被挡 四态，原生 cronFDARow 同规则。
 // 「显示」= POST /api/folders/open {key:"obsidian_raw"}（路径 server 读；目录不在 → server 开最近的既有祖先、回 `missing`，
 // 这里说「目录不存在，已打开上级目录」+ 去 设置 → 笔记库 建，原生 reveal 的 deletingLastPathComponent 回落）；
 // 屏幕 / 麦克风的「去授权」壳里开系统设置面板，浏览器里退成权限体检页；cron 的「去授权」是 failureAction 的
 // CronFdaGrantButton（复制 /usr/sbin/cron + 开面板），失败行下方另印原生 grantSteps 的 click-by-click 步骤。
+// v2.0.0 退役（全文见 tag full）：gh CLI 行（doctor 不再有它）、Slack token / Gmail 应用密码两行、「雷达健康」三行。
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { postFolderOpen } from "../../api";
@@ -17,8 +17,7 @@ import { useI18n } from "../../i18n";
 import { buildAppUrl, type AppPage } from "../../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState, type ShellState } from "../../shellBridge";
 import { refreshFailures, refreshSecrets, useAppState } from "../../store";
-import type { CronProbe, DoctorReport, DoctorRow, FailureCatalog, RadarSourceHealth, SecretsStatus } from "../../types";
-import { RelativeTime } from "../shell/RelativeTime";
+import type { CronProbe, DoctorReport, DoctorRow, FailureCatalog, SecretsStatus } from "../../types";
 import { CronFdaGrantButton, cronGrantSteps } from "./failureAction";
 import { errorMessage } from "./useToast";
 
@@ -38,7 +37,7 @@ export interface DepRow {
 export const CRON_PROBE_FRESH_MS = 2 * 3600 * 1000;
 
 function pageHref(page: AppPage, anchor?: string): string {
-  const url = buildAppUrl(window.location.href, page, null);
+  const url = buildAppUrl(window.location.href, page);
   if (anchor) url.searchParams.set("anchor", anchor);
   return url.toString();
 }
@@ -128,7 +127,7 @@ function micRow(shell: ShellState, text: Text): DepRow {
 /** 壳不在场（浏览器，shell = null）：三行如实说探不到 */
 function shellRows(shell: ShellState | null, catalog: FailureCatalog | null, lang: "zh" | "en", text: Text): DepRow[] {
   if (!shell) {
-    const detail = text("只在看板 app（壳）里可探——这是浏览器里打开的看板", "Only probeable inside the board app (shell) — this board is open in a browser");
+    const detail = text("只在 app（壳）里可探——这是浏览器里打开的页面", "Only probeable inside the app (shell) — this page is open in a browser");
     return [
       { id: "engine", name: text("录制引擎", "Recording engine"), ok: null, detail, action: <a className="btn btn-quiet" href={pageHref("ingest")}>{text("去录制页", "Open Recording")}</a> },
       { id: "screen_tcc", name: text("屏幕录制权限", "Screen Recording permission"), ok: null, detail, action: <GrantButton pane="screen" /> },
@@ -139,13 +138,11 @@ function shellRows(shell: ShellState | null, catalog: FailureCatalog | null, lan
 }
 
 const SECRET_ROWS: Array<[id: string, file: string, zh: string, en: string]> = [
-  ["slack", "slack-user-token.txt", "Slack token", "Slack token"],
-  ["gmail", "gmail-app-password.txt", "Gmail 应用密码", "Gmail app password"],
   ["anthropic", "anthropic-api-key.txt", "Anthropic API key", "Anthropic API key"],
 ];
 
 /** 原生 credRow（Pages.swift:225-243）的三态后缀：hasSecret → （App 内管理）；只有旧路径 → （App 内管理；当前用旧路径）；
- *  都没有 → （App 内管理；未设置）。ok = hasSecret || hasLegacy——旧路径的文件照样喂得饱雷达，不该亮 ⚠️。 */
+ *  都没有 → （App 内管理；未设置）。ok = hasSecret || hasLegacy——旧路径的文件照样能用，不该亮 ⚠️。 */
 export function secretVerdict(entry: { present: boolean; legacy?: boolean } | null, text: Text): { ok: boolean | null; suffix: string } {
   if (!entry) return { ok: null, suffix: "" };
   if (entry.present) return { ok: true, suffix: text("（App 内管理）", " (managed in-app)") };
@@ -153,7 +150,7 @@ export function secretVerdict(entry: { present: boolean; legacy?: boolean } | nu
   return { ok: false, suffix: text("（App 内管理；未设置）", " (managed in-app; not set)") };
 }
 
-/** 三把凭证；`legacy` 是 GET /api/secrets 的 add-only 键（§68.3 2026-09-03 追记），SecretRow 的「使用旧路径」读的同一把 */
+/** 凭证行；`legacy` 是 GET /api/secrets 的 add-only 键（§68.3 2026-09-03 追记），SecretRow 的「使用旧路径」读的同一把 */
 function secretRows(secrets: SecretsStatus | null, text: Text): DepRow[] {
   const action = <a className="btn btn-quiet" href={pageHref("settings", "credentials")}>{text("去设置", "Open Settings")}</a>;
   return SECRET_ROWS.map(([id, file, zh, en]) => {
@@ -189,7 +186,7 @@ function cronRow(probe: CronProbe | null | undefined, text: Text): DepRow {
     action: <CronFdaGrantButton />, note: verdict.ok ? undefined : cronGrantSteps(text) };
 }
 
-/** 原生 DepsModel.check 的 12 行，顺序照旧 */
+/** 原生 DepsModel.check 的行（v2.0.0 剩 9 行），顺序照旧 */
 export function buildDepRows(report: DoctorReport | null, shell: ShellState | null, secrets: SecretsStatus | null,
   catalog: FailureCatalog | null, probe: CronProbe | null | undefined, lang: "zh" | "en", text: Text): DepRow[] {
   const [engine, screen, mic] = shellRows(shell, catalog, lang, text);
@@ -197,7 +194,6 @@ export function buildDepRows(report: DoctorReport | null, shell: ShellState | nu
     fromDoctor(report, "node/npx", "npx", "Node / npx", <ExternalLink href="https://nodejs.org" label={text("下载页", "Download")} />, text),
     engine, screen, mic,
     fromDoctor(report, "claude CLI", "claude", "claude CLI", <ExternalLink href="https://claude.com/claude-code" label={text("下载页", "Download")} />, text),
-    fromDoctor(report, "gh CLI", "gh", "gh CLI", <ExternalLink href="https://cli.github.com" label={text("下载页", "Download")} />, text),
     fromDoctor(report, "daemon python", "pyyaml", "PyYAML", <ExternalLink href="https://pyyaml.org" label={text("下载页", "Download")} />, text),
     fromDoctor(report, "obsidian vault", "vault", "Obsidian vault", <RevealButton />, text),
     ...secretRows(secrets, text),
@@ -227,61 +223,6 @@ export function DepRows({ report, probe }: { report: DoctorReport | null; probe:
           {row.note && <p className="settings-helper dep-row-note">{row.note}</p>}
         </li>
       ))}
-    </ul>
-  );
-}
-
-// ----- 雷达健康（原生 DepsView radarDetail / humanSkipReason；与设置页 sourceHealth 的句子是另一张原生表） ----- #
-
-/** 原生 humanSkipReason：机器 skip_reason → 人话（词表外原样） */
-export function depsSkipReasonLabel(reason: string, text: Text): string {
-  switch (reason) {
-    case "no_credentials": return text("未配置凭证", "no credentials");
-    case "auth_failed": case "auth_error": case "invalid_credentials": return text("凭证无效", "invalid credentials");
-    case "network_error": case "timeout": return text("网络错误", "network error");
-    case "connect_failed": return text("连接失败", "connection failed");
-    case "disabled": return text("已禁用", "disabled");
-    case "vault_missing": return text("没指定 Obsidian 目录", "no Obsidian folder set");
-    case "vault_empty": return text("目录里没有笔记（去开录制/授权）", "folder empty (start recording / grant access)");
-    case "no_api_key": return text("定时任务没 API key（去填）", "scheduled job has no API key (add one)");
-    case "extract_failed": return text("截图→笔记链报错（看依赖检查）", "capture→note chain erroring (see Dependencies)");
-    case "mcp_not_configured": return text("Slack 兜底没连（去连接 Slack）", "Slack fallback not connected (connect Slack)");
-    default: return reason;
-  }
-}
-
-/** 原生 radarColor：绿 = 成功过；橙 = 从未、有已知原因；红 = 从未、原因不明；灰 = 文件里还没这个源 */
-export function radarTone(entry: RadarSourceHealth | undefined): "quiet" | "success" | "warning" | "danger" {
-  if (!entry) return "quiet";
-  if (entry.last_ok) return "success";
-  return entry.skip_reason || !entry.enabled ? "warning" : "danger";
-}
-
-const RADAR_ORDER: Array<[key: string, title: string]> = [["obsidian", "Obsidian"], ["gmail", "Gmail"], ["slack", "Slack"]];
-
-export function RadarHealthRows({ sources }: { sources: Record<string, RadarSourceHealth> | null | undefined }) {
-  const { text } = useI18n();
-  if (!sources) return <p className="settings-helper">{text("暂无数据", "No data yet")}</p>;
-  return (
-    <ul className="settings-list radar-rows" aria-label={text("雷达健康", "Radar Health")}>
-      {RADAR_ORDER.map(([key, title]) => {
-        const entry = sources[key];
-        // 投影里 enabled:false 且从未成功 = 原生 radar_health 的 skip_reason "disabled"
-        const reason = entry ? (entry.skip_reason || (!entry.enabled ? "disabled" : null)) : null;
-        return (
-          <li key={key} className={`settings-list-row radar-row is-${radarTone(entry)}`} data-source={key}>
-            <span className={`status-dot status-dot-${radarTone(entry)}`} aria-hidden="true" />
-            <span className="settings-list-title">{title}</span>
-            <span className="radar-detail">
-              {!entry
-                ? text("暂无数据", "No data yet")
-                : entry.last_ok
-                  ? <RelativeTime iso={entry.last_ok} prefix={text("最近成功 ", "last ok ")} />
-                  : <><span>{text("从未成功", "never succeeded")}</span>{reason && <><span>{text("：", ": ")}</span><span>{depsSkipReasonLabel(reason, text)}</span></>}</>}
-            </span>
-          </li>
-        );
-      })}
     </ul>
   );
 }

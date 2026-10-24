@@ -1,9 +1,10 @@
 // 向导第 2 步「接入 AI 引擎」（原生 SetupWizard.swift engineStep / EngineDetector / KeyProbe 的 web 版，§68.5）：
-// GET /api/setup/engine 检测 claude CLI + 认证梯子（Claude Code 登录 / ANTHROPIC_API_KEY / App 内保存的 key /
-// 旧路径）——就绪 = 「已连接,无需配置」+ 版本 + 认证方式；否则 A. 用 Claude Code 登录（装 / 登录 + 重新检测）
-// 或 B. 粘贴 Anthropic API key：**先验后存**（POST /api/secrets/…/verify {value} 只探不落盘，有效才 PUT
-// 保存到 config/secrets/anthropic-api-key.txt，0600）——无效的 key 永不静默存下；网络不通时「保存」可先存
-// 稍后再验。文案逐字镜像 SetupWizard.swift:672–852。
+// GET /api/setup/engine 检测 claude CLI + API key 梯子（ANTHROPIC_API_KEY / App 内保存的 key / 旧路径）——就绪 =
+// 「已连接,无需配置」+ 版本 + key 来源；否则两张卡：1. 装 claude CLI（没找到时；装好点「重新检测」）与 2. 粘贴 Anthropic
+// API key：**先验后存**（POST /api/secrets/…/verify {value} 只探不落盘，有效才 PUT 保存到 config/secrets/anthropic-api-key.txt，
+// 0600）——无效的 key 永不静默存下；网络不通时「保存」可先存稍后再验。
+// v2.0.0（§78）：目标是 API key。app 的 headless claude 带 `--bare` 跑在自己的 CLAUDE_CONFIG_DIR 里，永不读你的 Claude Code
+// 登录 / 钥匙串——「A. 用 Claude Code 现有登录」那一路与梯子的 oauth 档一起退役（全文见 tag full）。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchSetupEngine, putSecret, verifySecret } from "../../api";
 import { useI18n } from "../../i18n";
@@ -17,9 +18,8 @@ const KEY_NAME = "anthropic-api-key.txt";
 const PASTE_DEBOUNCE_MS = 600;
 const MIN_KEY_LEN = 20;
 
-/** 认证梯子的人话（原生 EngineAuth.label；顺序 = server AUTH_LADDER） */
+/** API key 梯子的人话（原生 EngineAuth.label；顺序 = server AUTH_LADDER） */
 export const AUTH_LABELS: Array<[key: string, zh: string, en: string]> = [
-  ["oauth", "Claude Code 登录", "Claude Code login"],
   ["env_key", "ANTHROPIC_API_KEY 环境变量", "ANTHROPIC_API_KEY env var"],
   ["secrets_file", "API key(App 内保存)", "API key (saved in-app)"],
   ["legacy_file", "API key(旧路径)", "API key (legacy path)"],
@@ -73,7 +73,7 @@ function CopyLine({ label, value }: { label: string; value: string }) {
 function AuthLadder({ engine }: { engine: SetupEngine }) {
   const { text } = useI18n();
   return (
-    <ul className="setup-ladder" aria-label={text("认证方式", "Auth")}>
+    <ul className="setup-ladder" aria-label={text("key 来源", "Key source")}>
       {AUTH_LABELS.map(([key, zh, en]) => {
         const hit = engine.auth_sources?.[key] === true;
         return <li key={key} className={hit ? "is-hit" : ""}><span aria-hidden="true">{hit ? "✓" : "○"}</span> <span>{text(zh, en)}</span></li>;
@@ -149,7 +149,7 @@ function KeyPasteCard({ onSaved }: { onSaved: () => void }) {
   const trimmed = value.replace(/\s+/g, "");
   return (
     <div className="setup-card">
-      <h4 className="setup-card-title">{text("B. 粘贴 Anthropic API key", "B. Paste an Anthropic API key")}</h4>
+      <h4 className="setup-card-title">{text("粘贴 Anthropic API key", "Paste an Anthropic API key")}</h4>
       <p className="settings-helper">{text("从控制台生成一个 key 粘贴到这里——粘贴后自动验证(一次免费的连通性检查,不消耗 tokens),有效才保存(仅存本机,权限 0600)。", "Generate a key in the console and paste it here — it verifies on paste (one free connectivity check, no tokens billed) and is saved only when valid (local only, mode 0600).")}</p>
       <div className="settings-knob-controls">
         <input
@@ -184,7 +184,7 @@ export function EngineStep({ engine, checking, error, detect }: { engine: SetupE
   return (
     <>
       {checking && !engine ? (
-        <div className="setup-card"><p className="settings-helper">{text("正在检测 claude CLI 与登录状态…", "Detecting the claude CLI and its login…")}</p></div>
+        <div className="setup-card"><p className="settings-helper">{text("正在检测 claude CLI 与 API key…", "Detecting the claude CLI and the API key…")}</p></div>
       ) : error && !engine ? (
         <div className="setup-card">
           <p className="settings-warning" role="alert">{error}</p>
@@ -198,32 +198,24 @@ export function EngineStep({ engine, checking, error, detect }: { engine: SetupE
             <span className="perm-capability-action"><button type="button" className="btn" disabled={checking} onClick={redetect}>{text("重新检测", "Re-detect")}</button></span>
           </div>
           {engine.version && <p className="settings-list-dim">{engine.version}</p>}
-          <p className="settings-helper"><span>{text("认证方式:", "Auth: ")}</span><span>{authLabel(engine.auth, text)}</span></p>
+          <p className="settings-helper"><span>{text("key 来源:", "Key source: ")}</span><span>{authLabel(engine.auth, text)}</span></p>
           <AuthLadder engine={engine} />
         </div>
       ) : (
         <>
-          <p className="settings-warning">{text("没有 AI 引擎,提案永远不会被执行。选择下面任一方式接入(推荐 A):", "Without an AI engine, proposals will never be executed. Connect with either option below (A recommended):")}</p>
-          <div className="setup-card" data-engine={engine?.cli_path ? "no-auth" : "no-cli"}>
-            <h4 className="setup-card-title">{text("A. 使用 Claude Code 现有登录(推荐)", "A. Use your Claude Code login (recommended)")}</h4>
-            {!engine?.cli_path ? (
-              <>
-                <p className="settings-helper">{text("还没找到 claude 命令。安装 Claude Code,登录一次,然后点「重新检测」。", "The claude command wasn't found. Install Claude Code, log in once, then click Re-detect.")}</p>
-                <CopyLine label={text("安装命令:", "Install: ")} value="npm install -g @anthropic-ai/claude-code" />
-                <div className="settings-actions">
-                  <a className="btn" href="https://claude.com/claude-code" target="_blank" rel="noreferrer">{text("打开安装页", "Open install page")}</a>
-                  <button type="button" className="btn" disabled={checking} onClick={redetect}>{text("重新检测", "Re-detect")}</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="settings-helper">{text("已找到 claude CLI,但还没有登录。在终端运行 claude 按提示登录,回来点「重新检测」。", "The claude CLI is installed but not logged in. Run claude in Terminal, follow the login prompt, then click Re-detect.")}</p>
-                <CopyLine label={text("在终端运行:", "Run in Terminal: ")} value="claude" />
-                <div className="settings-actions"><button type="button" className="btn" disabled={checking} onClick={redetect}>{text("重新检测", "Re-detect")}</button></div>
-              </>
-            )}
-            {engine && <AuthLadder engine={engine} />}
-          </div>
+          <p className="settings-warning">{text("没有 AI 引擎,会议纪要与笔记整理都不会运行。需要两样:claude CLI 与一把 Anthropic API key。", "Without an AI engine, neither meeting recaps nor note processing will run. Two things are needed: the claude CLI and an Anthropic API key.")}</p>
+          {!engine?.cli_path && (
+            <div className="setup-card" data-engine="no-cli">
+              <h4 className="setup-card-title">{text("安装 claude CLI", "Install the claude CLI")}</h4>
+              <p className="settings-helper">{text("还没找到 claude 命令。安装 Claude Code,然后点「重新检测」(不需要登录:app 只用下面那把 key)。", "The claude command wasn't found. Install Claude Code, then click Re-detect (no login needed: the app only uses the key below).")}</p>
+              <CopyLine label={text("安装命令:", "Install: ")} value="npm install -g @anthropic-ai/claude-code" />
+              <div className="settings-actions">
+                <a className="btn" href="https://claude.com/claude-code" target="_blank" rel="noreferrer">{text("打开安装页", "Open install page")}</a>
+                <button type="button" className="btn" disabled={checking} onClick={redetect}>{text("重新检测", "Re-detect")}</button>
+              </div>
+            </div>
+          )}
+          {engine && <AuthLadder engine={engine} />}
           <KeyPasteCard onSaved={redetect} />
           <p className="settings-helper">{text("现在跳过也可以——之后在 设置 → 凭证 里随时补上。", "Skipping now is fine too — add it anytime later in Settings → Credentials.")}</p>
         </>

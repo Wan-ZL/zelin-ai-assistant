@@ -1,17 +1,18 @@
 // §25 失败目录的「对症一键」（原生 Doctor.swift FailureCatalog.actionLabel / perform 的 web 版）：doctor 行、
-// 诊断条、卡片错误行带 failure_id（act/lib/failures.py 的闭集）时给一颗按钮——标签逐字镜像原生
-// （安装页 / 去诊断 / 去设置 / 去录制页 / 看进度 / 重启引擎 / 安装 ffmpeg / 去授权… / 一键修复 / 查看修法 / 显示文件），
+// 录制页诊断行带 failure_id（act/lib/failures.py 的闭集）时给一颗按钮——标签逐字镜像原生
+// （安装页 / 去诊断 / 去设置 / 去录制页 / 看进度 / 重启引擎 / 安装 ffmpeg / 去授权… / 查看修法 / 显示文件），
 // 动作落到 web 已有的机制：外链（Claude Code / Node.js / ffmpeg 安装页）、页面深链（依赖检查 / 设置凭证区 /
 // 录制页 / 权限体检 / 依赖检查区的 engine.log 尾巴 = 「看进度」）、桥（重启录制引擎 / 系统设置面板；浏览器里退成页面深链）、
-// server（POST /api/repair/actd 一键修复、POST /api/reveal {target:"config"} 显示文件）。未知 id → null（不装按钮，原文照旧）。
+// server（POST /api/reveal {target:"config"} 显示文件）。未知 id → null（不装按钮，原文照旧）。
+// v2.0.0：「一键修复」（agent_unloaded / dashboard_stale → POST /api/repair/actd）与 deploy_blind_tcc 随 actd 与自动部署退役
+// （§25 tombstone 条目）；退役 id 不再有动作。
 // cron FDA 的「去授权」是引导式的（原生 CronFDA.beginGrant，§25 / §68.4 追记）：先把 /usr/sbin/cron 放进剪贴板再开面板——
 // 这里的 grantCronFda / cronGrantSteps / CronFdaGrantButton 是唯一实现，DepRows 的 cron 行与向导末步 FinaleStep 都从这借。
 import { useState } from "react";
-import { postRepairActd, postRevealTarget } from "../../api";
+import { postRevealTarget } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, DEPS_ANCHOR, type AppPage } from "../../route";
 import { callShell, hasShellBridge } from "../../shellBridge";
-import { refreshHealth } from "../../store";
 import { copyText } from "../../copyText";
 import { errorMessage } from "./useToast";
 
@@ -57,10 +58,9 @@ export function failureActionLabel(id: string | null | undefined, text: Text): s
     case "engine_crashed": return text("重启引擎", "Restart engine");
     case "engine_ffmpeg_missing": return text("安装 ffmpeg", "Install ffmpeg");
     case "screen_tcc_lost": return text("去授权", "Grant…");
-    case "agent_unloaded": case "dashboard_stale": return text("一键修复", "Fix now");
     case "cron_missing": return text("查看修法", "How to fix");
     // 不给「一键修复」：重装 agent 会把同一个瞎解释器再渲一遍，得重跑安装器（原生同注）
-    case "interpreter_blind": case "claude_blind": case "deploy_blind_tcc": return text("去诊断", "Open diagnostics");
+    case "interpreter_blind": case "claude_blind": return text("去诊断", "Open diagnostics");
     case "cron_fda_blocked": return text("去授权", "Grant…");
     case "config_invalid": return text("显示文件", "Reveal file");
     default: return null;
@@ -78,7 +78,7 @@ interface PageTarget { page: AppPage; anchor?: string; log?: string }
 const PAGE: Record<string, PageTarget> = {
   // 「去诊断」一族 → 设置页的依赖检查区（D30；原来是独立页 ?page=deps）
   claude_cli_outdated: { page: "settings", anchor: DEPS_ANCHOR }, interpreter_blind: { page: "settings", anchor: DEPS_ANCHOR },
-  claude_blind: { page: "settings", anchor: DEPS_ANCHOR }, deploy_blind_tcc: { page: "settings", anchor: DEPS_ANCHOR },
+  claude_blind: { page: "settings", anchor: DEPS_ANCHOR },
   cron_missing: { page: "settings", anchor: DEPS_ANCHOR },
   claude_auth_failed: { page: "settings", anchor: "credentials" },
   engine_dead: { page: "ingest" },
@@ -88,13 +88,13 @@ const PAGE: Record<string, PageTarget> = {
 };
 
 function pageHref(target: PageTarget): string {
-  const url = buildAppUrl(window.location.href, target.page, null);
+  const url = buildAppUrl(window.location.href, target.page);
   if (target.anchor) url.searchParams.set("anchor", target.anchor);
   if (target.log) url.searchParams.set("log", target.log);
   return url.toString();
 }
 
-/** 一颗对症按钮；无动作的 id 渲染 null。`compact` = 卡面 / 诊断条上的小号。 */
+/** 一颗对症按钮；无动作的 id 渲染 null。`compact` = 表格行里的小号。 */
 export function FailureActionButton({ failureId, compact = false }: { failureId: string | null | undefined; compact?: boolean }) {
   const { text } = useI18n();
   const [note, setNote] = useState<string | null>(null);
@@ -126,21 +126,18 @@ export function FailureActionButton({ failureId, compact = false }: { failureId:
     return <button type="button" className={cls} onClick={() => void callShell("openPane", { pane: "screen" }).catch((e) => setNote(errorMessage(e)))}>{label}</button>;
   }
 
-  const run = async (fn: () => Promise<unknown>, after?: () => void) => {
+  // 剩下的唯一一类：config_invalid →「显示文件」（server 推导路径，客户端只点名词表项）
+  const action = async () => {
     setBusy(true);
     setNote(null);
     try {
-      await fn();
-      after?.();
+      await postRevealTarget("config");
     } catch (e) {
       setNote(errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
-  const action = id === "config_invalid"
-    ? () => run(() => postRevealTarget("config"))
-    : () => run(() => postRepairActd(), () => { window.setTimeout(() => void refreshHealth(), 3000); });
   return (
     <>
       <button type="button" className={cls} disabled={busy} onClick={() => void action()}>{label}</button>

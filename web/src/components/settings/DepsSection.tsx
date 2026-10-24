@@ -1,25 +1,23 @@
 // 依赖检查区（设置页的一区，锚点 `#settings-deps` 落在 SettingsPage 的 fold 壳上——D44；D30 owner 2026-09-04「这个依赖检查我希望合并到 setting里面」）：原生 Pages.swift
-// DepsView 的 依赖 快速行 + 雷达健康 + 诊断 三段（§15.1 / §68.4）——此前是独立页 `?page=deps`（更早叫 `?page=diagnostics`），
-// 两个旧深链仍接受、都开到设置页并滚到本区（route.readSettingsAnchor）；横幅 / 诊断条 / 向导 / 权限体检 / 关于区的链接
-// 走 `?page=settings&anchor=deps`。控件与文案原样：
-//   依赖快速行（DepRows：doctor 行 + 壳 + 凭证 + cron 探针，每行一颗对症按钮）· 雷达健康（原生 radarDetail：最近成功 … /
-//   从未成功：<原因> / 暂无数据）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，会花 token；零失败「全部通过 ✓」、
-//   「完整报告」折叠成文本）· web 自有的 管线活性（心跳 / 看板新鲜度 / 连崩）· 自动部署状态（§56 deploy_state 全字段）·
+// DepsView 的 依赖 快速行 + 诊断 两段（§15.1 / §68.4）——此前是独立页 `?page=deps`（更早叫 `?page=diagnostics`），
+// 两个旧深链仍接受、都开到设置页并滚到本区（route.readSettingsAnchor）；向导 / 权限体检 / 关于页的链接走
+// `?page=settings&anchor=deps`。控件与文案原样：
+//   依赖快速行（DepRows：doctor 行 + 壳 + 凭证 + cron 探针，每行一颗对症按钮）· doctor 表（--fast；「运行诊断」= fast=0 含活探针，
+//   会花 token；零失败「全部通过 ✓」、「完整报告」折叠成文本）· web 自有的 活性（GET /api/health：cron 链探针 / 上次 recap 轮次）·
 //   安装回执（§23）· 日志尾巴（只读、server size-cap；?log=<name> 深链直接翻开）。
-//   让 AI 修在卡片上（§54.1 第 5 项），这里只在 doctor 有未通过项时出现；config.yaml doctor.ai_fix_enabled=false（快照
-//   ai_fix_enabled，原生 AIFix.enabled）整颗不出现；成功句「已在 Terminal 打开修复会话——跟着 AI 走即可」与卡片共用。
 //   doctor 表 = 原生 doctorFindingRow：只列没通过的行（OK 行在「完整报告」里），主句 = §25 FailureCatalog 的人话（当前语言，
 //   GET /api/failures）?? 原句，用了人话时原句 + 修法降成辅助行 + title 气泡；行带 failure_id 时给原生 FailureCatalog 的对症
-//   一键（安装页 / 去设置 / 去授权… / 一键修复 / 显示文件…，failureAction）。doctor 人话是子进程按语言产出的：快照带
+//   一键（安装页 / 去设置 / 去授权… / 显示文件…，failureAction）。doctor 人话是子进程按语言产出的：快照带
 //   ?lang=<当前语言>（store.refreshDiagnostics / fetchDoctor），切语言即重拉（原生 `.onChange(of: i18n.lang) { model.check() }`）。
+// v2.0.0 退役（全文见 tag full）：雷达健康三行、「让 AI 修」（交互式 Terminal 修复会话）、管线活性里的 actd 心跳 / 看板新鲜度 /
+// 连崩计数、自动部署状态（§56）。
 import { useEffect, useState } from "react";
-import { fetchDoctor, fetchLogTail, postAiFixDoctor } from "../../api";
+import { fetchDoctor, fetchLogTail } from "../../api";
 import { useI18n, type Language } from "../../i18n";
 import { buildAppUrl, useRoute } from "../../route";
 import { refreshDiagnostics, useAppState } from "../../store";
 import type { DoctorReport, DoctorRow, FailureCatalog, LogTail } from "../../types";
-import { aiFixOpenedText } from "../board/cardChrome";
-import { DepRows, RadarHealthRows } from "./DepRows";
+import { DepRows } from "./DepRows";
 import { FailureActionButton } from "./failureAction";
 import { errorMessage } from "./useToast";
 
@@ -57,7 +55,7 @@ export function doctorFindings(report: DoctorReport): DoctorRow[] {
   return report.checks.filter((row) => row.status !== "ok");
 }
 
-/** 原生 `doctorFails = rows.filter { $0.status == "fail" }.count > 0`：让 AI 修 / 判决行的红黄门 */
+/** 原生 `doctorFails = rows.filter { $0.status == "fail" }.count > 0`：判决行的红黄门 */
 export function hasDoctorFail(report: DoctorReport): boolean {
   return report.checks.some((c) => c.status === "fail");
 }
@@ -101,20 +99,17 @@ function KeyValues({ obj }: { obj: Record<string, unknown> }) {
   );
 }
 
-type AiFixState = { phase: "idle" | "busy" | "done" | "failed"; msg?: string };
-
 export function DepsSection() {
   const { text, language } = useI18n();
   const { diagnostics, failures, pageErrors } = useAppState();
   const [full, setFull] = useState<DoctorReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [rechecking, setRechecking] = useState(false);
-  const [aiFix, setAiFix] = useState<AiFixState>({ phase: "idle" });
   const [log, setLog] = useState<LogTail | null>(null);
   const [logName, setLogName] = useState("");
   const [logError, setLogError] = useState<string | null>(null);
 
-  // ?log=<name>：横幅「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）。从路由订阅里读（D40 换页
+  // ?log=<name>：「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）。从路由订阅里读（D40 换页
   // 不重载）：已在设置页时点「查看引擎日志」本区不重挂，靠 wantedLog 变化再翻一次
   const wantedLog = new URLSearchParams(useRoute()).get("log") ?? "";
   useEffect(() => {
@@ -136,18 +131,6 @@ export function DepsSection() {
       await refreshDiagnostics(true);
     } finally {
       setRechecking(false);
-    }
-  }
-
-  // 原生 DepsView「让 AI 修」：诊断有未通过项时出现；上下文由 server 从 doctor 报告推导（零客户端文本）；
-  // 成功 = 原生 AIFix.launch 完成句留在状态行（Pages.swift aiFixStatus），失败 = 前缀 + server 原句
-  async function fixWithAi() {
-    setAiFix({ phase: "busy" });
-    try {
-      await postAiFixDoctor(language);
-      setAiFix({ phase: "done", msg: aiFixOpenedText(text) });
-    } catch (err) {
-      setAiFix({ phase: "failed", msg: text("让 AI 修启动失败：", "Fix with AI failed to launch: ") + errorMessage(err) });
     }
   }
 
@@ -179,25 +162,19 @@ export function DepsSection() {
   const noRows = !rechecking && !busy && (report ? report.checks.length === 0 : Boolean(pageErrors.diagnostics));
   const findings = report ? doctorFindings(report) : [];
   const hasFail = Boolean(report?.ok && hasDoctorFail(report));
-  const aiFixAllowed = diagnostics?.ai_fix_enabled !== false;   // 原生 AIFix.enabled：只有明确的 false 才隐藏
 
   return (
     <section className="settings-section deps-section" aria-labelledby="settings-deps-title">
       <div className="settings-section-head">
         <h3 id="settings-deps-title" className="settings-section-title">{text("依赖检查", "Dependencies")}</h3>
         <button type="button" className="btn" disabled={busy || rechecking} onClick={() => void recheck()}>{rechecking ? text("检查中…", "Checking…") : text("重新检查", "Re-check")}</button>
-        <a className="settings-link" href={buildAppUrl(window.location.href, "permissions", null).toString()}>{text("权限体检", "Permissions Checkup")}</a>
+        <a className="settings-link" href={buildAppUrl(window.location.href, "permissions").toString()}>{text("权限体检", "Permissions Checkup")}</a>
       </div>
       <p className="settings-helper">{text("车跑之前轮子都得在。", "All wheels must be on before the car runs.")}</p>
       {pageErrors.diagnostics && <p className="settings-error" role="alert">{pageErrors.diagnostics}</p>}
       {rechecking && <p className="settings-helper">{text("检查中…", "Checking…")}</p>}
       {noRows && <p className="settings-helper">{text("点「重新检查」开始", "Click \"Re-check\" to start")}</p>}
       <DepRows report={report} probe={diagnostics?.cron_probe} />
-
-      <div className="settings-subsection" aria-labelledby="diag-sources-title">
-        <h4 id="diag-sources-title" className="settings-subsection-title">{text("雷达健康", "Radar Health")}</h4>
-        <RadarHealthRows sources={diagnostics ? diagnostics.radar_sources : undefined} />
-      </div>
 
       <div className="settings-subsection" aria-labelledby="diag-doctor-title">
         <h4 id="diag-doctor-title" className="settings-subsection-title">{text("诊断", "Diagnostics")}<span className="settings-helper"> · python -m act.doctor</span></h4>
@@ -211,17 +188,8 @@ export function DepsSection() {
                 <span>{report.fast ? text(" · 快速模式", " · fast mode") : ""}{report.ran_at ? ` · ${report.ran_at}` : ""}</span>
               </span>
             )}
-          {hasFail && aiFixAllowed && (
-            <>
-              <button type="button" className="btn" disabled={aiFix.phase === "busy"} onClick={() => void fixWithAi()}>
-                {aiFix.phase === "busy" ? text("正在准备诊断包…", "Preparing the diagnostic bundle…") : text("让 AI 修", "Fix with AI")}
-              </button>
-              {aiFix.phase === "done" && <span className="settings-helper diag-aifix-status" role="status">{aiFix.msg}</span>}
-              {aiFix.phase === "failed" && <span className="settings-warning" role="alert">{aiFix.msg}</span>}
-            </>
-          )}
         </div>
-        <p className="settings-helper">{text("发现异常时会自动运行一次快速诊断；这个按钮跑完整版（含一次真实 claude 调用）。让 AI 修会在终端开一个带诊断包的 claude 修复会话。", "A quick diagnostic auto-runs when something looks broken; this button runs the full version (one live claude call). Fix with AI opens a claude repair session in Terminal with the diagnostic bundle attached.")}</p>
+        <p className="settings-helper">{text("打开本区时会跑一次快速诊断；这个按钮跑完整版（含一次真实 claude 调用，在隔离目录里，不碰你自己的 Claude Code 设置）。", "Opening this section runs a quick diagnostic; this button runs the full version (one live claude call, in the app's isolated directory, never touching your own Claude Code settings).")}</p>
         {report && !report.ok && <p className="settings-warning" role="alert">{text("doctor 没跑成：", "doctor did not run: ")}{report.error}</p>}
         {findings.length > 0 && <DoctorTable rows={findings} catalog={failures} />}
         {report && report.checks.length > 0 && (
@@ -236,21 +204,14 @@ export function DepsSection() {
       {diagnostics && (
         <>
           <div className="settings-subsection" aria-labelledby="diag-health-title">
-            <h4 id="diag-health-title" className="settings-subsection-title">{text("管线活性（§47.4）", "Pipeline liveness (§47.4)")} · <span className={`chip chip-${diagnostics.health.verdict === "ok" ? "success" : diagnostics.health.verdict === "unknown" ? "quiet" : "danger"}`}>{diagnostics.health.verdict}</span></h4>
+            <h4 id="diag-health-title" className="settings-subsection-title">{text("活性", "Liveness")} · <span className={`chip chip-${diagnostics.health.verdict === "ok" ? "success" : diagnostics.health.verdict === "unknown" ? "quiet" : "danger"}`}>{diagnostics.health.verdict}</span></h4>
             <KeyValues obj={{
-              heartbeat_age_s: diagnostics.health.heartbeat?.age_s,
-              heartbeat_phase: diagnostics.health.heartbeat?.phase,
-              heartbeat_pid: diagnostics.health.heartbeat?.pid,
-              dashboard_age_s: diagnostics.health.dashboard?.age_s,
-              consecutive_failures: diagnostics.health.loop_health.consecutive_failures,
-              last_error: diagnostics.health.loop_health.last_error,
-              registry_backend: diagnostics.registry_backend,
+              cron_age_s: diagnostics.health.cron?.age_s,
+              cron_read_ok: diagnostics.health.cron?.read_ok,
+              recap_updated_at: diagnostics.health.recap?.updated_at,
+              recap_age_s: diagnostics.health.recap?.age_s,
             }} />
-          </div>
-
-          <div className="settings-subsection" aria-labelledby="diag-deploy-title">
-            <h4 id="diag-deploy-title" className="settings-subsection-title">{text("自动部署（§56）", "Auto-deploy (§56)")}</h4>
-            {diagnostics.deploy_state ? <KeyValues obj={diagnostics.deploy_state} /> : <p className="settings-helper">{text("看板里没有 deploy_state（自动部署 agent 还没跑过）。", "No deploy_state in the board (the auto-deploy agent has not run yet).")}</p>}
+            <p className="settings-helper">{text("cron = 每 30 分钟一轮的 ingest 链上次跑到的时间（超过 2 小时算停跑）；recap = 会议纪要上次跑完一轮的时间。", "cron = when the 30-minute ingest chain last fired (over 2 hours counts as stopped); recap = when meeting recaps last finished a round.")}</p>
           </div>
 
           <div className="settings-subsection" aria-labelledby="diag-install-title">

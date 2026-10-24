@@ -48,16 +48,16 @@ afterEach(() => {
 describe("folderUi", () => {
   it("carries the native sentences per field and a generic fallback", () => {
     expect(folderUi("obsidian_raw").create).toEqual(["创建", "Create"]);
-    expect(folderUi("default_target_repo").create).toEqual(["创建文件夹", "Create folder"]);
-    expect(folderUi("default_target_repo").open).toBe(false);
-    expect(folderUi("maintainer_repo_path").missing).toEqual(["路径不存在", "Path doesn't exist"]);
-    expect(folderUi("something_else").create).toEqual(["创建", "Create"]);
+    expect(folderUi("obsidian_raw").missing[1]).toMatch(/vault folder/);
+    // v2.0.0：派工目标仓 / 开发会话仓的专用句随各自的区退役——它们（以及任何表外目录字段）落到通用句
+    expect(folderUi("default_target_repo")).toEqual(folderUi("something_else"));
+    expect(folderUi("something_else")).toEqual({ open: true, create: ["创建", "Create"], missing: ["⚠︎ 目录不存在", "⚠︎ Folder doesn't exist"] });
   });
 });
 
 describe("<FolderPicker />", () => {
   it("with the shell bridge: Choose… opens the panel with current + prompt and hands back the pick", async () => {
-    const postMessage = vi.fn(async () => ({ recording: {}, captions: {}, dialog: { path: "~/Picked" } }));
+    const postMessage = vi.fn(async () => ({ recording: {}, dialog: { path: "~/Picked" } }));
     installShell(postMessage);
     const onPick = vi.fn();
     wrap(<FolderPicker current="~/Notes" onPick={onPick} />);
@@ -118,11 +118,10 @@ describe("<FolderActions />", () => {
     await screen.findByRole("status");
   });
 
-  it("Create folder for the workbench; Open only where the native had it; nothing when path_exists is null", () => {
-    wrap(<FolderActions field={field({ key: "default_target_repo", effective: "~/Projects/x" })} dirty={false} />);
-    expect(screen.getByRole("button", { name: "Create folder" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
-    expect(screen.getByText(/first approved card will fail/)).toBeTruthy();
+  it("a generic missing folder gets Create + the generic sentence; an existing one gets Open; nothing when path_exists is null", () => {
+    wrap(<FolderActions field={field({ key: "some_dir", effective: "~/Projects/x" })} dirty={false} />);
+    expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
+    expect(screen.getByText("⚠︎ Folder doesn't exist")).toBeTruthy();
     cleanup();
     wrap(<FolderActions field={field({ path_exists: true })} dirty={false} />);
     expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
@@ -156,17 +155,17 @@ describe("<FolderActions />", () => {
 
 describe("<FieldControl /> for a folder field", () => {
   it("grows Choose… and the actions only for path:dir; a plain string field stays a bare input", () => {
-    // 工作目录是逐字存取的目录字段（笔记库那一把按 vault 根换算，判例在 VaultRootField.test.tsx）
+    // 表外的目录字段逐字存取（笔记库那一把按 vault 根换算，判例在 VaultRootField.test.tsx）
     const onChange = vi.fn();
-    wrap(<FieldControl sectionId="approval" field={field({ key: "default_target_repo", effective: "~/Projects/x" })} value="~/Projects/x" onChange={onChange} />);
+    wrap(<FieldControl sectionId="storage" field={field({ key: "some_dir", effective: "~/Projects/x" })} value="~/Projects/x" onChange={onChange} />);
     expect(screen.getByRole("button", { name: "Choose…" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Create folder" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Choose…" }));   // 无桥 → 路径框
     fireEvent.change(screen.getByLabelText("Folder path"), { target: { value: "~/Elsewhere" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose" }));
-    expect(onChange).toHaveBeenCalledWith("default_target_repo", "~/Elsewhere");
+    expect(onChange).toHaveBeenCalledWith("some_dir", "~/Elsewhere");
     cleanup();
-    wrap(<FieldControl sectionId="gmail" field={field({ key: "gmail_address", path: undefined, path_exists: undefined })} value="a@b" onChange={onChange} />);
+    wrap(<FieldControl sectionId="redaction" field={field({ key: "redaction_terms_file", path: undefined, path_exists: undefined })} value="a.txt" onChange={onChange} />);
     expect(screen.queryByRole("button", { name: "Choose…" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create" })).toBeNull();
   });

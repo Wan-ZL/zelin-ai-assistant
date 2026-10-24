@@ -45,17 +45,17 @@ export function RecordingSection() {
   const rec = state?.recording;
   const paused = rec ? schedulePaused(rec) : false;
   return (
-    <section className="settings-section" aria-labelledby="settings-recording-title">
-      <h3 id="settings-recording-title" className="settings-section-title">{text("录制", "Recording")}</h3>
+    <section className="settings-section" aria-labelledby="settings-recording-engine-title">
+      <h3 id="settings-recording-engine-title" className="settings-section-title">{text("录制", "Recording")}</h3>
       <p className="settings-helper">
         {text(
-          "屏幕（可选 + 音频）持续录制到本机 ~/.screenpipe，每 30 分钟 ingest 成笔记再进雷达。敏感 app 排除词表在 config.yaml recording.ignored_apps。",
-          "Continuous screen (optionally + audio) capture into local ~/.screenpipe, ingested into notes every 30 min for the radar. The sensitive-app exclusion list lives in config.yaml recording.ignored_apps.",
+          "屏幕（可选 + 音频）持续录制到本机 ~/.screenpipe，每 30 分钟整理成笔记、会后出会议纪要。不录制的应用 / 窗口在下面一区。",
+          "Continuous screen (optionally + audio) capture into local ~/.screenpipe, turned into notes every 30 min and into a recap after each meeting. Apps and windows that are never recorded are set just below.",
         )}
       </p>
       {!present || !rec ? (
         <p className="settings-warning">
-          {text("录制引擎只在看板 app（壳）里可控——这是浏览器里打开的看板，看不到引擎。", "The recording engine is only controllable inside the board app (shell) — this board is open in a browser and cannot see it.")}
+          {text("录制引擎只在 app（壳）里可控——这是浏览器里打开的页面，看不到引擎。", "The recording engine is only controllable inside the app (shell) — this page is open in a browser and cannot see it.")}
         </p>
       ) : (
         <>
@@ -195,7 +195,7 @@ export function RecordingScheduleBlock({ schedule }: { schedule: ShellRecordingS
         </span>
       </div>
       {unsupported ? (
-        <p className="settings-helper">{text("这个版本的看板 app 还不认识录制日程——升级壳后再来。", "This board app build does not know recording schedules yet — update the shell and come back.")}</p>
+        <p className="settings-helper">{text("这个版本的 app（壳）还不认识录制日程——升级壳后再来。", "This app (shell) build does not know recording schedules yet — update the shell and come back.")}</p>
       ) : (
         // 不随 busy 禁用：桥往返是毫秒级，而禁用会把键盘焦点从正在编辑的框里踢出去（每次回车提交都得重新 Tab 回来）；
         // 发送幂等（只发改动的键、桥合并），双击不可能在毫秒内发生

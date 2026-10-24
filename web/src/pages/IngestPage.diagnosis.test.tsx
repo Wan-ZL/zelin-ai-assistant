@@ -26,9 +26,8 @@ const renderEn = (node: React.ReactNode) => render(<LanguageContext.Provider val
 
 const shell: ShellState = {
   recording: { available: true, on: true, mode: "screen", engine_running: false, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen", self_heal_note: "", log_tail: "" },
-  captions: { available: true, on: false, engine: "auto", paused: false, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: false, translate_direction: "auto", apple_locale: "zh", ark_model: "", font_size: 24, opacity: 0.7 },
   permissions: { screen: "granted", microphone: "unknown", notifications: "granted", vault: "unknown" },
-  launch_at_login: false, hotkey: "⌃⌥Space",
+  launch_at_login: false,
 };
 
 const diagnostics: DiagnosticsSnapshot = {
@@ -266,7 +265,7 @@ describe("手动触发跑完 → 最近活动立刻刷新（Pages.swift:778/810 
     vi.mocked(postIngestRun).mockResolvedValue({ ok: true, job: "j2", state: "running", script: "ingest/process-screenpipe.sh" });
     vi.mocked(fetchIngestJob).mockResolvedValue({ id: "j2", script: "ingest/process-screenpipe.sh", state: "done", started_at: "x", ok: true, rc: 0, skipped: false, tail: "", seconds: 1 });
     renderEn(<IngestPage />);
-    await screen.findByText(/only controllable inside the board app/);
+    await screen.findByText(/only controllable inside the app \(shell\)/);
     fireEvent.click(screen.getByRole("button", { name: "Ingest Now" }));
     await screen.findByText("Done ✓");
     await waitFor(() => expect(fetchDiagnostics).toHaveBeenCalledTimes(2));

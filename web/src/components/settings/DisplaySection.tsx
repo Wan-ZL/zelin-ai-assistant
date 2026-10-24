@@ -2,7 +2,7 @@
 // 三个 segmented control（Apple「文字大小」/「粗体文本」式）：文字大小 / 文字粗细 / 线条粗细，
 // 词表来自 server 快照（text_sizes / text_weights / strokes），client 只有文案。
 // 无保存键：点一档 = 立刻落 <html> data-*（store.saveDisplaySettings 先应用再 PUT，失败回滚 + toast）。
-// 预览行用看板真实的类名（task-card / chip / btn）渲染，随 :root 变量即时变化——预览就是实物。
+// 预览行用页面真实的类名（task-card / chip / btn，styles/controls.css）渲染，随 :root 变量即时变化——预览就是实物。
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
 import type { DisplayField } from "../../displayPrefs";
@@ -87,8 +87,8 @@ export function DisplaySection() {
       <h3 id="settings-display-title" className="settings-section-title">{title}</h3>
       <p className="settings-helper">
         {text(
-          "看板全部文字与线条的显示方式。点选即时生效并保存，无需重启。系统「增强对比度」开着时线条会再加粗一档。",
-          "How every piece of text and every outline on the board is drawn. Changes apply and save instantly. With the system's Increase Contrast on, outlines step up one more notch.",
+          "页面全部文字与线条的显示方式。点选即时生效并保存，无需重启。系统「增强对比度」开着时线条会再加粗一档。",
+          "How every piece of text and every outline on these pages is drawn. Changes apply and save instantly. With the system's Increase Contrast on, outlines step up one more notch.",
         )}
       </p>
 
@@ -135,7 +135,7 @@ export function DisplaySection() {
   );
 }
 
-/** 一张缩小的卡头 + 章 + 动作行：与看板同一套类名，所以随 :root 的三把旋钮即时变化（不另设作用域） */
+/** 一张缩小的卡头 + 章 + 动作行：与页面同一套类名，所以随 :root 的三把旋钮即时变化（不另设作用域） */
 function DisplayPreview() {
   const { text } = useI18n();
   return (
@@ -143,18 +143,18 @@ function DisplayPreview() {
       <div className="task-card">
         <div className="card-head">
           <span className="card-dot is-review" aria-hidden="true" />
-          <div className="card-title">{text("把周报模板改成双语版本", "Make the weekly report template bilingual")}</div>
-          <span className="card-id">R-128</span>
+          <div className="card-title">{text("Zoom · 产品周会", "Zoom · product weekly")}</div>
+          <span className="card-id">v2</span>
         </div>
         <div className="card-badges">
-          <span className="chip chip-accent">{text("待验收", "Review")}</span>
-          <span className="chip">your-workbench</span>
-          <span className="chip chip-purple chip-quiet">{text("已并入×2", "Folded ×2")}</span>
+          <span className="chip chip-accent">{text("活跃", "Active")}</span>
+          <span className="chip">42 min</span>
+          <span className="chip chip-purple chip-quiet">{text("可发送长版", "Sendable long form")}</span>
         </div>
         <div className="card-actions">
-          <span className="btn btn-success">{text("验收", "Accept")}</span>
-          <span className="btn btn-warning">{text("打回…", "Send back…")}</span>
-          <span className="btn">{text("暂缓", "Defer")}</span>
+          <span className="btn btn-primary">{text("复制", "Copy")}</span>
+          <span className="btn btn-success">{text("标记已发送", "Mark as sent")}</span>
+          <span className="btn">{text("重新生成…", "Regenerate…")}</span>
         </div>
       </div>
     </div>
