@@ -837,6 +837,8 @@ release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并�
 > `tests/test_server_notify_preferences_settings.py`。`notify_catalog` 里只为 §66.2 探针存在的
 > `kind_names` / `fragments` / `same_template` / `sentences` / `has_sentence` 不是活的 server 面：唯一
 > 生产调用方 `scripts/ui/parity_check.py` 已不在门里（§66 墓碑），PR-C 删 `scripts/ui/` 时一并删除。
+> **（PR-C 已兑现）**：五个函数已删；壳直发句与 shell/Sources `L()` 对的逐字对照（含占位名归一）改由
+> `tests/test_server_notify_catalog.py` 自带的小扫描器执行，`GET /api/notifications` 的形状一字不变。
 
 **目标**：python daemons 的系统通知以 **Zelin's AI Assistant** 的身份/图标弹出，
 不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方）
@@ -2159,6 +2161,8 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 **§56.1 追记（2026-09-14，add-only；issue #309，D55）——用户面只显示 tag，`+N` 降级**：`act.__version__` 在 HEAD 领先最近 tag 时解析成 `X.Y.Z+N`（上文第 2 条，semver build metadata）。生产机的 checkout 上叠着 ingest 的工作数据 commit，那个 N 因此数的是「本地有多少条与代码无关的提交」——2026-09-09 实录：关于页说 `1.0.23+92`、`deploy_state` 说 `1.0.23+101`，同一台机器两个版本号，而两个数对用户都没有意义。自本条起**用户可见的每一处版本都只渲染 tag**（`v1.0.23`）：关于页「版本」行（`<code>v<tag></code>`，`+N` 存在时另起一句辅助说明「本地领先 N 个提交，未发版」）、顶栏部署小字（`v<tag>`，`+N` 进 `title`，与 `detail` / 回滚判决并列）。真源与解析**一个字不动**——`act.__version__`、心跳、install_report、`update_check.parse_version` 的比较、doctor `version` 行的盖章对账全都继续用整串 `X.Y.Z+N`（§56.3 第 9 步的逐字相等判据依赖它）；切的只是渲染层。唯一真源 = `web/src/version.ts` 的 `releaseVersion` / `aheadCommits` / `aheadNote`（判例 `web/src/version.test.ts`、`web/src/components/shell/HeaderBar.test.tsx`），禁止第二处 `split("+")`。
 
+**§56.1 追记（v2.0.0，lite 2.0 PR-C）——提交进 git 的版本 pin 清空**：iOS app 随 `ios/` 删除，上文「iOS 两处 `MARKETING_VERSION` pin」一条退役（全文见 tag full）：`version.PIN_FILES` = `()`（`PIN_PLACEHOLDER` 常量保留为锚点——将来哪个构建物再要一个提交的占位 pin，就登记进这个清单，门照旧判它）；`scripts/version_stamp.py --ios` 删除（`--check-pins` 对空清单恒 rc 0）；`ci` job 的「Verify the committed version pins are the placeholder」与「Stamp the version (act/_version.py + iOS pins)」两步删除。「Version pins untouched」剩下的判据：`act/__init__.py` 回落行（只许刷新到最新 tag、不许删）、CHANGELOG 新增版本标题 / 比较链接 / `[Unreleased]` 新条目、`act/_version.py` 进 diff。同一 PR 修正门的一处归属错误：被删文件的 diff 头是 `--- a/<path>` + `+++ /dev/null`，旧解析器只认 `+++ b/`，被删文件的 `-` 行于是记到 diff 里上一个文件名下（上一个文件恰是 `act/__init__.py`、被删文件又含 `__version__ = "…"` 行时会误报「回落行被删」）；自此取 `--- a/` 的路径（判例 `tests/test_version_pins_check.py::DeletedFileAttributionTestCase`）。stamp 的写者随目录删除只剩 install.sh、`shell/build.sh`（经 `scripts/build_version.sh`）与 release.yml；`mac/build.sh`、`mac/package.sh`、`scripts/package-portable.sh` 退役。
+
 ### 56.2 release-on-merge：合并即打 tag、即发版（2026-09-02 改写；前身 tag-on-merge）
 
 `release-on-merge.yml` 在 **push to main** 时：(1) `git tag --points-at <pushed sha>` 已有 `v*` → 什么都不做（re-run / 重复事件幂等）；(2) 否则 **next = 现有最高 `vX.Y.Z` + 1 patch**（`act.lib.version.next_tag`，纯函数，判例 `tests/test_version_tags.py`；非版本形状的 tag 忽略；数值比较不是字典序）——merge / squash commit 首行末尾的 `(#N)` 找到被合并的 PR 时，label **`release: minor`** / **`release: major`** 抬档（`gh pr view N --json labels`，job 级 `pull-requests: read`；找不到 PR 或 API 失败 = patch）；(3) 用 GITHUB_TOKEN（job 级 `contents: write` + `actions: write`，顶层 `permissions: {}`）经 REST 在**被推的那个 commit** 上建 `refs/tags/<next>`（POST 失败时若该名已指向同一 sha 视为成功，否则 FAIL）；(4) `gh workflow run release.yml --ref <next>`。**不写分支**——本 workflow 只创建一个 tag ref。壳 = `scripts/ci/release_tags.py`（`next` / `previous` / `highest` / `pr-number` / `bump-from-labels`，stdin→stdout，零网络）。两条事实决定了这个形状：
@@ -2206,6 +2210,8 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 - **进度日志 fragment**（`docs/design/vnext2-plan.md` §8）：既有表格行冻结为历史；新行 = `docs/design/progress/<YYYY-MM-DD>-<kebab-slug>.md`（日期 = 开 PR 当天，取自文件名；`README.md` 免检）。头部 = 首个空行之前的 `key: value` 行，必有 `pr:`（分支 + PR 号）/ `phase:`（阶段 / 决议）/ `law:`（触及的 §§，纯文档写 `—`），顺序不限、未知键 = 形状错误；空行之后是正文（做了什么），多段允许。`scripts/ci/progress_log.py check` 校验；`render [--plan PATH]` 把 plan §8 里的历史行（`## 8.` 到下一个 `## ` 之间以 `|` 开头的行，含表头）+ 全部 fragments（按日期、同日按文件名）渲染成完整表打到 **stdout**——按需读、**永不写回 plan**（生成文件进 git 就是同一种冲突的复活）；正文进单元格时空白压成一个空格、`|` 转义为 `\|`。PR 直接往 plan 新增 `| YYYY-MM-DD |` 行 = pins 门 FAIL。判例 `tests/test_progress_log.py`。
 - **文档指针**：`changelog.d/README.md`、`docs/design/progress/README.md` 各说自己的形状与生命周期；CHANGELOG.md 头部「Releasing」、CONTRIBUTING「Versioning」/「PR lifecycle」、PR 模板 checklist 全部指向 fragments；`docs/design/vnext2-plan.md` §8 表前一行说明「本表冻结、新行在 progress/」。
 
+**§56.7 追记（v2.0.0，lite 2.0 PR-C）——进度日志指向 lite2-plan，vnext2 表行规则退役**：1.x 的 `docs/design/vnext2-plan.md` 只剩历史（全文见 tag full），不再有 PR 往它的 §8 追加行，「Version pins untouched」里对它的表行判据删除。`scripts/ci/progress_log.py` 保留（`check` 仍校验 `docs/design/progress/` 下每个 fragment 的形状；目录不存在 = `ok (0)`），默认计划书改指 `docs/design/lite2-plan.md`（lite 2.0 的决策锚点，决策行用 `| LN |`，`tests/test_doc_numbering_unique.py` 查重号）；要渲染 1.x 那张旧表用 `render --plan docs/design/vnext2-plan.md`。changelog.d/ fragment 的全部规则不变。
+
 ### 56.8 CI 矩阵：per-PR 瘦身、main 全量、夜间 informational、bot review 按需（2026-09-02）
 
 **病灶**：repo 是 public（runner 分钟免费），但 owner 在 free plan——真正的瓶颈是**并发上限**（约 20 个 job、其中 macOS 5 个）：几十个并行 agent PR 各带 11 个 job + 2 个 bot review，全部在同一条队列里等 macOS 槽；两条 Windows 腿与 qlty 是 informational、几乎每次都红、没人按 PR 读它们，却每个 PR 吃三个槽；两个 AI review workflow 每次 push（含 56.6 的 auto-update push）都调**付费** API，多数以 infra 错误收场。**改法的边界**：七个 required check（`ci` / `Lint (shellcheck + ruff)` / `Tests on ubuntu (Python 3.9)` / `(Python 3.x)` / `Web tests (build + vitest)` / `QA gates (…)` / `Version pins untouched`）**逐字不改名、每个 PR 与每个 merge_group 都报到**——ruleset `protect-main` 的清单一个字不动；瘦的是它们在 PR 上**做多少事、在哪台机器上做**。
@@ -2232,6 +2238,8 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
 - **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` / `fresh-install.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底、验收 main 上的一条命令安装），与 dev 无关。
+
+**§56.8 追记（v2.0.0，lite 2.0 PR-C）——Apple 套件只剩壳、夜间与遥测 workflow 退役**：mac/、ios/ 与 shared/ 里的看板 Swift 模型删除（shell/ 只借 `shared/Sources/I18n.swift`，它留下）。`ci` job 的 macOS 腿收缩为：选钉住的 Xcode → PyYAML → compileall → 全量 unittest → `shell/build.sh` → `shell/tests/run.sh`；删去的步骤：pin 占位核对与 `--ios` 盖章（§56.1 追记）、Sparkle vendor、`mac/build.sh`、`mac/LogicTests`、`ios/tests/{contract,captions,boarddiff}`、iOS simulator 构建（Swift↔Python E2E interop 步已在 PR-A 随 `act/lib/e2e.py` 删除）。`changes` 的 `swift` filter 去掉 `mac/**` 与 `ios/**`，其余条目不变。`ci-nightly.yml`（两条 Windows 腿 + qlty）删除：Windows 安装器 `install.ps1` 与 Linux 安装器 `install-linux.sh` 随 lite 2.0「只支持 macOS」退役，Windows 腿没有对象；qlty 这条 informational lane 一并下线（上表那一行退役）。`insights.yml` 与 `keepalive.yml` 随遥测删除。七个 required check 的 job 名一个字节不变（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)`、`Tests on ubuntu (Python 3.x)`、`Web tests (build + vitest)`、`QA gates (complexity + CRAP + coverage floor + deps + hygiene)`、`Version pins untouched`）。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -2289,12 +2297,20 @@ truth = `scripts/qa/mutate.py` 的 site 收集器，判例钉在
   （真子进程杀伤判定：强测试 10/10 全歼、弱测试 1 杀 9 存、弱测试补强后
   旧账作废 10/10 重判）。
 
+**§57 v2.0.0 追记（lite 2.0 PR-C）**：靶区随模块删除收缩——`skills/test-code/**`、`skills/test-ui/**`（skill 商店 §67 退役，repo 内 `skills/` 整目录删除）与 `scripts/insights_report.py`（遥测）的映射行划掉；`scripts/qa/mutation_issue.py` 的「与 insights.yml 同模式」只是对那份已删 workflow 的历史描述，pinned issue 的幂等规则本身不变。
+
 ## 58. 质量仪表与合并硬门（v0.48.x，P2；owner 决策 D4/D5/D15）
 
 > **§58 v2.0.0 追记**：`scripts/qa/run_gates.sh` 去掉第六道 `[ui-parity]`（§66 退役：它比对的原生看板与
 > 雷达设置面随 Act 删除）；五道门与 shrink-only 账本语义不变。`qa/deps_baseline.txt` /
 > `qa/hygiene_baseline.txt` / `qa/mutation_targets.toml` 划掉随本 PR 删除的模块行（只缩不加）；
 > `qa/coverage_floor.txt` 不动（83.5）。
+>
+> **§58 v2.0.0 追记二（PR-C）**：58.1 / 58.3 的「`mac/` 按 D3 豁免」随 mac/ 删除失去对象——扫描范围仍是
+> `act/` `server/` `scripts/` 的 `.py` + `shell/` 的 `.swift`。58.4 末尾「同一差分门顺带看管
+> `ui/parity/pending.txt` 与 `waivers.txt`」退役：`ledger_diff.PARITY_LEDGERS` = `()`（id 集合比较器保留，
+> 将来再有这种形状的 shrink-only 账本就登记进去；删掉 ui/parity/ 两本账本因此不是 GROW）。§77 的
+> 全量覆盖清单与它的跑者退役（见 §77），本节的五道门与 coverage floor 不受影响。
 
 （§57 席位已由变异测试如约立法，见上一节；预留即兑现，§ 号未复用。）
 
@@ -3195,21 +3211,19 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 
 **法条一句话**：**安装器——.pkg 的 postinstall，以及它调用的 `install.sh --pkg-postinstall`——永远不写进一棵 git 工作树。** 判据不是「版本谁新」也不是「路径长什么样」，而是「目的地解析掉所有符号链接之后，它自己或它的某个祖先有没有 `.git`」。开发者的 checkout 永远不是合法的安装目标：那里的更新入口是 `git pull` + 手跑 `install.sh`（§56.5 / `docs/TROUBLESHOOTING.md`）。
 
-### 74.1 守卫：`mac/scripts/pkg_dest_guard.sh`（唯一实现，fail-closed）
+### 74.1 守卫：`mac/scripts/pkg_dest_guard.sh`（唯一实现，fail-closed） —（retired v2.0.0，全文见 tag full）
 
-- **形制**：`bash mac/scripts/pkg_dest_guard.sh <destination>`。退出码 **0** = 安全（可以写）· **3** = 拒绝（stdout 一行 = 那棵 checkout 的根，stderr 是给人看的说明 + 修法）· **2** = 用法错误。两个调用者共用这一份脚本——判据只有一处实现，postinstall 与 install.sh 不许各写一套（防腐 #9 的同源精神）。
-- **先解析再判**：路径里每一条符号链接都用 `cd … && pwd -P` 逐层解开（macOS 的 `/usr/bin/realpath` 来得很晚，而 postinstall 跑在一条最小 PATH 上），目的地**还不存在**时把不存在的尾巴原样接回解析出的祖先——「还没建出来的目的地」也要判得动。2026-09-07 的入口正是一条符号链接，只看字面路径的守卫在真实形状上等于没装。
-- **解析不动 = 拒**（fail-closed 的第一层，2026-09-15 评审补上）：`cd` 进不去某一级（权限 000 的中间目录、没挂上来的卷、解析途中路径被换掉）时命令替换只给出空串；**不许**把空串当成「解析出来的祖先」——那会拼出一条 `/dest` 式的假路径，它当然不在任何工作树里，于是守卫放行一个其实住在 checkout 里的目的地（放行 = 那次 rsync 照常发生）。解析失败一律 **exit 3**、stdout 空（没有 checkout 根可报）。判据是「能不能**证明**它在工作树外」，不是「有没有找到 `.git`」。
-- **`.git` 是目录还是文件都算**：普通 clone 是目录，worktree / submodule 是一个指向 gitdir 的文件。
-- **一直往上走到 `/`，不止于 `$HOME`**：事故里的 checkout 根本不在 `$HOME` 下（`/Volumes/Storage/Server/Projects/zelin-ai-assistant`）。**代价写明**：把 `$HOME` 本身做成仓库的机器（dotfiles 玩法）上，.pkg 的 per-user 播种会被拒——这是有意的，往任何一棵工作树里 rsync 一整条管线都会把它弄脏，而那台机器仍可以手跑 `install.sh`。
-- **fail-closed**：调用方把**任何**非 0 都当拒绝——包括守卫本身缺席时 `bash` 的 127。「证不明目的地是干净的就不许动它」是安装器唯一安全的默认值（宪法第 11 条的安装器版：坏输入 / 缺文件不许升级成破坏）。
+### 74.2 两处闸：postinstall 在 rsync 之前，`install.sh --pkg-postinstall` 在副作用之前 —（retired v2.0.0，全文见 tag full）
 
-### 74.2 两处闸：postinstall 在 rsync 之前，`install.sh --pkg-postinstall` 在副作用之前
-
-- **postinstall（`mac/package.sh` 的 heredoc）**：算出 `DEST` 之后、`mkdir -p` 与 `rsync` 之前问一次守卫。命中 = **整段 per-user setup 跳过**——不建目录、不 rsync、不跑 `install.sh`、不重启任何守护进程、不 `open` 旧 app；三行 stderr 进 `/var/log/install.log`，点名那棵 checkout 与修法（`cd <checkout> && git pull && bash install.sh`）。**退出码仍是 0**：两个 payload（/Applications 的 bundle 与 /Library 的母本）确实装好了，让 Installer 报「安装失败」只会诱使用户再装一次，什么都修不好——形状与既有的「没有 console user」分支逐字同款（既有机制优先）。
-- **`install.sh --pkg-postinstall`（第二把锁，defence in depth）**：在 flag 解析之后、任何副作用之前，用同一个守卫判 `$REPO_ROOT`；命中 = **exit 3**，stdout 零输出、`$HOME` 下零文件、不写 §23 报告。**它防的是这把闸日后被绕开**：postinstall 那道门被谁编辑掉、有人在一棵工作树里手敲 `--pkg-postinstall`、或者将来多出第二个调用者——任何一种都还能在这里被拦住。**它防不了「守卫出生之前打出来的旧 .pkg 载荷」**（诚实划界，§74.4 重述）：那种载荷的 postinstall 先把自己那份**无守卫的** `install.sh` 连同旧代码 rsync 进 `$DEST`（真正的伤害就发生在这一步、发生在本锁之前），随后执行的是它自己拷过去的那一份——今天写下的这几行那时根本不在被执行的文件里。
-- **只有 pkg 路径被禁**：交互模式与 `--non-interactive`（自动部署，§56）在 checkout 里跑是它们的本职，一字不受本条影响。
-- **判例** `tests/integration/test_pkg_postinstall_git_guard.py`：真 bash、真 rsync、真守卫；postinstall 的文本**逐字**从 `mac/package.sh` 的 `POSTINSTALL` heredoc 里取出（只重写 `MASTER=` 一行指向临时载荷，且那一行的字面被断言钉住），系统工具（stat / dscl / sudo / id / launchctl / open）全是记 argv 的桩，PATH 够不到 `/usr/bin`。五件事被钉死：目的地是 checkout → 拒且字节不变；经符号链接进 checkout（live 形状）→ 拒；守卫从载荷里消失 → 拒（不是放行）；目的地路上有一级 `cd` 不进去（mode 000）→ 拒（§74.1 解析不动那条；以 root 跑时跳过——root 进得去）；空目的地 → 照旧播种并跑 `install.sh --pkg-postinstall`。
+> **§74 v2.0.0 追记（lite 2.0 PR-C）**：2.0 不发 .pkg——`mac/package.sh`（postinstall 的 heredoc）与
+> `mac/scripts/pkg_dest_guard.sh` 随 mac/ 删除，74.1 / 74.2 退役，判例
+> `tests/integration/test_pkg_postinstall_git_guard.py` 同删。本节一句话的法条不变且更强：**没有任何安装器
+> 往 git 工作树里写**——`install.sh --pkg-postinstall` 在 flag 解析之后、任何副作用之前**无条件** exit 3
+> （stdout 零输出、`$HOME` 下零文件、不写 §23 报告），因为合法的调用者（.pkg 的 postinstall）已经不存在；
+> 交互模式与 `--non-interactive` 照旧在 checkout 里跑。74.3（终止版 appcast）保留：残留的旧菜单栏 app
+> 里那套 Sparkle 仍会去读 `/releases/latest/download/appcast.xml`，每个 release 仍须上传零条目的 feed。
+> 74.3 列为「重新武装的工具」的 `scripts/sparkle_pubkey.py`、`mac/scripts/fetch-sparkle.sh`、
+> `mac/Info.plist` 一并删除——它们在 tag full 里；2.0 没有重新武装这条 feed 的计划。74.4 的边界照旧成立。
 
 ### 74.3 退役 app 不再被喂：终止版 appcast + 出厂 disarm
 
@@ -3238,26 +3252,22 @@ issue #90（非 owner 作者，`needs-owner`，D18 摘要制）问 Windows 要�
 
 §58.1–§58.5 的五道门各量一把尺（复杂度 / CRAP / 覆盖率地板 / import 方向 / 卫生），但它们回答不了 owner 真正问的那个问题——「这个产品**能做的每一件事**，今天还成不成」。本节立第六件事：一份**机器清点出来的场景表**，每行配一条**可执行的证据**，加上把证据跑出来的跑者、B 档 fixture、壳 UI 探针，以及两件把「第一面」钉住的观测门（README 真实性、演示视频管线）。执法代码见各小节 truth 指针；本轮产出的覆盖报告是 `qa/coverage-report/report.md`（产物，git-ignored；真源永远是清单 + 一条命令）。
 
-### 77.1 分母：清单与证据 DSL（truth = `scripts/qa/coverage_inventory.py` / `qa/coverage_inventory.json`）
+> **§77 v2.0.0 追记（lite 2.0 PR-C）**：全量覆盖清单的分母有一半来自 mac/Sources 抽出的原生清单（§66，已退役），
+> 跑者、B 档 fixture 与壳 UI 探针（`dock_badge` / 快速捕获 / 终端接管等被探的面也已退役）一起失去对象——77.1–77.4
+> 与 77.7 退役：`scripts/qa/{coverage_inventory,coverage_run,coverage_sandbox,shell_ui_probe}.py`、
+> `scripts/qa/full_coverage.sh`、`scripts/qa/fixtures_b/`、`qa/coverage_inventory.json`、`qa/coverage_fixtures_b.json`
+> 与它们的判例删除。**77.5（README 真实性审计）与 77.6（演示视频管线）保留**：两者的执法代码
+> （`scripts/qa/readme_audit.py`、`scripts/media/`）不依赖清单；readme_audit 的 UI 标签自此只对 web/src 与设置目录的
+> 文案源判（§66 清单那一半随之删除）。「本节立第六件事」的问题——产品能做的每一件事今天还成不成——在 lite 2.0
+> 由 §58 的五道门、§69 的 fresh-install 验收与 web 的视觉基线回答。
 
-- **真源与生成**：表 = `qa/coverage_inventory.json`（committed，按 id 排序、`indent=2`、尾换行、固定八键行形）。唯一写者 = `scripts/qa/coverage_inventory.py --write`；`--check` 陈旧即红；`--summary` 打一行 `INVENTORY scenarios=<n> missing_proof=<m> sources=contract,parity,routes,settings,shell`。**表是派生物、不是账本**：不许手改，改了下一次 `--check` 就抓。
-- **五个清点源**（id 前缀即源，add-only，永不重编号）：`contract:§N[.M]`（`docs/CONTRACT.md` 的节与小节）、`parity:<native id>`（`ui/parity/native-inventory.json` 的每个 gated 条目，§66.2 的 id 词表逐字复用）、`route:<METHOD> <path>[#<branch>]`（`server/app.py` 的精确表与前缀表，ast 解析不抄字面量）、`setting:<section>.<key>`（`server/settings_catalog.py` 的 `SECTIONS`）、`shell:<slug>`（`shell/Sources/*.swift` 的菜单表、全局快捷键、Dock 徽标、`open_page`、终端接管、通知转发、登录项）。B 档 fixture 行（`B-<nn>-<slug>`）由 `qa/coverage_fixtures_b.json` 提供，生成器在场即并。
-- **行的形状**（八键，add-only）：`id` / `source` / `scenario` / `proof` / `tier`（A = demo server 或判例确定性可判，B = fixture 驱动）/ `status`（`todo` | `waived`）/ `waive_reason`（只许 `tombstone` | `covered-by-<tests/path.py>` | `design-not-carried D<nn>`）/ `note`。
-- **证据 DSL**：`unittest:<模块,…>` · `parity:<id>` · `swift:<Harness>` · `axprobe:<probe>` · `http:<METHOD> <path> [noauth] expect=<code> [contains=<substr>]` · `settings:<section>.<key>` · `flow:<name>` · `fixture:<slug>`；多条以 ` && ` 串联，全中才算在。
-- **诚实条款（宪法第 3 条的本节落点）**：proof 编不出来就**留空并上报**——`missing_proof` 是门的第一公民计数，不许拿一条跑不出真判决的字符串充数；补的方式只有两条：补一条真判例，或按上面的词表 waive 并写明理由。本轮 18 条 no-proof 全部按这条收口成真证据（issue #385–#389），落地时 `missing_proof=0`。
-- **两条已成文的口径**：①§49 读面 token-light，GET 分支行是 `#noauth` **expect=200**，`#401` 只属 POST/PUT；②会真动东西的写路由由钉着该路径的判例判，runner 永不盲发。tombstone 判定只认「说自己退役」的节，正文提一句「改 tombstone」不算。
+### 77.1 分母：清单与证据 DSL（truth = `scripts/qa/coverage_inventory.py` / `qa/coverage_inventory.json`） —（retired v2.0.0，全文见 tag full）
 
-### 77.2 跑者与三态报告（truth = `scripts/qa/full_coverage.sh` / `scripts/qa/coverage_run.py`）
+### 77.2 跑者与三态报告（truth = `scripts/qa/full_coverage.sh` / `scripts/qa/coverage_run.py`） —（retired v2.0.0，全文见 tag full）
 
-`bash scripts/qa/full_coverage.sh [--inventory PATH] [--logdir DIR] [--only PREFIX] [--skip-ax] [--no-web-build]` 读清单、按 proof 种类分组、每种重工具**整跑只跑一次**（结果 memoize 成 per-key map），产出 R——每行 `<id> PRESENT|MISSING|WAIVED reason=<…> evidence=<一行 ≤200 字符>`，末三行恰为 `PRESENT=<n>` / `MISSING=<n>` / `WAIVED=<n>`；`MISSING=0` → exit 0，否则 1，清单缺席 → exit 2（带重铸命令，宪法第 11 条：缺席不崩）。八条内建 `flow:` = `install_fresh` `doctor_clean` `card_lifecycle` `settings_roundtrip_all` `recaps` `pwa` `uninstall_reinstall` `pages_controls`。**2026-09-17 追記（run4 → run5 的四处判法修正，add-only）**：①`fixture:<slug>` 的脚本按候选序解析——清单行的 `note`（是条真存在的路径时）→ `scripts/qa/fixtures_b/<slug>.py` → 去掉 `^B-\d+-` 前缀并 `-`→`_`，一个都不在才记 MISSING 并列出全部候选；②`flow:doctor_clean` 先在自己的沙箱里跑一遍 install.sh，再以 `HOME=<沙箱>` + `AIASSISTANT_HOME=<checkout>` 问 `act.doctor --fast --json`，问前补一次 `config.ensure_state_dirs()`（沙箱里 actd 永不开机，`state/logs/` 没人建），fail=0 才 PRESENT；③`http:` 新增 `ctype=<mime>`（显式 Content-Type，写动词无 body 发空 bytes——§49 写闸的 Content-Type 闸在 token 闸之前，`POST /api/attachments` 的 401 分支此前被 415 挡住）与列表型占位符 `{section}` `{log}` `{job}` `{recap}`（truth = `coverage_run.PLACEHOLDER_SOURCES`；列表为空换 `__absent__` 并写进证据行）；④seeded demo home 软链 checkout 的 `skills/`（§67 manifest 真源），否则 `GET /api/skills` 409。流式端点（SSE `/api/events`）的 body 读取封顶 1 MiB + 5 s 墙钟、单线程 `read1`，永不跨线程 close（2026-09-16 两次挂死的判例 `tests/test_coverage_run_sse_no_hang.py`）。**沙箱纪律（本节红线，§77.7 展开）**：install.sh / uninstall.sh / doctor / actd / server 一律跑在 `mktemp -d /tmp/zaa-cov-*` 的临时 HOME 上，`launchctl` `open` `osascript` `crontab` `pgrep` `pkill` 一律 PATH 前缀假货，`claude` 是打印固定结果的 stub；整跑预算 ≤45 min。判例 `tests/test_coverage_run_report.py` / `tests/test_coverage_run_flows.py`（全注入假执行器，不起子进程、不联网）。
+### 77.3 B 档场景 fixture（truth = `scripts/qa/fixtures_b/` / `qa/coverage_fixtures_b.json`） —（retired v2.0.0，全文见 tag full）
 
-### 77.3 B 档场景 fixture（truth = `scripts/qa/fixtures_b/` / `qa/coverage_fixtures_b.json`）
-
-全覆盖清单里判据是「整条链在一个干净世界里走一遍」的行走 B 档：一个场景一个可单跑脚本住 `scripts/qa/fixtures_b/<slug>.py`，清单真源 = `qa/coverage_fixtures_b.json`（≥12 条，行形同 §77.1）。契约六条（机器可查）：单跑 `main()` 回 0=PRESENT、stdout 最后一行是证据（≤200 字符）；自建 `/tmp` 一次性 home 收尾必删；零真实副作用（不 spawn claude、不起子进程、不出网，走既有注入缝）；异常收敛成 FAIL 不当结果；样本住 `tests/fixtures/coverage_b/`；清单与脚本一一对应，`tests/test_fixtures_b_smoke.py` 进程内执法。
-
-### 77.4 壳 UI 的辅助功能探针（truth = `scripts/qa/shell_ui_probe.py`）
-
-证据种类 `axprobe:<id>` 由本脚本执行：**只读壳自己的可观测量**，对准 owner 的真 app 与真 server（端口 47820，token 读 `<home>/state/server.token`，除唯一写探针外全是 GET / stat / AX 读属性）。`--summary` 末行逐字 `SHELL probes=<k> present=<k>`（不带 `--allow-enqueue` 时 k=4）；退出码 0 全 present / 1 有 MISSING / 2 用法错 / 3 BLOCKED。探针：`dock_badge`（Dock tile `AXStatusLabel` vs `/api/board` counts，口径 = web `badgeCount`）、`hotkey_focus`（⌃⌥Space → 壳前置 + 焦点是提案 composer，收尾还原前台）、`menu_open_page`（关于 / 设置 / 权限体检 → 窗口标题跟到那一页，收尾还原）、`notify_relay`（只读 `state/shell.heartbeat` 新鲜 + `/api/health`）、`terminal_takeover`（唯一写探针，只在 `--allow-enqueue`：`POST /api/terminal {card_id}` → 终端多一窗）。三条不变原则：辅助功能不绕行（未授权 → BLOCKED exit 3，交 owner 授权，禁任何替代路径）；前置不满足记 BLOCKED 不记 MISSING；只读与可还原。判例 `tests/test_shell_ui_probe.py` / `tests/test_shell_ui_probe_cli.py`（注入假 osascript + 假 HTTP）。
+### 77.4 壳 UI 的辅助功能探针（truth = `scripts/qa/shell_ui_probe.py`） —（retired v2.0.0，全文见 tag full）
 
 ### 77.5 README 真实性审计（truth = `scripts/qa/readme_audit.py`）
 
@@ -3267,9 +3277,7 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 
 产品演示视频是一条可重跑的管线，不是一次性手艺活；成片与中间物**不进仓库**（防腐第 4 条），落在仓库外的媒体目录。分镜单源 = `scripts/media/shots.json`（storyboard / 旁白 / SRT / 录制脚本 / 剪辑长度全从它派生，禁第二份镜头表；单镜头 ≤15 s、全片 60–180 s）。**像素只许真 app**（宪法第 3 条影像版）：`record.mjs` 用 Playwright 驱动真 `python3 -m server` + demo 数据录屏，**永久禁止**生成模型画界面。对齐口径：`assemble.sh` 按计划时长裁剪，字幕 / 配音同一时间轴。评委席固定 `claude-fable-5-1` / `claude-opus-5`（Anthropic）+ `gpt-5.5`（OpenAI），**不得顶替、不得删席**；缺 key 的席记 `{seat, status:"BLOCKED", reason}`，不计入 seats 也不换模型补位（`kimi-k3` 席缺 `FIREWORKS_API_KEY` 即 BLOCKED）。五维各 0–2 满分 10（真实性 / 清晰 / 可读 / 节奏 / 无误导），及格 = 单席 ≥7，全片通过 = 三席至少两席及格，最多两轮。评委输出逐字段消毒（宪法第 11 条）。`judge_summary.py` 打印恰好一行 `JUDGES seats=<k> pass=<p> rounds=<r>`。key 只从环境读、永不打印落盘。判例 `tests/test_media_srt_timing.py` / `tests/test_media_judge_parsing.py` / `tests/test_media_judge_summary.py`。
 
-### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点）
-
-覆盖跑者会真跑 install.sh / uninstall.sh，而这两条脚本的关键判定**不看 HOME**：install.sh 用 `pgrep -x ZelinAIBoard` 决定是否杀 + 重开 owner 正在跑的壳，uninstall.sh 直接 `pkill -TERM -x ZelinAIBoard` 并从硬编码 `/Applications` 删 bundle。因此临时 HOME 之外还必须：`pgrep` / `pkill` 也是 PATH 前缀假货（恒「没匹配」exit 1，install.sh 走「壳没在跑」分支）；`AIASSISTANT_UI_APPS_DIR`（install.sh 既有的 test seam，uninstall.sh 本轮补齐同款）指向临时 HOME 下的 `Applications/`，让 bundle 的安装与删除都落在沙箱里。缺这两条，2026-09-16 的第一轮全量跑把 owner 的 live 壳杀了两次、并用一个 ad-hoc 签名的 dev 构建顶替了 `/Applications` 的稳定签名（#317）——ad-hoc cdhash 与 owner 授的 Full Disk Access 对不上，壳从此写不出 `state/shell.heartbeat`。判例 `tests/test_coverage_run_flows.py`（假货清单 + exit 码）、`tests/test_uninstall.py`（`--dry-run` 带 seam 只规划沙箱 bundle、绝不碰真 `/Applications`）。**2026-09-17 追記**：`crontab` 与 `launchctl` 两只假货改成**有状态**——`crontab <file>` / `crontab -` 存、`-l` 读回（无台账 exit 1），`launchctl bootstrap|load` 记 label、`bootout|unload` 删、`list` 打三列——台账只落在沙箱 HOME 内，真 gui domain 与真 crontab 一个字节不碰；跑者过 2000 行上限后沙箱那一段住同层 `scripts/qa/coverage_sandbox.py`。
+### 77.7 覆盖跑者的沙箱纪律（宪法第 3 条在 `full_coverage.sh` 上的落点） —（retired v2.0.0，全文见 tag full）
 
 ---
 
