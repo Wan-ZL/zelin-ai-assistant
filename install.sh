@@ -1,128 +1,101 @@
 #!/bin/bash
-# One-click installer for Zelin's AI Assistant (Act pipeline + board UI).
+# Installer for Zelin's AI Assistant lite 2.0 (recording -> ingest -> meeting recaps).
 #
-# What it does:
-#   1. dependency checks (claude/swift required; python3/PyYAML; node+npx for
-#      the recording engine; obsidian/gh optional)
-#   2. config.example.yaml -> config.yaml (if absent), the version stamp
-#      (act/_version.py from the git tag — CONTRACT §56.1; written before any
-#      `import act`), runtime/home pointers, and (macOS) the STABLE daemon
-#      copy of the claude binary (CONTRACT §55 第五幕: a fixed $HOME path the
-#      owner grants Full Disk Access ONCE; refreshed in place when Claude Code
-#      updates, so the grant survives — the versioned path under
-#      ~/.local/share/claude/versions/ changed under every update)
-#   3. create state/ and state/inbox/
-#   3b. `skills` step (CONTRACT §67): scripts/skills_sync.sh — link the
-#      default_enabled store skills into ~/.claude/skills (never overriding a
-#      recorded decision or a custom copy) so a fresh machine has them
-#   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
-#   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
-#      npm ci + npm run build) and the board shell app (shell/build.sh) and
-#      install the bundle to /Applications as "Zelin's AI Assistant.app" —
-#      each half skipped with a warn when its toolchain (node+npm / swiftc)
-#      is absent, never a failure. A legacy menu-bar bundle found on that
-#      path is moved to "Zelin's AI Assistant (old).app" first (§54 name
-#      swap) — moved, never edited or deleted.
-#   5. install launchd agents (actd + board server resident, radars periodic):
-#      render the plist templates (replace /Users/YOURUSERNAME placeholders
-#      with the real python/repo/home paths + the login shell's claude
-#      directory, which goes FIRST on the daemon PATH; ZAI_PORT from
-#      config.yaml server.port), load them, then verify they actually spawn.
-#      In --non-interactive mode a running shell app is relaunched here, AFTER
-#      the server agent came back (§56.5 relaunch rule).
-#   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
-#      the repo's ingest/ scripts + `python -m act.radar --once`, and a daily
-#      09:07 `python -m act.digest` (self-gated by digest.frequency, §17)
-#   7. run the post-install diagnostics (python -m act.doctor)
+# Steps (each records one or more CONTRACT §23 report lines):
+#   1. dependency checks — claude, swift toolchain, python3 + PyYAML, node/npx
+#   2. config.yaml from config.example.yaml (never overwritten) + redaction terms;
+#      the version stamp (act/_version.py from the git tag, §56.1); the daemon
+#      interpreter pin (config/runtime.json, §19/§55); the home pointer; the
+#      stable claude copy (§55 第五幕); the §78 isolation dirs
+#      (claude-config/ + claude-config/cwd/); the Anthropic API key file (§19)
+#   3. state/ directories
+#   4. migrate_from_1x (§78): boot out + delete the 1.x LaunchAgents, unlink
+#      ~/.claude/skills symlinks that point into this repo, remove the 1.x
+#      deploy_state.json, print (never run) the command that clears the 1.x
+#      headless transcripts. Retired cron lines go in step 7.
+#   5. the board UI: web/dist + the Dock shell app (§56.5 `ui` step)
+#   6. the ONE LaunchAgent: com.zelin.aiassistant.server (§78 closed footprint)
+#   7. crontab: the */30 ingest chain is the only line of ours (§18); every
+#      other user line is kept verbatim
+#   8. post-install doctor (interactive runs only)
+# The run ends by writing state/install_report.json (§23). The screenpipe
+# engine is never signalled: a running engine is left recording and the shell
+# adopts it (§61.8).
 #
-# Run from anywhere; it locates the repo root via its own path.
+# Usage:
+#   bash install.sh                       interactive install / re-install
+#   bash install.sh --non-interactive     never prompts; exit code = failed steps
+#   bash install.sh --no-launchd          wire no scheduler (no agent, no crontab;
+#                                         CI acceptance and bootstrap dry runs)
+#   bash install.sh --from-upgrade        what scripts/upgrade.sh runs (§79): implies
+#                                         --non-interactive; the shell relaunch is
+#                                         left to the upgrader
+#   bash install.sh --check [doctor flags]  run python -m act.doctor, change nothing
+# Flags combine; an unknown flag exits 2 before any side effect.
 #
-# --pkg-postinstall: non-interactive mode used by the .pkg installer's
-#   postinstall (mac/package.sh). Skips dependency checks (nothing to ask a
-#   user for) and the Mac app build/install (the pkg already installed it),
-#   but does everything else: config files, state dirs, the launchd agents
-#   (actd + radars per config — without them the product is inert) and the
-#   ingest cron chain. Every run (both modes) ends by writing
-#   state/install_report.json (CONTRACT §23) with what actually happened.
-#   REFUSES a git checkout (CONTRACT §74.2, exit 3, nothing touched): this
-#   flag only ever runs on a .pkg-seeded copy, and a .pkg never writes into a
-#   working tree (2026-09-07 incident, issue #333). The other modes are
-#   unaffected — they are meant to run inside a checkout.
-#
-# --check: run the post-install doctor (python -m act.doctor) and exit with
-#   the number of failing checks. Installs/changes nothing.
-#
-# --reinstall-agent <label> (CONTRACT §48.7): re-render + reload ONE launchd
-#   agent (a template under act/launchd/) with this file's own renderer and
-#   nothing else — no dependency checks, no build, no crontab, no report. The
-#   board server's "重新安装" button for the Slack / Gmail radars runs exactly
-#   this, so the plist placeholder substitution keeps a single implementation.
-#   Exit: 0 loaded+verified · 1 load/verify failed · 2 usage / no template ·
-#   3 the radar's source is switched off (§48.5 — not installed, would be
-#   retired again) · 4 no pinned daemon interpreter (run install.sh first).
-#
-# --non-interactive: the mode scripts/auto-deploy.sh runs (CONTRACT §56). Same
-#   steps as the interactive run, but it can never stop to ask: a missing
-#   claude only warns, the doctor step is left to the caller (it gates the
-#   deploy and decides on rollback), the closing "next steps" banner is
-#   replaced by a one-line summary, and the EXIT CODE is the number of failed
-#   steps. It NEVER builds or installs the legacy Mac app (step 4 is skipped,
-#   §56.5): D3 froze it, and `mac/build.sh --install` quits + relaunches the
-#   running instance — screenpipe is its direct child (RunningBoard reaps
-#   orphans) and live captions live inside it, so an unattended rebuild would
-#   kill a recording or a meeting's captions at whatever hour a merge lands.
-#   Only a hand-run `bash install.sh` (the owner picking the moment) rebuilds
-#   that app. The board UI (step 4b) IS built and installed in this mode —
-#   merge = deploy includes the UI (2026-09-02: the UI had never been deployed
-#   because nothing built it) — the shell spawns nothing (the server is a
-#   launchd agent), so relaunching it costs nobody a recording. The §23 report
-#   records mode "non-interactive".
-#
-# --no-launchd (CONTRACT §69; combines with the modes above): wire NO scheduler
-#   — step 5 loads no launchd agent (`launchd=skipped`), step 6 writes no
-#   crontab (`cron=skipped`) — and instead run ONE `python3 -m act.actd --once`
-#   pass with the daemon interpreter (§23 step `actd_once`: ok | fail). This is
-#   what the CI acceptance job (.github/workflows/fresh-install.yml) and a
-#   scripts/bootstrap.sh dry run use: everything the installer can prove
-#   without owning a login session — config, interpreter gates, version stamp,
-#   state dirs, UI build, one real daemon pass — is proven; nothing is left
-#   running. A product install never passes it.
-#
-# A truly EMPTY environment (no config.yaml, no secrets, no state/, no claude,
-# no node) is a supported input in every mode: config comes from
-# config.example.yaml, the missing tools are warns with the fix spelled out,
-# the radars idle until credentials exist, and `python3 -m act.doctor
-# --fresh-install` lists what still needs the human (§69).
+# Test seams: AIASSISTANT_UI_APPS_DIR, AIASSISTANT_UI_BUILD_DIR,
+# AIASSISTANT_UI_BUDGET, AIASSISTANT_STABLE_CLAUDE, AIASSISTANT_CLAUDE_CONFIG_DIR,
+# AIASSISTANT_LAUNCHD_PROBE=0 (skip the launchd viability probe). The script can
+# be sourced (functions only; main runs when executed).
 set -uo pipefail
 
-# Physical path of a directory — every symlink resolved (CONTRACT §55).
-# `cd … && pwd -P` is the portable realpath: macOS only grew /usr/bin/realpath
-# recently and the pkg postinstall runs with a minimal PATH.
+# Physical path of a directory, every symlink resolved (CONTRACT §55).
 physical_path() {
     ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"
 }
 
-# `pwd -P`, NOT `pwd`: a convenience symlink in the invocation path (the
-# 2026-08-31 incident: ~/Projects -> /Volumes/Storage/Server/Projects) would
-# otherwise be baked into PYTHONPATH / AIASSISTANT_HOME / the home pointer,
-# and launchd-spawned processes are TCC-denied on the external volume through
-# that path shape — every agent died on "No module named 'act'".
+# `pwd -P`: a convenience symlink in the invocation path (~/Projects ->
+# /Volumes/…) must never be baked into PYTHONPATH / AIASSISTANT_HOME (§55).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_DIR_LOGICAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
+UID_NUM="$(id -u)"
+APP_SUPPORT_DIR="$HOME/Library/Application Support/ZelinAIAssistant"
+LOG_DIR="$HOME/Library/Logs/zelin-ai-assistant"
+SERVER_LABEL="com.zelin.aiassistant.server"
+# §78 constants — same literals as act/lib/config.py and ingest/claude-env.sh.
+CLAUDE_CONFIG_DIR_PATH="${AIASSISTANT_CLAUDE_CONFIG_DIR:-$APP_SUPPORT_DIR/claude-config}"
+STABLE_CLAUDE_BIN="${AIASSISTANT_STABLE_CLAUDE:-$HOME/Library/Application Support/ZelinAIAssistant/bin/claude}"
+# The 1.x LaunchAgents migrate_from_1x retires (§78).
+RETIRED_LABELS="com.zelin.aiassistant.actd com.zelin.aiassistant.autodeploy com.zelin.aiassistant.gmailradar com.zelin.aiassistant.slackradar com.zelin.aiassistant.syncd com.zelin.aiassistant.weeklydigest com.zelin.aiassistant.imessageradar com.zelin.aiassistant.radar com.zelin.screenpipe-process com.zelin.screenpipe-prune"
+# Uncommented crontab lines of ours: the ingest chain (keyed on its first script)
+# and the 1.x module lines. Everything else in the user's crontab is kept.
+CRON_OURS_RE='^[^#]*(screenpipe-export\.sh|act\.radar|act\.digest|act\.weekly_digest|act\.analytics_sync)'
 
-# CONTRACT §19/§55 — an interpreter is only usable for the daemons if it is an
-# ABSOLUTE path that can really `import yaml`. 2026-08-31: install.sh pinned
-# /opt/homebrew/bin/python3 (3.14, no PyYAML), so even a correctly rendered
-# PYTHONPATH left every launchd agent exiting 1 in a KeepAlive loop.
+# Mode flags (main sets them; defaults keep the functions usable when sourced).
+NON_INTERACTIVE=0
+NO_LAUNCHD=0
+FROM_UPGRADE=0
+
+ok()   { printf "  [ ok ] %s\n" "$1"; }
+warn() { printf "  [warn] %s\n" "$1"; }
+info() { printf "  [info] %s\n" "$1"; }
+
+# §23 report lines, newline-separated "name=status[:detail]" (a plain string:
+# macOS bash 3.2 + set -u make empty arrays hazardous).
+REPORT_STEPS=""
+LOADED_LABELS=""
+report_step() { # $1=name $2=status [$3=detail]
+    REPORT_STEPS="${REPORT_STEPS}$1=$2${3:+:$3}
+"
+}
+
+# --non-interactive verdict: the report lines whose status is fail, one per line;
+# the exit code is their count. skipped / skipped_tcc / warn never count (§56.5:
+# environment problems are not something a rollback or a retry fixes).
+failed_deploy_steps() {
+    printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' || true
+}
+
+# ------------------------------------------------------------------ interpreters
+# §19/§55: a daemon interpreter is an ABSOLUTE path that can `import yaml`.
 py_imports_yaml() {
     case "${1:-}" in /*) ;; *) return 1 ;; esac
     [ -x "$1" ] || return 1
     "$1" -c "import yaml" >/dev/null 2>&1
 }
 
-# First candidate that passes py_imports_yaml wins; prints nothing and returns
-# 1 when none do (callers report that loudly rather than pinning a dud).
 pick_python() {
     for _cand in "$@"; do
         if py_imports_yaml "$_cand"; then printf '%s' "$_cand"; return 0; fi
@@ -130,23 +103,12 @@ pick_python() {
     return 1
 }
 
-# CONTRACT §55 — LAUNCHD VIABILITY. `import yaml` is necessary but NOT
-# sufficient: TCC grants file access PER BINARY, and a launchd-spawned process
-# is its own responsible process (an interactive shell lends its own grant to
-# everything it starts, which is why every candidate reads the repo fine from
-# a terminal). 2026-08-31 live deployment: the repo sits on /Volumes/…,
-# /usr/bin/python3 could read it under launchd and /opt/homebrew/bin/python3
-# could not — both imported yaml, so the yaml-only gate pinned the blind one
-# and every agent died on "No module named 'act'" with a perfectly rendered
-# PYTHONPATH. Measured: the denied interpreter raises PermissionError(EPERM)
-# while scanning sys.path, which import machinery reports as the missing module.
-#
-# The only honest probe is to ask launchd itself, so this loads a throwaway
-# agent that does exactly what the daemons do — insert the repo on sys.path and
-# `import act` — and reads its verdict from a sentinel file (portable across
-# macOS versions; no `launchctl print` output parsing). Sub-second in practice.
-#   0 = viable, 1 = NOT viable, 2 = inconclusive (no launchd / probe disabled)
-# Callers must treat 2 as "unknown", never as a rejection.
+_xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+_sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+
+# §55 launchd viability: TCC grants file access per binary and a launchd job is
+# its own responsible process, so the only honest probe asks launchd to run
+# `import act` with the candidate. 0 viable, 1 not viable, 2 inconclusive.
 LAUNCHD_PROBE_DETAIL=""
 py_launchd_can_import_act() { # $1=interpreter $2=physical repo root
     _py="$1"; _repo="$2"
@@ -159,8 +121,6 @@ py_launchd_can_import_act() { # $1=interpreter $2=physical repo root
     _probe_label="com.zelin.aiassistant.viability.$$"
     _probe_pl="$_probe_dir/probe.plist"
     _probe_verdict="$_probe_dir/verdict"
-    # The payload takes repo + sentinel as argv so no path is ever interpolated
-    # into python source; only the plist XML needs escaping.
     cat > "$_probe_pl" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -190,7 +150,7 @@ EOF
     if ! { launchctl bootstrap "gui/$UID_NUM" "$_probe_pl" >/dev/null 2>&1 \
            || launchctl load "$_probe_pl" >/dev/null 2>&1; }; then
         rm -rf "$_probe_dir"
-        return 2  # launchd refused the job itself — tells us nothing about $_py
+        return 2
     fi
     _probe_n=0
     while [ ! -s "$_probe_verdict" ] && [ "$_probe_n" -lt 60 ]; do
@@ -200,24 +160,21 @@ EOF
     launchctl bootout "gui/$UID_NUM/$_probe_label" >/dev/null 2>&1 \
         || launchctl unload "$_probe_pl" >/dev/null 2>&1 || true
     rm -rf "$_probe_dir"
-    # No sentinel at all = the interpreter never got far enough to write one
-    # (also a real failure: launchd could not run it).
     [ "$LAUNCHD_PROBE_DETAIL" = "ok" ] && return 0
     [ -z "$LAUNCHD_PROBE_DETAIL" ] && LAUNCHD_PROBE_DETAIL="fail: produced no verdict under launchd"
     return 1
 }
 
-# Daemon interpreter candidates, most-preferred first (CONTRACT §55).
-#
-# ORDERING RATIONALE: /usr/bin/python3 is the Apple-shipped system interpreter,
-# and on a normally-used Mac it is the one binary that already holds the user's
-# file-access grants — Homebrew/miniconda pythons are separate binaries that
-# each need their OWN TCC grant before a launchd job spawned from them can read
-# anything outside $HOME. So when the repo lives outside $HOME (external volume,
-# network share — precisely where per-binary TCC bites), the system python is
-# ranked ABOVE them; inside $HOME the historical order is kept, because there is
-# no TCC boundary to cross and a user's richer python is the better default.
-# $AIASSISTANT_PYTHON stays first in both: an explicit override outranks a guess.
+# Is the repo outside $HOME (physical paths)? That is the TCC-sensitive shape.
+repo_outside_home() {
+    _rh="$(physical_path "$HOME")"
+    _rr="$(physical_path "$REPO_ROOT")"
+    case "$_rr" in "$_rh"|"$_rh"/*) return 1 ;; *) return 0 ;; esac
+}
+
+# Candidates, most preferred first (§55): the system python ranks above
+# Homebrew / conda when the repo is outside $HOME (it already holds the user's
+# file-access grants); $AIASSISTANT_PYTHON always first.
 daemon_python_candidates() {
     if repo_outside_home; then
         printf '%s\n' "${AIASSISTANT_PYTHON:-}" /usr/bin/python3 \
@@ -228,24 +185,8 @@ daemon_python_candidates() {
     fi
 }
 
-# Is the repo outside $HOME? That is the TCC-sensitive shape (see the ordering
-# rationale above). Compares PHYSICAL paths — a symlink into /Volumes must not
-# read as "inside $HOME".
-repo_outside_home() {
-    _rh="$(physical_path "$HOME")"
-    _rr="$(physical_path "$REPO_ROOT")"
-    case "$_rr" in "$_rh"|"$_rh"/*) return 1 ;; *) return 0 ;; esac
-}
-
-# The daemon interpreter: first candidate that passes BOTH gates (§55) —
-# `import yaml`, then "can actually import act when launchd spawns it".
-# Sets DAEMON_PY (the winner) and DAEMON_PY_NOTE (empty when both gates passed
-# cleanly); returns 1 when no candidate is usable at all. Globals rather than
-# stdout because the probe's verdict has to survive back to the caller, and a
-# command substitution would run the whole thing in a subshell.
-# When the launchd gate rejects every yaml-capable candidate (or cannot run at
-# all) we fall back to the first yaml-capable one and say why, rather than
-# pinning nothing: yaml-capable is still strictly better than a PATH guess.
+# First candidate that imports yaml AND imports act under launchd. Sets
+# DAEMON_PY / DAEMON_PY_NOTE (globals: the probe verdict must survive).
 DAEMON_PY=""
 DAEMON_PY_NOTE=""
 pick_daemon_python() {
@@ -272,256 +213,464 @@ pick_daemon_python() {
     return 1
 }
 
-# The interpreter pinned by a previous run (CONTRACT §19), "" when unpinned.
+# The interpreter pinned by a previous run, "" when unpinned.
 pinned_python() {
     [ -f "$REPO_ROOT/config/runtime.json" ] || return 0
     sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         "$REPO_ROOT/config/runtime.json"
 }
 
-# --check [doctor flags…]: delegate to act/doctor.py — re-validates every
-# runtime assumption (deps, key resolution, launchd agents alive, cron lines,
-# dashboard freshness) symptom-first, one fix line per finding. Exit code =
-# number of FAILs. Anything after --check goes to the doctor verbatim
-# (`bash install.sh --check --fresh-install` = the §69 what-is-left summary).
-if [ "${1:-}" = "--check" ]; then
-    # prefer the pinned daemon interpreter — it is what launchd/cron run
-    DOCTOR_PY="$(command -v python3 || echo /usr/bin/python3)"
-    RJ_PY="$(pick_python "$(pinned_python)" "$DOCTOR_PY" /usr/bin/python3 || true)"
-    [ -n "$RJ_PY" ] && DOCTOR_PY="$RJ_PY"
-    cd "$REPO_ROOT" || exit 1
-    shift
-    AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor "$@"
-fi
-
-# --reinstall-agent <label> (CONTRACT §48.7): parsed here, RUN later — the
-# helpers it reuses (render_launchd_plist, launchd_load, verify_launchd_agent …)
-# are defined further down; reinstall_agent_mode is invoked right before step 1
-# and exits, so none of the numbered steps run in this mode.
-REINSTALL_AGENT_LABEL=""
-if [ "${1:-}" = "--reinstall-agent" ]; then
-    if [ "$#" -ne 2 ] || [ -z "${2:-}" ]; then
-        echo "usage: bash install.sh --reinstall-agent <launchd label>" >&2
-        exit 2
-    fi
-    REINSTALL_AGENT_LABEL="$2"
-    shift 2
-fi
-
-# Flags combine (`--non-interactive --no-launchd` is what the CI acceptance run
-# and scripts/bootstrap.sh pass); an unknown flag is a usage error, never a
-# silent no-op — a typo in an unattended caller must not run the wrong mode.
-PKG_POSTINSTALL=0
-# CONTRACT §56 — never-prompting mode for scripts/auto-deploy.sh (see header).
-NON_INTERACTIVE=0
-# CONTRACT §69 — no scheduler wiring: step 5 loads no launchd agent and step 6
-# writes no crontab; instead one `python3 -m act.actd --once` pass proves the
-# daemon runs in this environment (§23 step `actd_once`). For CI runners,
-# containers and "just show me it works" runs — a product install wants launchd.
-NO_LAUNCHD=0
-for _arg in "$@"; do
-    case "$_arg" in
-        --pkg-postinstall) PKG_POSTINSTALL=1 ;;
-        --non-interactive) NON_INTERACTIVE=1 ;;
-        --no-launchd) NO_LAUNCHD=1 ;;
-        *)
-            echo "install.sh: unknown flag '$_arg'" >&2
-            echo "usage: bash install.sh [--non-interactive] [--no-launchd] [--pkg-postinstall] | --check [doctor flags] | --reinstall-agent <label>" >&2
-            exit 2 ;;
-    esac
-done
-
-# CONTRACT §74.2 —— 第二把锁（defence in depth）：`--pkg-postinstall` 今天的
-# 唯一调用者是 .pkg 的 postinstall，而它已经在 rsync 之前用同一个守卫拒过 git
-# checkout；这里再拒一次，防的是**这把闸日后被谁绕开**——postinstall 那道门被
-# 编辑掉、有人在一棵工作树里手敲这个 flag、或者将来多出第二个调用者。
-# **它防不了「守卫出生之前打出来的旧 .pkg 载荷」**：那种载荷先把自己那份无守卫
-# 的 install.sh 连同旧代码 rsync 进 $DEST（伤害就发生在这一步），再执行的正是
-# 它自己拷过去的那一份——这里这几行那时根本不在文件里（§74.4 边界）。
-# 命中即**什么都不做**：不拷配置、不建 state、不装 launchd、不写 crontab、不写
-# §23 报告。交互模式与 `--non-interactive`（自动部署）**不**受本条约束——它们
-# 本来就该在 checkout 里跑。
-if [ "$PKG_POSTINSTALL" -eq 1 ] && ! bash "$REPO_ROOT/mac/scripts/pkg_dest_guard.sh" "$REPO_ROOT" >/dev/null; then
-    echo "install.sh --pkg-postinstall: refusing to configure a git checkout — nothing changed (CONTRACT §74)." >&2
-    echo "install.sh --pkg-postinstall: run 'bash install.sh' in that checkout yourself." >&2
-    exit 3
-fi
-
-ok()   { printf "  [ ok ] %s\n" "$1"; }
-warn() { printf "  [warn] %s\n" "$1"; }
-info() { printf "  [info] %s\n" "$1"; }
-
-# install report (CONTRACT §23) — newline-separated "name=status[:detail]"
-# lines accumulated as a plain string (macOS bash 3.2 + set -u make empty
-# arrays hazardous), written by write_install_report at the end of the run.
-REPORT_STEPS=""
-LOADED_LABELS=""
-report_step() { # $1=name $2=status [$3=detail]
-    REPORT_STEPS="${REPORT_STEPS}$1=$2${3:+:$3}
-"
+# Version stamp (§56.1): the tag is the truth; act/_version.py is written before
+# anything imports act. The first candidate interpreter that can run the stamper
+# wins (§55 第三幕: a Homebrew python may be TCC-blind to an external volume).
+STAMPED_VERSION=""
+STAMP_PY=""
+stamp_python_candidates() {
+    daemon_python_candidates
+    printf '%s\n' "$(command -v python3 2>/dev/null || true)"
 }
-
-# --non-interactive verdict (§56): the report lines whose status is fail,
-# minus `app` — the frozen legacy Mac app (D3): its build failing leaves the
-# installed app untouched, and rolling the deploy back would not fix it.
-# (Since §56.5 that mode never builds the app at all — install_mac_app records
-# `app=skipped` — so the exclusion is a belt for a stray fail line, kept
-# because the exit code is the deploy verdict and must never hinge on it.)
-# `cron=skipped_tcc`（apply_crontab：launchd 会话被 TCC 拒写 crontab）同理不算
-# fail——环境问题回滚治不了，还会毒掉 sha（2026-09-02 v0.48.12 实战）。
-# The `ui` step (§56.5) is NOT excluded: `ui=skipped` (toolchain absent) is
-# not a fail line, `ui=fail` (web/shell build broke) is — a merge that breaks
-# the UI build rolls back like any other. Printed one per line; the exit code
-# is their count.
-failed_deploy_steps() {
-    printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
-}
-
-# Step 3b — the skill store (CONTRACT §67; §23 step `skills`). Runs
-# scripts/skills_sync.sh with the daemon interpreter: re-points ~/.claude/skills
-# links at THIS checkout, applies `default_enabled` where this machine has no
-# recorded decision (state/skills.json), never touches a custom copy. A fresh
-# machine therefore has board-agent + test-code linked after one install.sh.
-# Verdict (§56.5 spirit — environment problems never roll a deploy back):
-#   ok       sync ran; detail = the store's one-line summary
-#   skipped  no daemon interpreter (runtime_python already failed) or the
-#            script is missing (partial checkout)
-#   fail     exit 3 = skills/index.yaml broken — the repo is broken, same class
-#            as a build failure (tests/test_skills_manifest_repo.py pins it)
-#   warn     any other non-zero (store refused / ~/.claude unwritable …); detail
-#            carries the last stderr line so the log says WHY
-# A function so tests run it against a stub skills_sync.sh (tests/test_install_skills_step.py).
-install_skills() {
-    _sync="$REPO_ROOT/scripts/skills_sync.sh"
-    if [ -z "${RUNTIME_PY:-}" ]; then
-        warn "skill store not synced — no daemon python (see runtime_python above)"
-        report_step "skills" "skipped" "no daemon python"
-        return 0
-    fi
-    if [ ! -f "$_sync" ]; then
-        warn "skill store not synced — $_sync missing"
-        report_step "skills" "skipped" "scripts/skills_sync.sh missing"
-        return 0
-    fi
-    _err="$(mktemp 2>/dev/null || printf '/tmp/zai-skills-sync.%s' "$$")"
-    _summary="$(AIASSISTANT_PYTHON="$RUNTIME_PY" bash "$_sync" 2>"$_err")"
-    _rc=$?
-    _why="$(tail -n 1 "$_err" 2>/dev/null)"
-    rm -f "$_err"
-    if [ "$_rc" -eq 0 ]; then
-        ok "skills: ${_summary:-synced}"
-        report_step "skills" "ok" "${_summary:-synced}"
-    elif [ "$_rc" -eq 3 ]; then
-        warn "skills/index.yaml is broken — ${_why:-manifest error}"
-        report_step "skills" "fail" "manifest broken — ${_why:-see log}"
-    else
-        warn "skill store sync did not complete (exit $_rc) — ${_why:-no detail}"
-        report_step "skills" "warn" "exit $_rc — ${_why:-no detail}"
-    fi
-    return 0
-}
-
-# Step 4 — build + install the Mac app (CONTRACT §23 step `app`; §56.5).
-# A function so tests can run it against a fake mac/build.sh. Skipped by the
-# .pkg postinstall (the pkg installed the app) and by --non-interactive:
-# auto-deploy must NEVER rebuild the frozen legacy app (D3) — build.sh quits
-# and relaunches the running instance, taking screenpipe (its direct child)
-# and live captions down with it, and a `swift build` + `codesign` under
-# launchd can hang on a keychain prompt nobody is there to click.
-install_mac_app() {
-    if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-        echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
-        report_step "app" "skipped" "installed by the .pkg"
-    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
-        echo "==> 4. build + install Mac app — skipped (--non-interactive never rebuilds the frozen legacy app; run bash install.sh by hand)"
-        report_step "app" "skipped" "non-interactive never rebuilds the app (D3); bash install.sh to rebuild"
-    else
-        echo "==> 4. build + install Mac app"
-        if bash "$REPO_ROOT/mac/build.sh" --install; then
-            ok "Mac app built + installed"
-            report_step "app" "ok" "built and installed"
-        else
-            warn "Mac app build failed — see output above"
-            report_step "app" "fail" "mac/build.sh --install failed"
+stamp_version() {
+    STAMPED_VERSION=""; STAMP_PY=""
+    _stamp_err="$(mktemp 2>/dev/null || printf '/tmp/zai-stamp.%s' "$$")"
+    _tried=""; _why=""
+    _saved_ifs="$IFS"
+    IFS='
+'
+    # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+    for _spy in $(stamp_python_candidates); do
+        IFS="$_saved_ifs"
+        case "$_spy" in /*) ;; *) continue ;; esac
+        [ -x "$_spy" ] || continue
+        case " $_tried " in *" $_spy "*) continue ;; esac
+        _tried="$_tried $_spy"
+        STAMPED_VERSION="$(cd "$REPO_ROOT" && "$_spy" scripts/version_stamp.py --write 2>"$_stamp_err")"
+        _rc=$?
+        if [ "$_rc" -eq 0 ] && [ -n "$STAMPED_VERSION" ]; then
+            STAMP_PY="$_spy"
+            break
         fi
+        STAMPED_VERSION=""
+        _last="$(tail -n 1 "$_stamp_err" 2>/dev/null | tr -d '\r')"
+        _why="${_why:+$_why; }$_spy: ${_last:-exit $_rc, no stderr}"
+    done
+    IFS="$_saved_ifs"
+    rm -f "$_stamp_err"
+    if [ -n "$STAMPED_VERSION" ]; then
+        ok "act/_version.py -> v$STAMPED_VERSION (git tag truth, §56.1; $STAMP_PY)"
+        [ -z "$_why" ] || info "  version: skipped interpreter(s) that could not run the stamper — $_why"
+        report_step "version" "ok" "$STAMPED_VERSION"
+    elif [ -z "$_tried" ]; then
+        warn "no python3 — act/_version.py not written (the baked fallback version is reported)"
+        report_step "version" "warn" "no python3 to stamp"
+    else
+        warn "scripts/version_stamp.py failed with every interpreter — act/_version.py not written: $_why"
+        report_step "version" "warn" "stamp failed — $_why"
     fi
 }
 
-# --------------------------------------------------------------------------
-# Step 4b — the board UI (CONTRACT §56.5 `ui` step; §54 shell).
-#
-# Two halves, each independently `ok | skipped | fail` (web also `skipped_tcc`):
-#   web:   node+npm present → mirror web/ into a build dir under $HOME
-#          (ui_web_build_dir: TCC — see below) → `npm ci` (only when that
-#          dir's node_modules is missing or package-lock.json changed since
-#          the last ci — cksum stamp) → `npm run build` → copy dist/ back to
-#          web/dist (served by the board server). EPERM in the npm log =
-#          `skipped_tcc` (node lacks Full Disk Access in a launchd session;
-#          not something a rollback can fix).
-#   shell: macOS + swiftc present → `bash shell/build.sh` (ZAI_PORT stamped
-#          from config.yaml server.port) → retire a legacy bundle sitting at
-#          the product path (below) → stage-then-swap the bundle into
-#          $UI_APPS_DIR (default /Applications; ~/Applications when not
-#          writable) as "Zelin's AI Assistant.app" → remove the pre-rename
-#          "Zelin AI Board.app" (only when its id is com.zelin.ai-board).
-#          The id stays com.zelin.ai-board (§54 — its own TCC identity).
-# Combined step status: any fail → fail; else any ok → ok; else skipped_tcc
-# if the web half was TCC-refused; else skipped.
-# Missing toolchain is `skipped` + a warn, NEVER a deploy failure (mirror of
-# the `app` precedent, §56.5). Never prompts: npm runs with CI=1 --no-audit
-# --no-fund, and shell/build.sh's codesign uses the stable identity whose key
-# ACL already allows /usr/bin/codesign non-interactively (`-T /usr/bin/codesign`
-# + `security set-key-partition-list`, shell/scripts/make-signing-cert.sh). That
-# partition-list step is SKIPPABLE in that script, so on a machine where the
-# owner skipped it codesign would block on a GUI prompt nobody can click —
-# shell/build.sh therefore runs codesign under its own wall clock and falls
-# back to ad-hoc on timeout rather than burning this step's budget (§54.3
-# 2026-09-12 修正). Each half runs under a wall-clock budget
-# (AIASSISTANT_UI_BUDGET, default 600 s per command) so a hung npm cannot eat
-# the auto-deploy watchdog (1800 s); durations are logged and land in the
-# report detail. Output goes to ui-build.log (capped), the tail is echoed on
-# failure.
-#
-# The name swap (owner 2026-09-02; §54): the shell takes the product name, the
-# legacy menu-bar app becomes "Zelin's AI Assistant (old)". Bundles are told
-# apart by CFBundleIdentifier, never by folder name:
-#   - a com.zelin.ai-engineer bundle at the product path is MOVED (same-dir
-#     rename, never copied/deleted) to "… (old).app" before the shell lands;
-#     if "(old)" already exists that copy is kept and the redundant bundle at
-#     the product path is deleted — or, when rm is refused (a .pkg install is
-#     root-owned), parked beside it under a timestamped "(old …)" name;
-#   - the legacy bundle's contents are never edited: its Info.plist is inside
-#     the code-signature seal, and tccd validates that seal on every request
-#     (an edited plist = the grants stop being honored). The "(old)" display
-#     name is stamped at build time by mac/Info.plist instead, so it arrives
-#     with the next legacy build/update (mac/build.sh, .pkg, Sparkle);
-#   - the pre-rename "Zelin AI Board.app" is removed after the new bundle is
-#     in place, only when its id is com.zelin.ai-board; a com.zelin.ai-board
-#     bundle at the product path is simply replaced (that is the upgrade).
-# tests/test_install_ui_step.py pins every branch with fake bundles.
+# claude as the user's LOGIN shell resolves it (2026-07-08: a second, outdated
+# install ranked first on a minimal PATH). Sets CLAUDE_LOGIN_BIN ("" = none).
+CLAUDE_LOGIN_BIN=""
+resolve_claude_login_bin() {
+    CLAUDE_LOGIN_BIN=""
+    _c="$("${SHELL:-/bin/zsh}" -lc 'command -v claude' 2>/dev/null </dev/null | tail -n 1 || true)"
+    case "$_c" in
+        /*) [ -x "$_c" ] && CLAUDE_LOGIN_BIN="$_c" ;;
+    esac
+    [ -n "$CLAUDE_LOGIN_BIN" ] || CLAUDE_LOGIN_BIN="$(command -v claude 2>/dev/null || true)"
+    if [ -z "$CLAUDE_LOGIN_BIN" ]; then
+        for _c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
+            [ -x "$_c" ] && { CLAUDE_LOGIN_BIN="$_c"; break; }
+        done
+    fi
+}
+
+# §55 第五幕 — the stable copy of claude at ONE path under $HOME, refreshed in
+# place, so a Full Disk Access grant survives claude updates. Refuses a source
+# without a valid Apple-anchored signature; every refusal keeps the previous
+# copy and is a warn, never a fail. §23 step `stable_claude`.
+refresh_stable_claude() { # $1 = the claude to copy
+    _src="${1:-}"
+    if [ -z "$_src" ] || [ ! -x "$_src" ]; then
+        warn "no claude to copy — the stable copy $STABLE_CLAUDE_BIN was not created"
+        report_step "stable_claude" "skipped" "no claude to copy"
+        return 0
+    fi
+    _real="$(readlink -f "$_src" 2>/dev/null || printf '%s' "$_src")"
+    _ver="$( (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_real" --version 2>/dev/null | head -n 1) || true)"
+    if [ -x "$STABLE_CLAUDE_BIN" ] && cmp -s "$_real" "$STABLE_CLAUDE_BIN"; then
+        ok "stable claude: $STABLE_CLAUDE_BIN unchanged (${_ver:-$_real})"
+        report_step "stable_claude" "ok" "unchanged: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+        return 0
+    fi
+    _kept=""
+    [ -x "$STABLE_CLAUDE_BIN" ] && _kept="; the previous copy stays in place"
+    if ! codesign --verify --strict -R='anchor apple generic' "$_real" >/dev/null 2>&1; then
+        warn "claude at $_real carries no valid Apple-anchored signature — not copied$_kept"
+        report_step "stable_claude" "warn" "refused: $_real is not a validly signed binary$_kept"
+        return 0
+    fi
+    _dir="$(dirname "$STABLE_CLAUDE_BIN")"
+    _tmp="$_dir/.claude.tmp.$$"
+    if ! mkdir -p "$_dir"; then
+        warn "cannot create $_dir — stable claude not written$_kept"
+        report_step "stable_claude" "warn" "mkdir $_dir failed$_kept"
+        return 0
+    fi
+    rm -f "$_tmp"
+    if ! { cp -cp "$_real" "$_tmp" 2>/dev/null || cp -p "$_real" "$_tmp"; }; then
+        rm -f "$_tmp"
+        warn "copying $_real to $_tmp failed — stable claude not refreshed$_kept"
+        report_step "stable_claude" "warn" "copy failed$_kept"
+        return 0
+    fi
+    if ! codesign --verify --strict -R='anchor apple generic' "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        warn "the copy at $_tmp failed signature verification — discarded$_kept"
+        report_step "stable_claude" "warn" "copy failed signature verification$_kept"
+        return 0
+    fi
+    if ! (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_tmp" --version >/dev/null 2>&1); then
+        rm -f "$_tmp"
+        warn "the copy at $_tmp does not run \`--version\` — discarded$_kept"
+        report_step "stable_claude" "warn" "copy does not run --version$_kept"
+        return 0
+    fi
+    _what="created"
+    [ -n "$_kept" ] && _what="refreshed"
+    if ! mv -f "$_tmp" "$STABLE_CLAUDE_BIN"; then
+        rm -f "$_tmp"
+        warn "mv $_tmp -> $STABLE_CLAUDE_BIN failed$_kept"
+        report_step "stable_claude" "warn" "mv into place failed$_kept"
+        return 0
+    fi
+    ok "stable claude: $_what $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+    report_step "stable_claude" "ok" "$_what: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
+    if [ "$_what" = "created" ]; then
+        info "one-time: System Settings > Privacy & Security > Full Disk Access > + > $STABLE_CLAUDE_BIN"
+    fi
+}
+
+# §78: the private Claude Code config dir every headless claude runs on, and its
+# empty cwd outside the repo tree. Both 0700, never written into by this app.
+ensure_claude_config_dirs() {
+    if mkdir -p "$CLAUDE_CONFIG_DIR_PATH/cwd" && chmod 700 "$CLAUDE_CONFIG_DIR_PATH" "$CLAUDE_CONFIG_DIR_PATH/cwd"; then
+        ok "isolation dirs: $CLAUDE_CONFIG_DIR_PATH (+ cwd/) — headless claude never reads ~/.claude (§78)"
+        report_step "claude_config" "ok" "$CLAUDE_CONFIG_DIR_PATH"
+    else
+        warn "could not create $CLAUDE_CONFIG_DIR_PATH/cwd — act.lib.config creates it on first use"
+        report_step "claude_config" "warn" "mkdir $CLAUDE_CONFIG_DIR_PATH/cwd failed"
+    fi
+}
+
+# First non-empty line, surrounding whitespace trimmed (§19: one-line token files).
+first_token_line() {
+    awk 'NF { gsub(/^[ \t\r]+|[ \t\r]+$/, ""); print; exit }'
+}
+
+# §19: the key lives in config/secrets/anthropic-api-key.txt (dir 0700, file
+# 0600). When that file is missing and $ANTHROPIC_API_KEY or
+# ~/.config/anthropic-key.txt holds one, copy it — asked in an interactive run
+# with a terminal, done directly otherwise. The value is never printed.
+install_api_key() {
+    _dst_dir="$REPO_ROOT/config/secrets"
+    _dst="$_dst_dir/anthropic-api-key.txt"
+    _legacy="$HOME/.config/anthropic-key.txt"
+    if [ -s "$_dst" ]; then
+        ok "Anthropic API key present (config/secrets/anthropic-api-key.txt)"
+        report_step "anthropic_key" "ok" "config/secrets/anthropic-api-key.txt present"
+        return 0
+    fi
+    _from=""
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        _from="\$ANTHROPIC_API_KEY"
+    elif [ -s "$_legacy" ]; then
+        _from="$_legacy"
+    fi
+    if [ -z "$_from" ]; then
+        warn "no Anthropic API key — paste one in the app (Settings > Credentials); headless claude runs only on an API key (§78)"
+        report_step "anthropic_key" "skipped" "no key found; paste one in Settings > Credentials"
+        return 0
+    fi
+    if [ "$NON_INTERACTIVE" -eq 0 ] && [ -t 0 ]; then
+        printf "  Copy the Anthropic API key from %s into config/secrets/anthropic-api-key.txt? [Y/n] " "$_from"
+        _reply=""
+        read -r _reply || _reply=""
+        case "$_reply" in
+            n|N|no|NO)
+                info "key not copied — paste one later in Settings > Credentials"
+                report_step "anthropic_key" "skipped" "copy from $_from declined"
+                return 0 ;;
+        esac
+    fi
+    if [ "$_from" = "\$ANTHROPIC_API_KEY" ]; then
+        _val="$(printf '%s\n' "$ANTHROPIC_API_KEY" | first_token_line)"
+    else
+        _val="$(first_token_line < "$_legacy")"
+    fi
+    if [ -z "$_val" ]; then
+        warn "$_from holds no key line — nothing copied"
+        report_step "anthropic_key" "warn" "$_from is empty"
+        return 0
+    fi
+    if ( umask 077 && mkdir -p "$_dst_dir" && chmod 700 "$_dst_dir" \
+            && printf '%s\n' "$_val" > "$_dst.tmp.$$" && chmod 600 "$_dst.tmp.$$" \
+            && mv -f "$_dst.tmp.$$" "$_dst" ); then
+        ok "Anthropic API key copied from $_from into config/secrets/anthropic-api-key.txt (0600)"
+        report_step "anthropic_key" "ok" "copied from $_from"
+    else
+        rm -f "$_dst.tmp.$$"
+        warn "could not write $_dst — paste the key in Settings > Credentials"
+        report_step "anthropic_key" "warn" "write into config/secrets failed"
+    fi
+}
+
+# ------------------------------------------------------------------ launchd
+launchd_unload() { # $1=plist path, $2=label
+    launchctl bootout "gui/$UID_NUM/$2" >/dev/null 2>&1 \
+        || launchctl unload "$1" >/dev/null 2>&1 || true
+}
+launchd_load() { # $1=plist path
+    launchctl bootstrap "gui/$UID_NUM" "$1" >/dev/null 2>&1 \
+        || launchctl load "$1" >/dev/null 2>&1
+}
+launchd_label_loaded() { # $1=label
+    launchctl list 2>/dev/null | awk -v l="$1" '$3 == l' | grep -q .
+}
+
+# Retire a label for good: unload + delete its plist + PROVE it is gone (§55:
+# a swallowed bootout once left a removed agent running for 51 days).
+RETIRED_STILL_LOADED=""
+RETIRED_DONE=""
+launchd_retire() { # $1=label
+    _was=0
+    launchd_label_loaded "$1" && _was=1
+    [ -e "$LA_DIR/$1.plist" ] && _was=1
+    launchd_unload "$LA_DIR/$1.plist" "$1"
+    rm -f "$LA_DIR/$1.plist"
+    if launchd_label_loaded "$1"; then
+        echo "  [ERR ] retired agent $1 is STILL loaded after bootout" >&2
+        info "  fix: launchctl bootout gui/$UID_NUM/$1   # then re-run install.sh"
+        RETIRED_STILL_LOADED="${RETIRED_STILL_LOADED:-} $1"
+    elif [ "$_was" -eq 1 ]; then
+        ok "unloaded retired agent $1 (1.x; plist removed)"
+        RETIRED_DONE="${RETIRED_DONE:-} $1"
+    fi
+}
+
+# Labels of ours (both §78 prefixes) loaded or left in ~/Library/LaunchAgents
+# with no template under act/launchd/ — reported, never unloaded.
+launchd_orphans() {
+    {
+        launchctl list 2>/dev/null | awk '$3 ~ /^com\.zelin\.(aiassistant\.|screenpipe-)/ {print $3}'
+        for _p in "$LA_DIR"/com.zelin.aiassistant.*.plist "$LA_DIR"/com.zelin.screenpipe-*.plist; do
+            [ -e "$_p" ] || continue
+            _b="$(basename "$_p")"; printf '%s\n' "${_b%.plist}"
+        done
+    } | sort -u | while IFS= read -r _label; do
+        [ -e "$REPO_ROOT/act/launchd/$_label.plist" ] && continue
+        printf '%s\n' "$_label"
+    done
+}
+
+# Render a template: the /Users/YOURUSERNAME placeholders become the daemon
+# interpreter, the PHYSICAL repo root, $HOME and the login shell's claude dir
+# (first on PATH); ZAI_PORT comes from config.yaml server.port (§54).
+render_launchd_plist() {
+    src="$1"; dest="$2"
+    py="${RUNTIME_PY:-}"
+    if ! py_imports_yaml "$py"; then
+        _saved_ifs="$IFS"
+        IFS='
+'
+        # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+        py="$(pick_python $(daemon_python_candidates) || echo /usr/bin/python3)"
+        IFS="$_saved_ifs"
+    fi
+    pydir="$(dirname "$py")"
+    repo="$(physical_path "$REPO_ROOT")"
+    claudedir="$HOME/.local/bin"
+    [ -n "${CLAUDE_LOGIN_BIN:-}" ] && claudedir="$(dirname "$CLAUDE_LOGIN_BIN")"
+    # launchd opens StandardOut/ErrorPath before exec: the directory must exist.
+    mkdir -p "$HOME/Library/Logs/zelin-ai-assistant"
+    port="${SERVER_PORT:-47820}"
+    sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
+        -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
+        -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$repo")|g" \
+        -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
+        -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
+        -e "s|<key>ZAI_PORT</key><string>[0-9]*</string>|<key>ZAI_PORT</key><string>$(_sed_escape "$port")</string>|g" \
+        "$src" > "$dest"
+}
+
+# config.yaml server.port, fail-open to 47820.
+server_port() {
+    _p="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
+from act.lib import config
+try:
+    print(int(config.load_config().server_port))
+except Exception:
+    print(config.DEFAULT_SERVER_PORT)') 2>/dev/null )"
+    case "$_p" in ''|*[!0-9]*) _p=47820 ;; esac
+    printf '%s' "$_p"
+}
+
+# Does anything answer GET /api/health on the board port? (§54: two servers must
+# never fight for the port; a stranger is reported, never killed.)
+board_server_answering() { # $1=port
+    (cd "$REPO_ROOT" && "${RUNTIME_PY:-python3}" -c '
+import sys, urllib.request
+try:
+    with urllib.request.urlopen("http://127.0.0.1:%d/api/health" % int(sys.argv[1]), timeout=2) as r:
+        raise SystemExit(0 if 200 <= r.status < 300 else 1)
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(1)' "$1" >/dev/null 2>&1)
+}
+
+# Keep the newest half of an agent's launchd log past 1 MB, in the unload→load
+# window when launchd holds no fd on it (防腐 #4; §55).
+cap_launchd_log() { # $1=label
+    _lf="$HOME/Library/Logs/zelin-ai-assistant/${1##*.}.launchd.log"
+    [ -f "$_lf" ] || return 0
+    _lsz="$(wc -c < "$_lf" | tr -d ' ')"
+    [ "$_lsz" -gt 1048576 ] || return 0
+    if tail -c 524288 "$_lf" > "$_lf.tmp" && mv "$_lf.tmp" "$_lf"; then
+        info "capped ${1##*.}.launchd.log (was $_lsz bytes; newest half kept)"
+    fi
+}
+
+# `launchctl load` succeeds even when the job dies on spawn — read `launchctl list`.
+verify_launchd_agent() { # $1=label
+    _line="$(launchctl list 2>/dev/null | awk -v l="$1" '$3 == l')"
+    if [ -z "$_line" ]; then
+        echo "  [ERR ] $1 not registered with launchd — try: launchctl bootstrap gui/$UID_NUM $LA_DIR/$1.plist" >&2
+        return 1
+    fi
+    _pid="$(printf '%s' "$_line" | awk '{print $1}')"
+    _st="$(printf '%s' "$_line" | awk '{print $2}')"
+    if [ "$_pid" != "-" ]; then
+        ok "$1 running (pid $_pid)"
+    elif [ "$_st" = "0" ]; then
+        ok "$1 loaded (last run exited 0)"
+    else
+        echo "  [ERR ] $1 loaded but its process exits with status $_st" >&2
+        info "fix: read ~/Library/Logs/zelin-ai-assistant/${1##*.}.launchd.log — \"No module named 'act'\" = the interpreter cannot see the repo (Full Disk Access, §55); \"No module named 'yaml'\" = ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
+        return 1
+    fi
+}
+
+# ------------------------------------------------------------------ 1.x migration
+# The physical form of a path that may not exist (a dangling link into a removed
+# repo directory): resolve the deepest existing ancestor, keep the rest.
+physical_target() { # $1 = absolute path
+    _cur="$1"; _rest=""
+    while [ -n "$_cur" ] && [ "$_cur" != "/" ] && [ ! -d "$_cur" ]; do
+        _rest="/$(basename "$_cur")$_rest"
+        _cur="$(dirname "$_cur")"
+    done
+    _base="$(physical_path "${_cur:-/}")"
+    [ "$_base" = "/" ] && _base=""
+    printf '%s%s' "$_base" "$_rest"
+}
+
+# §78: unlink the entries of ~/.claude/skills that are symlinks resolving into
+# this repo (1.x scripts/skills_sync.sh). Real directories (the owner's own
+# skills) and links elsewhere are never touched. Sets MIGRATED_LINKS.
+MIGRATED_LINKS=""
+unlink_repo_skill_links() {
+    _sd="$HOME/.claude/skills"
+    [ -d "$_sd" ] || return 0
+    _root="$(physical_path "$REPO_ROOT")"
+    for _l in "$_sd"/* "$_sd"/.[!.]*; do
+        [ -L "$_l" ] || continue
+        _t="$(readlink "$_l" 2>/dev/null)" || continue
+        case "$_t" in /*) ;; *) _t="$_sd/$_t" ;; esac
+        case "$(physical_target "$_t")" in
+            "$_root"|"$_root"/*)
+                if rm -f "$_l"; then
+                    ok "unlinked ~/.claude/skills/$(basename "$_l") (a 1.x link into this repo)"
+                    MIGRATED_LINKS="$MIGRATED_LINKS $(basename "$_l")"
+                fi ;;
+        esac
+    done
+}
+
+# Claude Code's project-dir name for a cwd (every non-alphanumeric -> '-').
+claude_project_slug() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+
+# The cleanup command for the 1.x headless transcripts (their cwd was state/).
+# Printed, never run: those files live in the owner's Claude Code home (art.13).
+print_transcript_cleanup() {
+    _slugs="$(claude_project_slug "$SCRIPT_DIR_LOGICAL/state")"
+    _phys="$(claude_project_slug "$REPO_ROOT/state")"
+    [ "$_phys" = "$_slugs" ] || _slugs="$_slugs $_phys"
+    info "1.x headless runs left transcripts in Claude Code's projects dir. Archive or delete them yourself"
+    info "(this installer never touches ~/.claude/projects):"
+    for _s in $_slugs; do
+        info "  rm -rf ~/.claude/projects/$_s*"
+    done
+}
+
+# Step 4 (§78 install.sh 1.x migration duty). Under --no-launchd the LaunchAgent
+# half is skipped (that mode touches no scheduler). §23 step `migrate`.
+migrate_from_1x() {
+    echo "==> 4. migrate a 1.x install (§78)"
+    RETIRED_STILL_LOADED=""; RETIRED_DONE=""; MIGRATED_LINKS=""
+    _removed=""
+    if [ "$NO_LAUNCHD" -eq 1 ]; then
+        info "--no-launchd: 1.x LaunchAgents not inspected"
+    else
+        for _label in $RETIRED_LABELS; do
+            launchd_retire "$_label"
+        done
+    fi
+    unlink_repo_skill_links
+    for _f in "$APP_SUPPORT_DIR/deploy_state.json" "$REPO_ROOT/state/deploy_state.json"; do
+        if [ -e "$_f" ] && rm -f "$_f"; then
+            ok "removed the 1.x auto-deploy state $_f"
+            _removed="$_removed $(basename "$(dirname "$_f")")/deploy_state.json"
+        fi
+    done
+    if [ -n "$RETIRED_DONE$MIGRATED_LINKS$_removed" ]; then
+        print_transcript_cleanup
+    fi
+    _detail="agents:${RETIRED_DONE:- none}; skills links:${MIGRATED_LINKS:- none}; files:${_removed:- none}"
+    if [ -n "$RETIRED_STILL_LOADED" ]; then
+        report_step "migrate" "fail" "still loaded:$RETIRED_STILL_LOADED; $_detail"
+    elif [ -n "$RETIRED_DONE$MIGRATED_LINKS$_removed" ]; then
+        report_step "migrate" "ok" "$_detail"
+    else
+        ok "nothing of 1.x left"
+        report_step "migrate" "ok" "nothing to migrate"
+    fi
+}
+
+# ------------------------------------------------------------------ board UI
+# Step 5 (§56.5 `ui`): web/dist (built in a mirror under $HOME — node is
+# TCC-judged on its own and may not read an external-volume repo) and the Dock
+# shell installed as "Zelin's AI Assistant.app" (id com.zelin.ai-board, §54).
+# Each half ok | skipped | fail (web also skipped_tcc); a missing toolchain is
+# skipped + warn, never a failure. Each command runs under a wall clock.
 UI_APP_NAME="Zelin's AI Assistant"      # bundle folder — id com.zelin.ai-board (§54)
 UI_BUNDLE_ID="com.zelin.ai-board"
 UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
-UI_ENGINE_HANDOFF_KEY="engineHandoff"   # = shell EngineOwnership.handoffKey (§61.8 upgrade handoff)
-UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the frozen menu-bar app (D3, R2.2.4)
-UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12 — deliberately unchanged
-# v2.0.0 (CONTRACT §61.8): the installer never signals the screenpipe engine — the next
-# shell adopts a running recipe engine; the 1.x orphan sweep (UI_ENGINE_PATTERN /
-# UI_LEGACY_EXEC_NAME / ui_sweep_orphan_engine) is retired, full text at tag full.
-UI_PREVIOUS_APP_NAME="Zelin AI Board"   # the shell's folder name before the swap (≤ v0.48.29)
-UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam
+UI_ENGINE_HANDOFF_KEY="engineHandoff"   # = shell EngineOwnership.handoffKey (§61.8)
+UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the retired 1.x menu-bar app
+UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12
+UI_PREVIOUS_APP_NAME="Zelin AI Board"   # the shell's folder name before the §54 swap
+UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"
 UI_BUDGET_S="${AIASSISTANT_UI_BUDGET:-600}"
 UI_LOG="$HOME/Library/Logs/zelin-ai-assistant/ui-build.log"
-UI_LOG_CAP_BYTES=1048576                # 防腐 #4：日志必有帽
+UI_LOG_CAP_BYTES=1048576                # 防腐 #4
 UI_SHELL_INSTALLED=0
-UI_LEGACY_MOVED=0                       # this run moved the legacy app to "(old)"
+UI_LEGACY_MOVED=0
 UI_APP_PATH=""
 UI_WEB_STATUS=""; UI_WEB_DETAIL=""
 UI_SHELL_STATUS=""; UI_SHELL_DETAIL=""
 
-# Run a command with a wall-clock limit; 124 on timeout (children reaped too).
-# Same shape as scripts/auto-deploy.sh run_with_timeout (macOS has no `timeout`);
-# polls 4×/s so short builds do not pay a whole second of slack.
+# A command under a wall-clock limit; 124 on timeout (children reaped too).
 ui_run_with_timeout() { # $1=seconds, rest=command
     _limit="$1"; shift
     "$@" &
@@ -544,7 +693,7 @@ ui_run_with_timeout() { # $1=seconds, rest=command
     wait "$_pid"
 }
 
-ui_log_begin() { # cap the build log, open a timestamped section
+ui_log_begin() {
     mkdir -p "$(dirname "$UI_LOG")"
     if [ -f "$UI_LOG" ]; then
         _sz="$(wc -c < "$UI_LOG" | tr -d ' ')"
@@ -555,37 +704,20 @@ ui_log_begin() { # cap the build log, open a timestamped section
     printf '\n==== install.sh ui step %s ====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$UI_LOG"
 }
 
-ui_log_tail() { # echo the last lines of the build log after a failure
+ui_log_tail() {
     info "last lines of $UI_LOG:"
     tail -n 15 "$UI_LOG" 2>/dev/null | sed 's/^/         /'
 }
 
 ui_now() { date +%s; }
 
-# Where the web build actually runs (§56.5): NOT inside the repo. Verified
-# 2026-09-02 with a throwaway launchd job: homebrew `node` is TCC-denied on a
-# repo living on an external volume (EPERM on scandir / uv_cwd) even as a
-# child of the FDA-granted daemon python — TCC judges each non-platform binary
-# on its own (§55 第三幕) — while bash/cp/rsync/swiftc (Apple platform
-# binaries) read it fine. So the sources are rsync'ed under $HOME, node/npm
-# only ever touch $HOME paths, and the finished dist/ is copied back into the
-# repo by cp (platform binary). Side benefit: `npm ci` never writes
-# node_modules into the checkout.
 ui_web_build_dir() {
     if [ -n "${AIASSISTANT_UI_BUILD_DIR:-}" ]; then printf '%s' "$AIASSISTANT_UI_BUILD_DIR"; return; fi
-    if [ "$(uname -s)" = "Darwin" ]; then
-        printf '%s' "$HOME/Library/Caches/zelin-ai-assistant/web-build"
-    else
-        printf '%s' "${XDG_CACHE_HOME:-$HOME/.cache}/zelin-ai-assistant/web-build"
-    fi
+    printf '%s' "$HOME/Library/Caches/zelin-ai-assistant/web-build"
 }
 
-# Mirror web/ (minus node_modules + dist) into the build dir. rsync --delete is
-# the sanctioned directory sync (防腐 #8); cp -R after rm -rf is the fallback.
-# --checksum: the mirror follows CONTENT, not rsync's size+whole-second-mtime
-# quick check — the `npm ci` gate below hashes the mirrored package-lock.json,
-# so a same-size edit inside the mtime window must still land (the tree is
-# ~100 small files; hashing it costs nothing).
+# Mirror web/ (minus node_modules + dist) into the build dir; --checksum so the
+# `npm ci` gate below sees same-size edits inside rsync's mtime window.
 ui_sync_web_sources() { # $1=src web dir $2=build dir
     mkdir -p "$2"
     if command -v rsync >/dev/null 2>&1; then
@@ -598,15 +730,10 @@ ui_sync_web_sources() { # $1=src web dir $2=build dir
     fi
 }
 
-# Was that build failure TCC (EPERM / operation not permitted in the log tail)?
-# Code cannot fix a missing Full Disk Access grant and a rollback will hit the
-# same wall (the 2026-09-02 `cron=skipped_tcc` lesson, §23/§56.5) — such a half
-# is `skipped_tcc`, not `fail`.
 ui_log_says_tcc() {
     tail -n 40 "$UI_LOG" 2>/dev/null | grep -Eiq 'EPERM|operation not permitted'
 }
 
-# web half → UI_WEB_STATUS / UI_WEB_DETAIL
 install_web_ui() {
     UI_WEB_STATUS=skipped; UI_WEB_DETAIL=""
     if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
@@ -654,8 +781,6 @@ install_web_ui() {
         UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail (no dist/index.html after build)"
         return 0
     fi
-    # publish: stage next to the served dir, then swap (the server reads files
-    # per request — the missing-dist window is milliseconds)
     rm -rf "$_web/dist.tmp"
     if ! cp -R "$_bld/dist" "$_web/dist.tmp"; then
         rm -rf "$_web/dist.tmp"
@@ -669,12 +794,11 @@ install_web_ui() {
     ok "ui: web/dist built (npm ci ${_ci_s}s, build ${_build_s}s; built in $_bld)"
 }
 
-# a failed npm step → fail, or skipped_tcc when the log says TCC (see ui_log_says_tcc)
 ui_web_failed() { # $1=step name $2=rc
     if ui_log_says_tcc; then
-        warn "ui: $1 hit EPERM / operation not permitted — node lacks Full Disk Access in this (launchd) session; web board not rebuilt"
-        info "  fix: System Settings > Privacy & Security > Full Disk Access: add $(command -v node) (resolve the symlink), or run: bash $REPO_ROOT/install.sh   # from a terminal"
-        UI_WEB_STATUS=skipped_tcc; UI_WEB_DETAIL="web skipped_tcc ($1 exit $2: EPERM under launchd; grant node Full Disk Access or bash install.sh from a terminal)"
+        warn "ui: $1 hit EPERM / operation not permitted — node lacks Full Disk Access in this session; web board not rebuilt"
+        info "  fix: run bash $REPO_ROOT/install.sh from a terminal, or grant $(command -v node) Full Disk Access"
+        UI_WEB_STATUS=skipped_tcc; UI_WEB_DETAIL="web skipped_tcc ($1 exit $2: EPERM; grant node Full Disk Access or bash install.sh from a terminal)"
         return 0
     fi
     warn "ui: $1 failed (exit $2) — see $UI_LOG"
@@ -682,17 +806,13 @@ ui_web_failed() { # $1=step name $2=rc
     UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail ($1 exit $2)"
 }
 
-# CFBundleIdentifier of a .app (empty when the plist is missing/unreadable).
 ui_bundle_id() { # $1=.app path
     plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
-# Move a legacy (com.zelin.ai-engineer) bundle off the product path in $1 so
-# the shell can take it (§54 name swap). Only ever a same-directory rename —
-# that needs write on the directory, not on the bundle, so a root-owned .pkg
-# install moves too. Returns non-zero only when the product path is still
-# blocked by a legacy bundle afterwards; the caller's writability check then
-# reroutes to ~/Applications. Never edits the bundle (signature seal).
+# §12: a residual 1.x menu-bar bundle (com.zelin.ai-engineer) on the product
+# path is renamed aside to "(old)" — same-directory rename, never edited (its
+# Info.plist is inside the signature seal) — so the shell can take the path.
 ui_retire_legacy_app() { # $1=apps dir
     _product="$1/$UI_APP_NAME.app"
     _old="$1/$UI_LEGACY_APP_NAME.app"
@@ -700,7 +820,7 @@ ui_retire_legacy_app() { # $1=apps dir
     [ "$(ui_bundle_id "$_product")" = "$UI_LEGACY_BUNDLE_ID" ] || return 0
     if [ ! -d "$_old" ]; then
         if mv "$_product" "$_old" 2>>"$UI_LOG"; then
-            ok "ui: legacy app moved aside: $_old (bundle id $UI_LEGACY_BUNDLE_ID kept; the \"(old)\" display name arrives with its next build)"
+            ok "ui: legacy app moved aside: $_old (the 1.x menu-bar app; delete it when you no longer need it)"
             UI_LEGACY_MOVED=1
             return 0
         fi
@@ -708,26 +828,23 @@ ui_retire_legacy_app() { # $1=apps dir
         info "  fix: mv \"$_product\" \"$_old\"   # then bash install.sh"
         return 1
     fi
-    # both exist: keep the "(old)" copy; the one on the product path is redundant.
-    # Rename first (cannot half-fail), then best-effort delete the parked copy.
     _parked="$1/$UI_LEGACY_APP_NAME $(date +%Y%m%d-%H%M%S).app"
     if ! mv "$_product" "$_parked" 2>>"$UI_LOG"; then
-        warn "ui: a legacy app sits on the product path and \"$_old\" already exists — could not move it aside; see $UI_LOG"
-        info "  fix: sudo rm -rf \"$_product\"   # \"$_old\" is the copy that stays"
+        warn "ui: a legacy app sits on the product path and \"$_old\" already exists — could not move it aside"
+        info "  fix: sudo rm -rf \"$_product\""
         return 1
     fi
     if rm -rf "$_parked" 2>>"$UI_LOG" && [ ! -e "$_parked" ]; then
         ok "ui: removed a second legacy bundle from the product path (\"$_old\" kept)"
     else
-        warn "ui: a second legacy bundle was parked as \"$_parked\" (root-owned — rm refused); \"$_old\" is the copy that stays"
+        warn "ui: a second legacy bundle was parked as \"$_parked\" (rm refused)"
         info "  fix: sudo rm -rf \"$_parked\""
     fi
     return 0
 }
 
-# Remove the shell's pre-rename bundle "Zelin AI Board.app" (≤ v0.48.29) from
-# $1 after the new bundle is installed — only when it really is the shell
-# (id com.zelin.ai-board); anything else under that name is left alone.
+# The shell's pre-swap bundle "Zelin AI Board.app" goes once the new one is in
+# place — only when its id really is com.zelin.ai-board.
 ui_remove_previous_shell() { # $1=apps dir
     _prev="$1/$UI_PREVIOUS_APP_NAME.app"
     [ -d "$_prev" ] || return 0
@@ -742,7 +859,6 @@ ui_remove_previous_shell() { # $1=apps dir
     fi
 }
 
-# shell half → UI_SHELL_STATUS / UI_SHELL_DETAIL (+ UI_APP_PATH, UI_SHELL_INSTALLED)
 install_shell_app() {
     UI_SHELL_STATUS=skipped; UI_SHELL_DETAIL=""
     if [ "$(uname -s)" != "Darwin" ]; then
@@ -750,7 +866,7 @@ install_shell_app() {
         return 0
     fi
     if ! command -v swiftc >/dev/null 2>&1 || ! bash "$REPO_ROOT/shell/build.sh" --check-toolchain >/dev/null 2>&1; then
-        warn "ui: swift toolchain missing/too old — board shell app not built (xcode-select --install, then bash install.sh)"
+        warn "ui: swift toolchain missing/too old — shell app not built (xcode-select --install, then bash install.sh)"
         UI_SHELL_DETAIL="shell skipped (no swift toolchain)"
         return 0
     fi
@@ -770,8 +886,6 @@ install_shell_app() {
         return 0
     fi
     _dest_dir="$UI_APPS_DIR"
-    # the legacy app may still own the product path (§54 name swap) — move it
-    # to "(old)" first; if that fails the writability test below reroutes.
     [ -w "$_dest_dir" ] && ui_retire_legacy_app "$_dest_dir"
     if [ ! -w "$_dest_dir" ] || { [ -e "$_dest_dir/$UI_APP_NAME.app" ] && [ ! -w "$_dest_dir/$UI_APP_NAME.app" ]; }; then
         warn "ui: $_dest_dir not writable — installing the shell app to ~/Applications"
@@ -780,14 +894,11 @@ install_shell_app() {
         ui_retire_legacy_app "$_dest_dir"
     fi
     if [ -d "$_dest_dir/$UI_APP_NAME.app" ] && [ "$(ui_bundle_id "$_dest_dir/$UI_APP_NAME.app")" = "$UI_LEGACY_BUNDLE_ID" ]; then
-        # the move above failed and reported why; never rm a legacy bundle
         warn "ui: the legacy app still occupies $_dest_dir/$UI_APP_NAME.app — shell not installed"
         UI_SHELL_STATUS=fail; UI_SHELL_DETAIL="shell fail (legacy app still on the product path in $_dest_dir)"
         return 0
     fi
-    # Stage-then-swap (mac/build.sh precedent): a failed copy must never leave
-    # a half-bundle in place; the rm+mv window is near-instant. ditto keeps
-    # the signature intact (cp -R can perturb it).
+    # stage-then-swap: a failed copy never leaves a half-bundle; ditto keeps the signature
     _staged="$_dest_dir/.$UI_APP_NAME.app.staged"
     rm -rf "$_staged"
     if ! ditto "$_src" "$_staged" >> "$UI_LOG" 2>&1; then
@@ -806,23 +917,14 @@ install_shell_app() {
     UI_SHELL_STATUS=ok
     UI_SHELL_DETAIL="shell ok (${_shell_s}s → $UI_APP_PATH)"
     [ "$UI_LEGACY_MOVED" -eq 1 ] && UI_SHELL_DETAIL="$UI_SHELL_DETAIL; legacy app moved to \"$UI_LEGACY_APP_NAME.app\""
-    ok "ui: board shell built + installed to $UI_APP_PATH (${_shell_s}s)"
-    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
-        if [ "$NON_INTERACTIVE" -eq 1 ] && [ "${NO_LAUNCHD:-0}" -eq 0 ]; then
-            info "ui: the shell app is running — relaunched after the server agent reloads (step 5)"
-        else
-            info "ui: the shell app is running — quit + reopen it to pick up this build: open \"$UI_APP_PATH\""
-        fi
+    ok "ui: shell app built + installed to $UI_APP_PATH (${_shell_s}s)"
+    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 && [ "$NON_INTERACTIVE" -eq 0 ]; then
+        info "ui: the shell app is running — quit + reopen it to pick up this build: open \"$UI_APP_PATH\""
     fi
 }
 
 install_ui() {
-    if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-        echo "==> 4b. board UI (web/dist + shell app) — skipped (.pkg mode)"
-        report_step "ui" "skipped" "pkg-postinstall never builds the UI"
-        return 0
-    fi
-    echo "==> 4b. board UI (web/dist + shell app)"
+    echo "==> 5. board UI (web/dist + shell app)"
     ui_log_begin
     _ui_t0="$(ui_now)"
     install_web_ui
@@ -840,37 +942,27 @@ install_ui() {
     report_step "ui" "$_status" "$UI_WEB_DETAIL; $UI_SHELL_DETAIL; ${_ui_s}s total"
 }
 
-# §56.5 relaunch rule: only the auto-deploy path (--non-interactive), only when
-# this run installed a new shell bundle AND the app is running, and only AFTER
-# step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
-# it into a regular NSApp.terminate, i.e. applicationWillTerminate runs: the
-# server is launchd's; the shell stops the screenpipe engine only if it spawned
-# it and no engineHandoff is set (§61.8). So BEFORE the SIGTERM this function
-# writes the engineHandoff preference (key literal = EngineOwnership.handoffKey,
-# pinned by tests/test_shell_engine_orphan.py): the quitting shell then leaves
-# its engine recording (ppid becomes 1) and the relaunched shell adopts it and
-# clears the key. The installer itself never signals the engine.
-# `open -g` relaunches without stealing focus, and `--args
-# --background` tells the shell itself not to order its window front or activate
-# (D38, shell LaunchPolicy): `-g` alone only asks LaunchServices not to switch —
-# a window the owner had closed would still reappear. Interactive runs leave a
-# running app alone (the owner picks the moment).
+# §56.5 relaunch: --non-interactive only, only when this run installed a new
+# bundle and the shell is running, after the server agent came back. The
+# engineHandoff preference is written BEFORE the SIGTERM (§61.8): the quitting
+# shell then leaves its engine recording and the relaunched shell adopts it.
+# `open -g … --args --background` relaunches without stealing focus (D38).
+# --from-upgrade leaves the relaunch to scripts/upgrade.sh (§79).
 relaunch_shell_app() {
     [ "$NON_INTERACTIVE" -eq 1 ] || return 0
+    if [ "${FROM_UPGRADE:-0}" -eq 1 ]; then
+        info "ui: shell relaunch left to scripts/upgrade.sh (§79)"
+        return 0
+    fi
     [ "$UI_SHELL_INSTALLED" -eq 1 ] || return 0
     [ -n "$UI_APP_PATH" ] || return 0
     pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || return 0
-    # §61.8 upgrade handoff: without it the quitting shell stops an engine it spawned.
-    # A failed write only costs a recording gap; a failed relaunch leaves a stale key
-    # that the next shell launch clears.
     defaults write "$UI_BUNDLE_ID" "$UI_ENGINE_HANDOFF_KEY" -string "$(date -u +%FT%TZ)" 2>/dev/null || true
     pkill -TERM -x "$UI_EXEC_NAME" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || break
         sleep 0.5
     done
-    # SIGTERM 送不走它才 KILL。KILL 之后 applicationWillTerminate 没跑过，旧壳拉起的
-    # screenpipe 照录（ppid 1）——v2.0.0 起不扫它：新壳启动时按 recipe 标记 adopt（§61.8）。
     if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
         pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
         sleep 0.5
@@ -882,972 +974,71 @@ relaunch_shell_app() {
     fi
 }
 
-# Version stamp (CONTRACT §56.1) — the version's truth is the git tag; nothing
-# committed carries it. Write the git-ignored act/_version.py BEFORE anything
-# here imports act (the launchd viability probe, the dashboard seed, the
-# report writer, the daemons themselves): under launchd `git` is a different
-# binary whose TCC grant may not cover an external-volume checkout, so the
-# daemons must read the stamp and never derive the version themselves. The
-# stamper keeps an existing stamp when git cannot answer (.pkg copy without
-# .git — the payload already carries the tag's stamp). Never fatal: without
-# a stamp act.__version__ falls back to the baked constant, and doctor's
-# `version` row says so.
-#
-# WHICH python runs the stamper matters (§55 第三幕): TCC judges every
-# non-platform binary on its own, even as a child of the launchd job's
-# FDA-granted interpreter. 2026-09-02 (v0.48.21 first contact): auto-deploy's
-# PATH puts Homebrew first, so `command -v python3` handed the stamper to
-# /opt/homebrew/bin/python3, which could not even open scripts/version_stamp.py
-# on the external-volume checkout (`[Errno 1] Operation not permitted`) — and
-# 2>/dev/null hid it. So the candidates are the §55 daemon order
-# ($AIASSISTANT_PYTHON = the launchd job's own interpreter first, the system
-# python above the PATH python when the repo is outside $HOME), the first one
-# that stamps wins, and every failure's last stderr line is logged AND lands
-# in the §23 report (`version=warn:<interpreter>: <stderr>`).
-STAMPED_VERSION=""
-STAMP_PY=""
-stamp_python_candidates() {
-    daemon_python_candidates
-    printf '%s\n' "$(command -v python3 2>/dev/null || true)"
-}
-stamp_version() {
-    STAMPED_VERSION=""; STAMP_PY=""
-    _stamp_err="$(mktemp 2>/dev/null || printf '/tmp/zai-stamp.%s' "$$")"
-    _tried=""; _why=""
-    _saved_ifs="$IFS"
-    IFS='
-'
-    # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
-    for _spy in $(stamp_python_candidates); do
-        IFS="$_saved_ifs"
-        case "$_spy" in /*) ;; *) continue ;; esac
-        [ -x "$_spy" ] || continue
-        case " $_tried " in *" $_spy "*) continue ;; esac
-        _tried="$_tried $_spy"
-        STAMPED_VERSION="$(cd "$REPO_ROOT" && "$_spy" scripts/version_stamp.py --write 2>"$_stamp_err")"
-        _rc=$?
-        if [ "$_rc" -eq 0 ] && [ -n "$STAMPED_VERSION" ]; then
-            STAMP_PY="$_spy"
-            break
-        fi
-        STAMPED_VERSION=""
-        _last="$(tail -n 1 "$_stamp_err" 2>/dev/null | tr -d '\r')"
-        _why="${_why:+$_why; }$_spy: ${_last:-exit $_rc, no stderr}"
-    done
-    IFS="$_saved_ifs"
-    rm -f "$_stamp_err"
-    if [ -n "$STAMPED_VERSION" ]; then
-        ok "act/_version.py -> v$STAMPED_VERSION (git tag truth, §56.1; $STAMP_PY)"
-        [ -z "$_why" ] || info "  version: skipped interpreter(s) that could not run the stamper — $_why"
-        report_step "version" "ok" "$STAMPED_VERSION"
-    elif [ -z "$_tried" ]; then
-        warn "no python3 — act/_version.py not written (daemons report the baked fallback version)"
-        report_step "version" "warn" "no python3 to stamp"
+# The installer never signals the screenpipe engine (§61.8): say what it found.
+note_engine() {
+    _pids="$(pgrep -f 'screenpipe.*[r]ecord' 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+    if [ -n "$_pids" ]; then
+        info "engine running (pid $_pids): left untouched, the app adopts it"
     else
-        warn "scripts/version_stamp.py failed with every interpreter — act/_version.py not written (daemons derive the version themselves or report the baked fallback): $_why"
-        report_step "version" "warn" "stamp failed — $_why"
+        info "engine not running: the app starts it when recording is on"
     fi
 }
 
-write_install_report() {
-    RPY="${RUNTIME_PY:-${PY:-}}"
-    { [ -n "$RPY" ] && [ -x "$RPY" ]; } || RPY="$(command -v python3 || true)"
-    if [ -z "$RPY" ]; then
-        warn "no python3 — skipped state/install_report.json"
+# ------------------------------------------------------------------ server agent
+# Step 6: the one LaunchAgent (§78). --no-launchd records the literal marker
+# act/lib/fresh_install.py reads (`--no-launchd` at the start of the detail).
+install_server_agent() {
+    if [ "$NO_LAUNCHD" -eq 1 ]; then
+        echo "==> 6. board server agent — skipped (--no-launchd)"
+        report_step "launchd" "skipped" "--no-launchd: no agent loaded"
         return 0
     fi
-    MODE=interactive
-    [ "$PKG_POSTINSTALL" -eq 1 ] && MODE=pkg-postinstall
-    [ "$NON_INTERACTIVE" -eq 1 ] && MODE=non-interactive
-    if printf '%s' "$REPORT_STEPS" | (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
-        "$RPY" -m act.lib.install_report --mode "$MODE" --steps-stdin \
-        --agents "$LOADED_LABELS" >/dev/null 2>&1); then
-        ok "state/install_report.json written"
-    else
-        warn "could not write state/install_report.json (non-fatal)"
-    fi
-}
-
-# launchd load/unload — modern bootstrap/bootout against the user's gui
-# domain first (the only form that works from the pkg postinstall context,
-# where mac/package.sh wraps us in `launchctl asuser`), legacy load/unload
-# as fallback for older macOS.
-UID_NUM="$(id -u)"
-launchd_unload() { # $1=plist path, $2=label
-    launchctl bootout "gui/$UID_NUM/$2" >/dev/null 2>&1 \
-        || launchctl unload "$1" >/dev/null 2>&1 || true
-}
-launchd_load() { # $1=plist path
-    launchctl bootstrap "gui/$UID_NUM" "$1" >/dev/null 2>&1 \
-        || launchctl load "$1" >/dev/null 2>&1
-}
-# Is this label registered with launchd right now? (`launchctl list` columns:
-# PID Status Label). The only proof an unload actually took.
-launchd_label_loaded() { # $1=label
-    launchctl list 2>/dev/null | awk -v l="$1" '$3 == l' | grep -q .
-}
-# Retire a label for good: unload + delete its plist + PROVE it is gone
-# (CONTRACT §55). launchd_unload swallows failures by design (idempotent
-# upgrades), which is exactly how the v0.21-removed imessageradar agent kept
-# running for 51 days — 23,613 tracebacks — while every install.sh run printed
-# nothing (2026-08-31 audit L3). A label that survives bootout is reported
-# loudly and lands in the install report as launchd_retired=fail.
-RETIRED_STILL_LOADED=""
-launchd_retire() { # $1=label
-    _was_loaded=0
-    launchd_label_loaded "$1" && _was_loaded=1
-    launchd_unload "$LA_DIR/$1.plist" "$1"
-    rm -f "$LA_DIR/$1.plist"
-    if launchd_label_loaded "$1"; then
-        echo "  [ERR ] retired agent $1 is STILL loaded after bootout" >&2
-        info "  fix: launchctl bootout gui/$UID_NUM/$1   # then re-run install.sh"
-        RETIRED_STILL_LOADED="$RETIRED_STILL_LOADED $1"
-    elif [ "$_was_loaded" -eq 1 ]; then
-        ok "unloaded retired agent $1"
-    fi
-}
-# Orphans = our label prefix, loaded (or left in ~/Library/LaunchAgents), but
-# no template in act/launchd/ any more and not in the explicit RETIRED list.
-# Reported, never auto-unloaded (a label we do not know is not ours to kill);
-# doctor's "launchd orphans" row carries the same finding with the fix.
-launchd_orphans() { # prints one label per line
-    {
-        launchctl list 2>/dev/null | awk '$3 ~ /^com\.zelin\.aiassistant\./ {print $3}'
-        for _p in "$LA_DIR"/com.zelin.aiassistant.*.plist; do
-            [ -e "$_p" ] || continue
-            _b="$(basename "$_p")"; printf '%s\n' "${_b%.plist}"
-        done
-    } | sort -u | while IFS= read -r _label; do
-        [ -e "$REPO_ROOT/act/launchd/$_label.plist" ] && continue
-        printf '%s\n' "$_label"
-    done
-}
-
-# v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
-# ONLY when its source is enabled per the single source of truth
-# (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
-# A disabled source gets the RETIRED treatment (unload + rm) instead,
-# so a re-run of install.sh can no longer resurrect a switched-off radar.
-# "off" is ONLY the dedicated exit code 3 + the literal stdout "off" — every
-# other outcome (exit 1 python crash / ModuleNotFoundError / no PyYAML / exit
-# 2 bad invocation) fails OPEN and installs as before. The probe runs from
-# $REPO_ROOT like every other `-m act.*` call in this file: a pkg postinstall
-# cwd is an Installer temp dir where `-m act.lib.sources` can't import at all.
-radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
-    rc=0
-    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
-        "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
-    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
-}
-
-# escape a value for use on the replacement side of sed s|…|…| (delimiter |)
-_sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
-
-# escape a value for a plist <string> body (the viability probe writes XML)
-_xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-
-# Render a launchd plist template into place. The repo plists carry
-# /Users/YOURUSERNAME placeholders (plists don't expand ~) — substitute the
-# detected python interpreter, this repo root, $HOME, and the login shell's
-# claude directory (/Users/YOURUSERNAME/.claude-bin, kept FIRST on PATH —
-# see the CLAUDE_LOGIN_BIN resolution below) before installing.
-# Kept as a function so both the interactive path and --pkg-postinstall (which
-# currently skips launchd) render identically if they ever load agents.
-render_launchd_plist() {
-    src="$1"; dest="$2"
-    # Validated interpreter, never a bare PATH guess: an interpreter without
-    # PyYAML makes every agent exit 1 on `import yaml` before it can log.
-    # RUNTIME_PY already cleared both §55 gates; this is only the safety net for
-    # a caller that never ran the selection, so it reuses the same candidate
-    # ORDER (system python first when the repo is outside $HOME) with the cheap
-    # yaml gate — re-probing launchd once per plist would buy nothing.
-    py="${RUNTIME_PY:-}"
-    if ! py_imports_yaml "$py"; then
-        _saved_ifs="$IFS"
-        IFS='
-'
-        # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
-        py="$(pick_python $(daemon_python_candidates) || echo /usr/bin/python3)"
-        IFS="$_saved_ifs"
-    fi
-    pydir="$(dirname "$py")"
-    # PHYSICAL repo path (CONTRACT §55): the rendered PYTHONPATH /
-    # AIASSISTANT_HOME must not carry a symlink the launchd session cannot
-    # traverse under TCC. Idempotent when REPO_ROOT is already physical.
-    repo="$(physical_path "$REPO_ROOT")"
-    claudedir="$HOME/.local/bin"
-    [ -n "${CLAUDE_LOGIN_BIN:-}" ] && claudedir="$(dirname "$CLAUDE_LOGIN_BIN")"
-    # launchd opens StandardOut/ErrorPath BEFORE exec — the templates point
-    # them at ~/Library/Logs/zelin-ai-assistant/ (never under the repo: an
-    # external-volume repo makes the spawn fail with EX_CONFIG 78), and the
-    # directory must exist or the spawn fails the same way.
-    mkdir -p "$HOME/Library/Logs/zelin-ai-assistant"
-    # §54 board server port: the server template carries
-    # `<key>ZAI_PORT</key><string>47820</string>` on ONE line; SERVER_PORT is
-    # config.yaml server.port (computed once by server_port), default 47820.
-    port="${SERVER_PORT:-47820}"
-    sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
-        -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
-        -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$repo")|g" \
-        -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
-        -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
-        -e "s|<key>ZAI_PORT</key><string>[0-9]*</string>|<key>ZAI_PORT</key><string>$(_sed_escape "$port")</string>|g" \
-        "$src" > "$dest"
-}
-
-# §54: the board server's loopback port from config.yaml `server.port`
-# (act.lib.config.server_port, 1..65535, default 47820). Fail-open to the
-# default on any probe trouble — a port typo must never stop the install.
-server_port() {
-    _p="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
-from act.lib import config
-try:
-    print(int(config.load_config().server_port))
-except Exception:
-    print(config.DEFAULT_SERVER_PORT)') 2>/dev/null )"
-    case "$_p" in ''|*[!0-9]*) _p=47820 ;; esac
-    printf '%s' "$_p"
-}
-
-# Does anything answer GET /api/health on the board port right now? Used before
-# loading the server agent: a shell-spawned fallback or a hand-run `-m server`
-# holding the port would make the launchd job crash-loop (§54: two servers
-# must never fight for the port). Reported, never killed — it is not ours.
-board_server_answering() { # $1=port
-    (cd "$REPO_ROOT" && "${RUNTIME_PY:-python3}" -c '
-import sys, urllib.request
-try:
-    with urllib.request.urlopen("http://127.0.0.1:%d/api/health" % int(sys.argv[1]), timeout=2) as r:
-        raise SystemExit(0 if 200 <= r.status < 300 else 1)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(1)' "$1" >/dev/null 2>&1)
-}
-
-# CONTRACT §55 第五幕 — the STABLE daemon copy of the claude binary.
-#
-# macOS keys Full Disk Access for bare executables by PATH (TCC.db `client` =
-# the path, checked against the binary's code requirement). `~/.local/bin/claude`
-# is a symlink Claude Code re-points to a new ~/.local/share/claude/versions/<v>
-# on every update, so the owner's grant on the versioned path died with every
-# update: live 2026-09-02, 2.1.258 → 2.1.259 turned doctor's `launchd claude`
-# red again and every dispatch into the external-volume repo was refused. The
-# fix is structural: keep a copy at ONE path in $HOME (never TCC-gated, so a
-# launchd job can always read it) and refresh it in place. The path is the
-# grant's subject; the refreshed copy still satisfies the grant's code
-# requirement (Developer ID identifier com.anthropic.claude-code), so one grant
-# lasts. Same variable as act/lib/config.py `stable_claude_bin` — both sides
-# honour AIASSISTANT_STABLE_CLAUDE (tests point it into a sandbox).
-#
-# refresh_stable_claude <source>: byte-identical copy already there → unchanged;
-# otherwise the source must carry a valid Apple-anchored signature (an npm-
-# installed claude is a node script — no signature, nothing to gain from
-# copying it, refuse), the copy is made to a temp file beside the target
-# (`cp -c` = APFS clone, zero extra disk; falls back to a plain copy), verified
-# again, must run `--version` (from $HOME: under launchd a cwd on the external
-# volume is exactly the failure this copy exists to fix, §55 第三幕), then
-# `mv`'d over the target — atomic, and a running agent keeps its old inode.
-# Every refusal keeps whatever copy was already there and is a warn, never a
-# fail: an environment problem must not roll a deploy back (§56.5, the
-# cron=skipped_tcc precedent). Writes §23 step `stable_claude`.
-STABLE_CLAUDE_BIN="${AIASSISTANT_STABLE_CLAUDE:-$HOME/Library/Application Support/ZelinAIAssistant/bin/claude}"
-refresh_stable_claude() { # $1 = the claude to copy (login-shell resolution)
-    _src="${1:-}"
-    if [ -z "$_src" ] || [ ! -x "$_src" ]; then
-        warn "no claude to copy — the stable daemon copy $STABLE_CLAUDE_BIN was not created"
-        report_step "stable_claude" "skipped" "no claude to copy"
-        return 0
-    fi
-    # the real file behind the ~/.local/bin symlink (for the report; cp/cmp
-    # follow symlinks anyway). readlink -f: macOS 12.3+ / GNU; else keep as is.
-    _real="$(readlink -f "$_src" 2>/dev/null || printf '%s' "$_src")"
-    _ver="$( (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_real" --version 2>/dev/null | head -n 1) || true)"
-    if [ -x "$STABLE_CLAUDE_BIN" ] && cmp -s "$_real" "$STABLE_CLAUDE_BIN"; then
-        ok "stable daemon claude: $STABLE_CLAUDE_BIN unchanged (${_ver:-$_real})"
-        report_step "stable_claude" "ok" "unchanged: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
-        return 0
-    fi
-    _kept=""
-    [ -x "$STABLE_CLAUDE_BIN" ] && _kept="; the previous copy stays in place"
-    if ! codesign --verify --strict -R='anchor apple generic' "$_real" >/dev/null 2>&1; then
-        warn "claude at $_real carries no valid Apple-anchored signature (npm install? tampered?) — not copied$_kept"
-        report_step "stable_claude" "warn" "refused: $_real is not a validly signed binary$_kept"
-        return 0
-    fi
-    _dir="$(dirname "$STABLE_CLAUDE_BIN")"
-    _tmp="$_dir/.claude.tmp.$$"
-    if ! mkdir -p "$_dir"; then
-        warn "cannot create $_dir — stable daemon claude not written$_kept"
-        report_step "stable_claude" "warn" "mkdir $_dir failed$_kept"
-        return 0
-    fi
-    rm -f "$_tmp"
-    if ! { cp -cp "$_real" "$_tmp" 2>/dev/null || cp -p "$_real" "$_tmp"; }; then
-        rm -f "$_tmp"
-        warn "copying $_real to $_tmp failed — stable daemon claude not refreshed$_kept"
-        report_step "stable_claude" "warn" "copy failed$_kept"
-        return 0
-    fi
-    if ! codesign --verify --strict -R='anchor apple generic' "$_tmp" >/dev/null 2>&1; then
-        rm -f "$_tmp"
-        warn "the copy at $_tmp failed signature verification — discarded$_kept"
-        report_step "stable_claude" "warn" "copy failed signature verification$_kept"
-        return 0
-    fi
-    if ! (cd "$HOME" && DISABLE_AUTOUPDATER=1 "$_tmp" --version >/dev/null 2>&1); then
-        rm -f "$_tmp"
-        warn "the copy at $_tmp does not run \`--version\` — discarded$_kept"
-        report_step "stable_claude" "warn" "copy does not run --version$_kept"
-        return 0
-    fi
-    _what="created"
-    [ -n "$_kept" ] && _what="refreshed"
-    if ! mv -f "$_tmp" "$STABLE_CLAUDE_BIN"; then
-        rm -f "$_tmp"
-        warn "mv $_tmp -> $STABLE_CLAUDE_BIN failed$_kept"
-        report_step "stable_claude" "warn" "mv into place failed$_kept"
-        return 0
-    fi
-    ok "stable daemon claude: $_what $STABLE_CLAUDE_BIN (${_ver:-$_real})"
-    report_step "stable_claude" "ok" "$_what: $STABLE_CLAUDE_BIN (${_ver:-$_real})"
-    if [ "$_what" = "created" ]; then
-        info "one-time: System Settings > Privacy & Security > Full Disk Access > + > $STABLE_CLAUDE_BIN"
-        info "  (only needed when the task repo is outside \$HOME, e.g. on an external volume; the path never changes, so this survives claude updates)"
-    fi
-}
-
-# Cap an agent's launchd-managed log in the unload→load window — the only
-# moment launchd holds no fd on it (§32.4: in-process replace is off-limits
-# for *.launchd.log; §55). Keep the newest half past 1 MB (防腐 #4; same
-# shape as scripts/auto-deploy.sh cap_log). Only labels this run reloads are
-# touched; retired/orphan logs stay as forensics (§55).
-cap_launchd_log() { # $1=label
-    _lf="$HOME/Library/Logs/zelin-ai-assistant/${1##*.}.launchd.log"
-    [ -f "$_lf" ] || return 0
-    _lsz="$(wc -c < "$_lf" | tr -d ' ')"
-    [ "$_lsz" -gt 1048576 ] || return 0
-    if tail -c 524288 "$_lf" > "$_lf.tmp" && mv "$_lf.tmp" "$_lf"; then
-        info "capped ${1##*.}.launchd.log (was $_lsz bytes; newest half kept)"
-    fi
-}
-
-# `launchctl load` reports success even when the job crashes on spawn (e.g. a
-# bad interpreter path) — check `launchctl list` (columns: PID Status Label)
-# to prove the agent actually runs / exited cleanly.
-verify_launchd_agent() {
-    label="$1"
-    line="$(launchctl list 2>/dev/null | awk -v l="$label" '$3 == l')"
-    if [ -z "$line" ]; then
-        echo "  [ERR ] $label not registered with launchd — try: launchctl load $LA_DIR/$label.plist" >&2
-        return 1
-    fi
-    agent_pid="$(printf '%s' "$line" | awk '{print $1}')"
-    agent_status="$(printf '%s' "$line" | awk '{print $2}')"
-    if [ "$agent_pid" != "-" ]; then
-        ok "$label running (pid $agent_pid)"
-    elif [ "$agent_status" = "0" ]; then
-        ok "$label loaded (last run exited 0)"
-    else
-        echo "  [ERR ] $label loaded but its process exits with status $agent_status" >&2
-        launchd_failure_hint "${label##*.}"
-        info "then: launchctl unload $LA_DIR/$label.plist && launchctl load $LA_DIR/$label.plist"
-        return 1
-    fi
-}
-
-# Name the ACTUAL cause from the agent's own log instead of guessing (§55).
-# The two ModuleNotFoundErrors look identical in `launchctl list` but have
-# opposite fixes, and asserting PyYAML at a repo the interpreter simply cannot
-# SEE is what sent the 2026-08-31 debugging session down the wrong path for
-# hours: /opt/homebrew/bin/python3 had PyYAML the whole time.
-launchd_failure_hint() { # $1 = short agent name (actd, radar, …)
-    _log="$HOME/Library/Logs/zelin-ai-assistant/$1.launchd.log"
-    _tail="$(tail -n 40 "$_log" 2>/dev/null || true)"
-    info "fix: read $_log —"
-    case "$_tail" in
-        *"No module named 'act'"*)
-            info "  its log says \"No module named 'act'\": the interpreter cannot SEE the repo."
-            info "  PyYAML is NOT the problem. Either the rendered PYTHONPATH is wrong, or"
-            info "  ${RUNTIME_PY:-the daemon python} lacks Full Disk Access (TCC is granted per"
-            info "  binary, and launchd jobs do not inherit your terminal's grant)."
-            info "  re-run: bash $REPO_ROOT/install.sh   # now picks a launchd-viable interpreter"
-            ;;
-        *"No module named 'yaml'"*)
-            info "  its log says \"No module named 'yaml'\": PyYAML is missing for the daemon python."
-            info "  fix: ${RUNTIME_PY:-python3} -m pip install --user --break-system-packages pyyaml"
-            ;;
-        *)
-            info "  usual causes:"
-            info "  - the interpreter cannot see the repo (\"No module named 'act'\"): re-run install.sh"
-            info "  - PyYAML missing (\"No module named 'yaml'\"): ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
-            info "  - Anthropic API key file missing: paste it in the app's Settings window"
-            ;;
-    esac
-}
-
-# claude for the DAEMONS — the login shell's resolution (rationale at the call
-# site in step 2). Sets CLAUDE_LOGIN_BIN ("" when nothing resolves); shared by
-# step 2 and --reinstall-agent so a re-rendered plist gets the same PATH head.
-CLAUDE_LOGIN_BIN=""
-resolve_claude_login_bin() {
-    CLAUDE_LOGIN_BIN=""
-    _c="$("${SHELL:-/bin/zsh}" -lc 'command -v claude' 2>/dev/null | tail -n 1 || true)"
-    case "$_c" in
-        /*) [ -x "$_c" ] && CLAUDE_LOGIN_BIN="$_c" ;;
-    esac
-    if [ -z "$CLAUDE_LOGIN_BIN" ]; then
-        CLAUDE_LOGIN_BIN="$(command -v claude 2>/dev/null || true)"
-    fi
-    if [ -z "$CLAUDE_LOGIN_BIN" ]; then
-        for _c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
-            [ -x "$_c" ] && { CLAUDE_LOGIN_BIN="$_c"; break; }
-        done
-    fi
-}
-
-# --reinstall-agent <label> (CONTRACT §48.7; header): render + load ONE
-# template with the SAME helpers step 5 uses, then exit with the verdict. The
-# daemon interpreter is the one the last full install pinned (config/
-# runtime.json) — never re-probed here: a button press must not re-run the
-# §55 launchd viability probe, and an unpinned repo has never been installed.
-# A radar whose source is switched off is refused (exit 3): step 5 would
-# retire the plist again on the next run (§48.5), so installing it now would
-# only be a lie that lasts until the next deploy.
-reinstall_agent_mode() { # $1 = label
-    _label="$1"
-    _src="$REPO_ROOT/act/launchd/$_label.plist"
+    echo "==> 6. board server agent ($SERVER_LABEL)"
+    mkdir -p "$LA_DIR"
+    _src="$REPO_ROOT/act/launchd/$SERVER_LABEL.plist"
+    _dest="$LA_DIR/$SERVER_LABEL.plist"
     if [ ! -f "$_src" ]; then
-        echo "install.sh: no launchd template for '$_label' under act/launchd/" >&2
-        exit 2
+        warn "template $_src missing"
+        report_step "launchd" "fail" "no template for $SERVER_LABEL"
+        return 0
     fi
-    case "$_label" in
-        *.gmailradar) _plist_source="gmail" ;;
-        *.slackradar) _plist_source="slack" ;;
-        *) _plist_source="" ;;
-    esac
-    RUNTIME_PY="$(pinned_python)"
-    if ! py_imports_yaml "$RUNTIME_PY"; then
-        echo "install.sh: no pinned daemon interpreter (config/runtime.json) — run: bash $REPO_ROOT/install.sh" >&2
-        exit 4
+    if ! launchd_label_loaded "$SERVER_LABEL" && board_server_answering "$SERVER_PORT"; then
+        warn "a board server not managed by launchd answers on 127.0.0.1:$SERVER_PORT — quit it so $SERVER_LABEL can take the port"
+        report_step "board_server_port" "warn" "127.0.0.1:$SERVER_PORT answered before $SERVER_LABEL loaded"
     fi
-    if [ -n "$_plist_source" ] && ! radar_source_enabled "$_plist_source"; then
-        echo "install.sh: the $_plist_source source is switched off — a switched-off radar is not installed (CONTRACT §48.5); enable it first" >&2
-        exit 3
-    fi
-    resolve_claude_login_bin
-    SERVER_PORT="$(server_port)"
-    mkdir -p "$LA_DIR"
-    _dest="$LA_DIR/$_label.plist"
-    launchd_unload "$_dest" "$_label"
-    cap_launchd_log "$_label"
+    launchd_unload "$_dest" "$SERVER_LABEL"
+    cap_launchd_log "$SERVER_LABEL"
     render_launchd_plist "$_src" "$_dest"
-    if ! launchd_load "$_dest"; then
-        echo "  [ERR ] failed to load $_label (may need TCC/Full Disk Access approval)" >&2
-        launchd_failure_hint "${_label##*.}"
-        exit 1
-    fi
-    sleep 2
-    verify_launchd_agent "$_label" || exit 1
-    ok "reinstalled $_label (python=$RUNTIME_PY)"
-    exit 0
-}
-
-if [ -n "$REINSTALL_AGENT_LABEL" ]; then
-    reinstall_agent_mode "$REINSTALL_AGENT_LABEL"
-fi
-
-echo "=============================================="
-echo " Zelin's AI Assistant — installer"
-echo " repo: $REPO_ROOT"
-echo "=============================================="
-
-# --------------------------------------------------------------------------
-echo ""
-echo "==> 1. Dependency checks"
-
-if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-    # Non-interactive: the pkg can't stop and ask the user to install anything.
-    # claude/swiftc are only needed at runtime; python3 is best-effort here.
-    PY="$(command -v python3 || true)"
-    info "pkg postinstall mode — dependency checks skipped"
-else
-
-# claude (required). --non-interactive (§56) cannot stop to ask: it warns and
-# keeps deploying the daemons — they only need claude at dispatch time, and
-# the claude_bin step of the §23 report records the gap.
-if command -v claude >/dev/null 2>&1; then
-    ok "claude found: $(command -v claude)"
-elif [ "$NON_INTERACTIVE" -eq 1 ]; then
-    warn "claude CLI not found — daemons will fail to dispatch until Claude Code is installed"
-else
-    echo "  [ERR ] claude CLI not found (REQUIRED). Install Claude Code first, then re-run." >&2
-    exit 1
-fi
-
-# swift toolchain (required to build the Mac app) — presence AND minimum
-# version. MIN_SWIFT lives in mac/build.sh (single source); on failure it
-# prints the exact fix (update Xcode, xcode-select) so we just exit.
-# --non-interactive never builds the app (§56.5), so it does not need one.
-if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    info "swift toolchain not required — --non-interactive never rebuilds the legacy Mac app (§56.5); the board shell (step 4b) is skipped when swiftc is absent"
-elif bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
-    ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
-else
-    echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
-    exit 1
-fi
-
-# python3 (required for actd/radar)
-if command -v python3 >/dev/null 2>&1; then
-    ok "python3 found: $(command -v python3)"
-    PY="$(command -v python3)"
-else
-    echo "  [ERR ] python3 not found (REQUIRED for actd/radar)." >&2
-    exit 1
-fi
-
-# PyYAML (else pip install). Homebrew/system pythons are PEP 668 "externally
-# managed" and refuse plain --user installs — retry with --break-system-packages
-# (same fallback as .github/workflows/ci.yml). actd/radar cannot run without
-# yaml, so a final failure is a hard stop, not a warn.
-if "$PY" -c "import yaml" >/dev/null 2>&1; then
-    ok "PyYAML available"
-else
-    warn "PyYAML missing; attempting: $PY -m pip install --user pyyaml"
-    if "$PY" -m pip install --user pyyaml >/dev/null 2>&1 \
-        || "$PY" -m pip install --user --break-system-packages pyyaml >/dev/null 2>&1; then
-        ok "PyYAML installed"
-    else
-        echo "  [ERR ] PyYAML install failed (REQUIRED for actd/radar)." >&2
-        info "fix: $PY -m pip install --user --break-system-packages pyyaml"
-        info "  or use a conda/miniconda python3, then re-run this script"
-        exit 1
-    fi
-fi
-
-# node/npx — the recording engine is `npx screenpipe@<pin>` (canonical launch
-# path, see mac/Sources/Recording.swift): no separate screenpipe install needed,
-# but without node/npx the whole ingest side silently records nothing.
-if command -v npx >/dev/null 2>&1; then
-    ok "node/npx found: $(command -v npx) — screenpipe engine runs via npx, no separate install"
-else
-    warn "node/npx not found (needed for screen recording — the ingest source). Install: brew install node"
-fi
-
-# optional
-if [ -d "/Applications/Obsidian.app" ] || command -v obsidian >/dev/null 2>&1; then
-    ok "obsidian found (optional)"
-else
-    warn "obsidian not found (optional — radar reads the vault)"
-fi
-if command -v gh >/dev/null 2>&1; then
-    ok "gh found (optional)"
-else
-    warn "gh not found (optional — draft-PR delivery)"
-fi
-
-# credential reminder (contract §19: actd reads key from file, not from this script)
-if [ -s "$REPO_ROOT/config/secrets/anthropic-api-key.txt" ]; then
-    ok "anthropic key present (config/secrets/anthropic-api-key.txt)"
-elif [ -f "$HOME/.config/anthropic-key.txt" ]; then
-    ok "anthropic key present (legacy ~/.config/anthropic-key.txt — 仍兜底可用)"
-else
-    warn "缺 Anthropic API key —— 推荐在 App 设置窗口粘贴保存（写入 config/secrets/anthropic-api-key.txt）；旧路径 ~/.config/anthropic-key.txt 仍兜底。headless claude 在 launchd 下读不了 Keychain OAuth。"
-fi
-
-fi # PKG_POSTINSTALL dependency-check skip
-
-# --------------------------------------------------------------------------
-echo ""
-echo "==> 2. config.yaml + config/runtime.json"
-if [ -f "$REPO_ROOT/config.yaml" ]; then
-    ok "config.yaml already exists (left untouched)"
-    report_step "config" "ok" "existing config.yaml kept"
-else
-    cp "$REPO_ROOT/config.example.yaml" "$REPO_ROOT/config.yaml"
-    ok "created config.yaml from config.example.yaml — review it before first run"
-    report_step "config" "ok" "created from config.example.yaml"
-fi
-
-# redaction terms live outside git (they hold the user's real sensitive terms)
-if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ]; then
-    cp "$REPO_ROOT/config/redaction_terms.example.txt" "$REPO_ROOT/config/redaction_terms.txt"
-    ok "created config/redaction_terms.txt from template (gitignored)"
-fi
-
-# version stamp first (§56.1): every `import act` below — including the launchd
-# viability probe a few lines down — reads act/_version.py.
-stamp_version
-
-# runtime python pointer (CONTRACT §19) — the interpreter launchd, cron and the
-# Mac app all run. EVERY candidate must clear TWO gates before it is pinned
-# (§55): `import yaml` (PyYAML is the daemons' only non-stdlib dependency) and
-# LAUNCHD VIABILITY (it can really import act from the repo when launchd — not
-# this shell — spawns it; TCC is per-binary). Candidate order comes from
-# daemon_python_candidates: system python first when the repo is outside $HOME.
-mkdir -p "$REPO_ROOT/config"
-RUNTIME_PY=""
-_saved_ifs="$IFS"
-IFS='
-'
-# shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
-pick_daemon_python $(daemon_python_candidates) || true
-IFS="$_saved_ifs"
-RUNTIME_PY="$DAEMON_PY"
-if [ -n "${AIASSISTANT_PYTHON:-}" ] && [ "$RUNTIME_PY" != "$AIASSISTANT_PYTHON" ]; then
-    warn "AIASSISTANT_PYTHON=$AIASSISTANT_PYTHON did not pass the daemon interpreter gates — ignored"
-fi
-if [ -n "$RUNTIME_PY" ]; then
-    printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
-    if [ -n "$DAEMON_PY_NOTE" ]; then
-        ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable)"
-        warn "$DAEMON_PY_NOTE"
-        report_step "runtime_python" "ok" "$RUNTIME_PY ($DAEMON_PY_NOTE)"
-    else
-        ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable; imports act under launchd)"
-        report_step "runtime_python" "ok" "$RUNTIME_PY"
-    fi
-else
-    echo "  [ERR ] no python3 with PyYAML found — the launchd agents would die on" >&2
-    echo "         \"No module named 'yaml'\" the moment they spawn." >&2
-    info "fix: $(command -v python3 || echo python3) -m pip install --user --break-system-packages pyyaml"
-    info "  then re-run: bash $REPO_ROOT/install.sh"
-    report_step "runtime_python" "fail" "no candidate python3 can import yaml"
-fi
-
-# claude for the DAEMONS (launchd plists + cron chain) — resolve the binary the
-# user's LOGIN SHELL runs, not this script's PATH: the pkg postinstall carries
-# a minimal PATH, and a second, OUTDATED claude install can rank first for
-# launchd while the login shell uses the new one. 2026-07-08 incident:
-# /opt/homebrew/bin/claude 2.1.16 (no --bg) shadowed ~/.local/bin 2.1.206 in
-# the rendered plists — every dispatch died on "unknown option '--bg'" and
-# retried forever. Its directory goes FIRST in every rendered PATH below.
-resolve_claude_login_bin
-if [ -n "$CLAUDE_LOGIN_BIN" ]; then
-    ok "daemon claude: $CLAUDE_LOGIN_BIN (login-shell resolution)"
-    report_step "claude_bin" "ok" "$CLAUDE_LOGIN_BIN"
-else
-    warn "claude not resolvable from the login shell — daemon PATH falls back to ~/.local/bin first"
-    report_step "claude_bin" "missing"
-fi
-
-# §55 第五幕 — the stable daemon copy (macOS only: it exists for TCC, which
-# Linux has none of; config.resolve_claude_bin prefers it whenever present).
-# Before step 5 on purpose: the agents (re)loaded there pick up the fresh copy.
-if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-    refresh_stable_claude "$CLAUDE_LOGIN_BIN"
-else
-    report_step "stable_claude" "skipped" "not macOS (no per-binary TCC to outlive)"
-fi
-
-# verify PyYAML against the DAEMON interpreter — RUNTIME_PY is what launchd
-# and cron actually run, and it can differ from the shell python3 checked in
-# step 1 (e.g. $AIASSISTANT_PYTHON override). Without yaml, actd exits on
-# spawn with no visible error.
-if [ -n "$RUNTIME_PY" ] && ! "$RUNTIME_PY" -c "import yaml" >/dev/null 2>&1; then
-    warn "PyYAML missing for the daemon python ($RUNTIME_PY); attempting install"
-    if "$RUNTIME_PY" -m pip install --user pyyaml >/dev/null 2>&1 \
-        || "$RUNTIME_PY" -m pip install --user --break-system-packages pyyaml >/dev/null 2>&1; then
-        ok "PyYAML installed for $RUNTIME_PY"
-    elif [ "$PKG_POSTINSTALL" -eq 1 ]; then
-        warn "PyYAML unavailable for $RUNTIME_PY — actd/radar will not start. fix: $RUNTIME_PY -m pip install --user --break-system-packages pyyaml"
-    else
-        echo "  [ERR ] PyYAML unavailable for the daemon python: $RUNTIME_PY" >&2
-        info "fix: $RUNTIME_PY -m pip install --user --break-system-packages pyyaml   (then re-run this script)"
-        exit 1
-    fi
-fi
-
-# home pointer (CONTRACT §19) — the GUI app launches with no env vars, so a
-# clone outside ~/Projects/zelin-ai-assistant would be invisible to it. Persist
-# the repo root where the app can read it (env var AIASSISTANT_HOME still wins).
-POINTER_DIR="$HOME/Library/Application Support/ZelinAIAssistant"
-if mkdir -p "$POINTER_DIR" && printf '%s\n' "$REPO_ROOT" > "$POINTER_DIR/home.txt"; then
-    ok "home pointer -> $POINTER_DIR/home.txt"
-else
-    warn "could not write $POINTER_DIR/home.txt — the app will assume ~/Projects/zelin-ai-assistant"
-fi
-
-# --------------------------------------------------------------------------
-echo ""
-echo "==> 3. state directories"
-mkdir -p "$REPO_ROOT/state/inbox"
-ok "state/ and state/inbox/ ready"
-report_step "state_dirs" "ok"
-# generate the initial dashboard from the (git-tracked) registry so the app renders
-# before the daemon's first pass. Falls back to the seed if generation fails.
-if [ ! -f "$REPO_ROOT/state/dashboard.json" ]; then
-    if [ -n "$PY" ] && (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$PY" -m act.lib.dashboard >/dev/null 2>&1); then
-        ok "generated state/dashboard.json from registry"
-    elif [ -f "$REPO_ROOT/state/dashboard.seed.json" ]; then
-        cp "$REPO_ROOT/state/dashboard.seed.json" "$REPO_ROOT/state/dashboard.json"
-        ok "seeded state/dashboard.json from dashboard.seed.json"
-    else
-        warn "could not generate dashboard.json (run: python -m act.lib.dashboard)"
-    fi
-fi
-
-# --------------------------------------------------------------------------
-echo ""
-echo "==> 3b. skill store — ~/.claude/skills links for skills/ (CONTRACT §67)"
-install_skills
-
-# --------------------------------------------------------------------------
-echo ""
-install_mac_app
-
-# --------------------------------------------------------------------------
-# §54 board server port (config.yaml server.port) — consumed by the shell
-# build below (Info.plist ZAIServerPort) and by the server plist render in
-# step 5 (ZAI_PORT). One resolution, both consumers.
-SERVER_PORT="$(server_port)"
-echo ""
-install_ui
-
-# --------------------------------------------------------------------------
-# Runs in BOTH modes: a .pkg install that leaves actd unloaded ships an inert
-# product (the app shows an orange banner and nothing ever executes). The
-# radars are safe to load before credentials exist — they no-op and record a
-# skip_reason until configured.
-echo ""
-LAUNCHD_FAILED=0
-# v0.18.1: the Obsidian radar now runs ONLY through the cron ingest chain
-# (step 6). Its old launchd agent was TCC-blocked from ~/Documents and only
-# ever saw an empty vault — retire any previously-installed copy so an upgrade
-# doesn't leave a redundant agent that logs empty passes forever.
-RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
-# v0.21.0: the iMessage transport was removed (Slack's phone-approval role too;
-# the Mac app is now the sole approval surface). Its launchd agent is no longer
-# shipped — retire any previously-installed copy so an upgrade unloads the
-# already-loaded agent instead of leaving it polling chat.db forever.
-RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
-# Retire the two legacy labels, then the §55 retire assertion + orphan report
-# (2026-08-31 audit L3): a retired label that survived bootout is a FAIL step;
-# any other prefixed label with no template is reported (not touched) so it
-# stops being structurally invisible.
-retire_legacy_launchd_agents() {
-    launchd_retire "$RETIRED_RADAR_LABEL"
-    launchd_retire "$RETIRED_IMESSAGE_LABEL"
-    if [ -n "$RETIRED_STILL_LOADED" ]; then
-        report_step "launchd_retired" "fail" "still loaded:$RETIRED_STILL_LOADED"
-    else
-        report_step "launchd_retired" "ok"
-    fi
-    ORPHAN_LABELS="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
-    if [ -n "$ORPHAN_LABELS" ]; then
-        warn "launchd agent(s) with our prefix but no template in act/launchd: $ORPHAN_LABELS"
-        info "  each keeps running/logging until unloaded — launchctl bootout gui/$UID_NUM/<label>;"
-        info "  rm ~/Library/LaunchAgents/<label>.plist   (python3 -m act.doctor lists them too)"
-        report_step "launchd_orphans" "warn" "$ORPHAN_LABELS"
-    else
-        report_step "launchd_orphans" "ok"
-    fi
-}
-# radar_source_enabled (the §48.5 per-source gate) is defined above, next to
-# the launchd helpers, so --reinstall-agent can reuse it.
-# CONTRACT §56: the self-updating deploy agent is installed ONLY for a git
-# checkout (a .pkg copy has no .git — nothing to fast-forward) whose
-# features.auto_deploy is on (default on). Same fail-open shape as the radar
-# gate: only the dedicated exit 3 + literal "off" means off.
-# §54 board server agent (every mode: without it the web board and the shell
-# have nothing to connect to; the shell only spawns a fallback when this label
-# is NOT loaded).
-SERVER_LABEL="com.zelin.aiassistant.server"
-SERVER_PORT_BUSY=0
-AUTODEPLOY_LABEL="com.zelin.aiassistant.autodeploy"
-autodeploy_wanted() {      # returns 0 wanted/probe-failed, 1 not wanted
-    git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-    rc=0
-    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
-from act.lib import config
-try:
-    cfg = config.load_config()
-except Exception:
-    cfg = config.Config()
-on = cfg.feature("auto_deploy")
-print("on" if on else "off")
-raise SystemExit(0 if on else 3)') 2>/dev/null )" || rc=$?
-    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
-}
-# Step 5 proper (a function so --no-launchd can take the one-pass path below
-# instead): render + load every template that its gate allows, verify each
-# really spawned, record the §23 `launchd` step, then the §56.5 relaunch.
-install_launchd_agents() {
-    echo "==> 5. launchd agents"
-    mkdir -p "$LA_DIR"
-    info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT server_port=$SERVER_PORT"
-    retire_legacy_launchd_agents
-    for plist in "$REPO_ROOT"/act/launchd/*.plist; do
-        [ -e "$plist" ] || continue
-        base="$(basename "$plist")"
-        label="${base%.plist}"
-        dest="$LA_DIR/$base"
-        case "$label" in
-            *.gmailradar) plist_source="gmail" ;;
-            *.slackradar) plist_source="slack" ;;
-            *) plist_source="" ;;
-        esac
-        if [ -n "$plist_source" ] && ! radar_source_enabled "$plist_source"; then
-            info "$plist_source source is switched off — not installing $label"
-            launchd_unload "$dest" "$label"
-            rm -f "$dest"
-            continue
-        fi
-        if [ "$label" = "$AUTODEPLOY_LABEL" ]; then
-            if ! autodeploy_wanted; then
-                info "auto-deploy is off (not a git checkout, or features.auto_deploy: false) — not installing $label"
-                launchd_unload "$dest" "$label"
-                rm -f "$dest"
-                continue
-            fi
-            if [ "${AIASSISTANT_AUTODEPLOY_ACTIVE:-0}" = "1" ]; then
-                # We ARE that agent's process tree right now: bootout would kill
-                # the deploy mid-flight. Re-render only; a changed template takes
-                # effect on the next manual `bash install.sh`.
-                render_launchd_plist "$plist" "$dest"
-                info "$label re-rendered; reload deferred (this install.sh runs inside it)"
-                continue
-            fi
-        fi
-        if [ "$label" = "$SERVER_LABEL" ] && ! launchd_label_loaded "$label" \
-            && board_server_answering "$SERVER_PORT"; then
-            # §54: something not under launchd already answers on the port (the
-            # shell's spawn fallback from before this version, or a hand-run
-            # `python3 -m server`). The agent is loaded anyway — it takes the port
-            # over as soon as that process exits — but say so: until then the
-            # job exits 75 every throttle cycle and doctor's `board server` row
-            # stays red.
-            warn "a board server not managed by launchd answers on 127.0.0.1:$SERVER_PORT — quit the old shell app / hand-started 'python3 -m server' so $label can take the port"
-            SERVER_PORT_BUSY=1
-        fi
-        # unload any previous version first (idempotent upgrades); cap the agent's
-        # launchd log while launchd holds no fd on it (§55)
-        launchd_unload "$dest" "$label"
-        cap_launchd_log "$label"
-        render_launchd_plist "$plist" "$dest"
-        if launchd_load "$dest"; then
-            ok "loaded $label"
-            LOADED_LABELS="$LOADED_LABELS $label"
-        else
-            warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
-            LAUNCHD_FAILED=$((LAUNCHD_FAILED + 1))
-        fi
-    done
-    # give launchd a moment to spawn the jobs, then verify they really run
-    if [ -n "$LOADED_LABELS" ]; then
+    if launchd_load "$_dest"; then
+        ok "loaded $SERVER_LABEL (python=${RUNTIME_PY:-python3} port=$SERVER_PORT)"
+        LOADED_LABELS="$SERVER_LABEL"
         sleep 2
-        for label in $LOADED_LABELS; do
-            verify_launchd_agent "$label"
-        done
-    fi
-    if [ "$LAUNCHD_FAILED" -gt 0 ]; then
-        report_step "launchd" "fail" "$LAUNCHD_FAILED agent(s) failed to load"
-    elif [ -n "$LOADED_LABELS" ]; then
-        report_step "launchd" "ok" "$(echo "$LOADED_LABELS" | wc -w | tr -d ' ') agents loaded"
+        verify_launchd_agent "$SERVER_LABEL"
+        report_step "launchd" "ok" "1 agent loaded ($SERVER_LABEL)"
     else
-        report_step "launchd" "skipped" "no agents to load"
+        warn "failed to load $SERVER_LABEL (Full Disk Access for the daemon python? see $LOG_DIR/server.launchd.log)"
+        report_step "launchd" "fail" "$SERVER_LABEL failed to load"
     fi
-    if [ "$SERVER_PORT_BUSY" -eq 1 ]; then
-        report_step "board_server_port" "warn" "127.0.0.1:$SERVER_PORT answered before $SERVER_LABEL loaded - quit the old shell app / hand-run server so launchd can take the port"
+    _orphans="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
+    if [ -n "$_orphans" ]; then
+        warn "launchd agent(s) of ours outside the closed footprint (§78): $_orphans"
+        info "  launchctl bootout gui/$UID_NUM/<label>; rm ~/Library/LaunchAgents/<label>.plist"
+        report_step "launchd_orphans" "warn" "$_orphans"
     fi
-    # §56.5 relaunch rule — only now, with the server agent back under launchd
     relaunch_shell_app
 }
 
-# --no-launchd (CONTRACT §69): the one-pass proof that stands in for step 5's
-# resident agents. Runs the daemon exactly as launchd would (same interpreter,
-# same AIASSISTANT_HOME, cwd = repo) for a single pass — first-pass store2
-# activation, dashboard + heartbeat writes included — under the UI wall-clock
-# budget; stdout/stderr go to ~/Library/Logs/zelin-ai-assistant/actd-once.log
-# (capped, 防腐 #4). §23 step `actd_once`: ok | fail (a daemon that cannot
-# finish one pass here would crash-loop under launchd — a real failed step) |
-# skipped (no daemon interpreter — runtime_python already reported that fail).
-ACTD_ONCE_LOG="$HOME/Library/Logs/zelin-ai-assistant/actd-once.log"
-run_actd_once() {
-    echo "==> 5. launchd agents — skipped (--no-launchd); running one actd pass instead"
-    report_step "launchd" "skipped" "--no-launchd: no agent loaded; one actd pass run instead"
-    _py="${RUNTIME_PY:-}"
-    if [ -z "$_py" ] || [ ! -x "$_py" ]; then
-        warn "actd --once skipped: no usable daemon interpreter"
-        report_step "actd_once" "skipped" "no daemon interpreter"
-        return 0
-    fi
-    mkdir -p "$(dirname "$ACTD_ONCE_LOG")"
-    if [ -f "$ACTD_ONCE_LOG" ] && [ "$(wc -c < "$ACTD_ONCE_LOG" | tr -d ' ')" -gt "$UI_LOG_CAP_BYTES" ]; then
-        tail -c "$((UI_LOG_CAP_BYTES / 2))" "$ACTD_ONCE_LOG" > "$ACTD_ONCE_LOG.tmp" && mv "$ACTD_ONCE_LOG.tmp" "$ACTD_ONCE_LOG"
-    fi
-    printf '\n==== install.sh actd --once %s ====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$ACTD_ONCE_LOG"
-    _t0="$(ui_now)"
-    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" ui_run_with_timeout "$UI_BUDGET_S" "$_py" -m act.actd --once >> "$ACTD_ONCE_LOG" 2>&1)
-    _rc=$?
-    _s=$(( $(ui_now) - _t0 ))
-    if [ "$_rc" -eq 0 ]; then
-        ok "actd --once: one full pass in ${_s}s ($_py)"
-        report_step "actd_once" "ok" "one pass in ${_s}s with $_py"
-    else
-        warn "actd --once failed (exit $_rc) — see $ACTD_ONCE_LOG"
-        tail -n 15 "$ACTD_ONCE_LOG" 2>/dev/null | sed 's/^/         /'
-        report_step "actd_once" "fail" "python3 -m act.actd --once exit $_rc; see $ACTD_ONCE_LOG"
-    fi
+# ------------------------------------------------------------------ crontab
+# Step 7 (§18): ours = the ingest chain + the 1.x module lines; the new crontab
+# keeps every other line verbatim and ends with the one chain line.
+compose_crontab() { # stdin = current crontab, stdout = the new one
+    { grep -Ev "$CRON_OURS_RE" || true; } | grep -v '^[[:space:]]*$' || true
+    printf '%s\n' "$INGEST_CHAIN"
 }
 
-if [ "$NO_LAUNCHD" -eq 1 ]; then
-    run_actd_once
-else
-    install_launchd_agents
-fi
-
-# --------------------------------------------------------------------------
-echo ""
-echo "==> 6. crontab — unified ingest chain + state digest (CONTRACT §18)"
-chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || true
-
-# cron runs outside the login shell — same validated-interpreter rule as the
-# launchd plists (§55): -x alone once picked a miniconda python that had no
-# PyYAML, so every cron radar pass died on `import yaml`.
-_saved_ifs="$IFS"
-IFS='
-'
-# shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
-CRON_PY="$(pick_python "${RUNTIME_PY:-}" $(daemon_python_candidates) \
-    || echo "${PY:-python3}")"
-IFS="$_saved_ifs"
-
-# cron's PATH is minimal AND user-customizable — pin the login shell's claude
-# dir first so process-screenpipe.sh's `command -v claude` and the radar's
-# shutil.which never land on a second, outdated install (same 2026-07-08
-# incident class the launchd plists guard against above).
-CRON_CLAUDE_DIR="$HOME/.local/bin"
-[ -n "$CLAUDE_LOGIN_BIN" ] && CRON_CLAUDE_DIR="$(dirname "$CLAUDE_LOGIN_BIN")"
-
-# process-screenpipe.sh exits 3 when another run holds the lock — that's a
-# skip, not a failure. The whole chain's output lands in state/ingest.cron.log
-# (CONTRACT §18; the radar tail and its radar.cron.log retired in v2.0.0).
-# AIASSISTANT_CRON=1 arms the FDA probe in screenpipe-export.sh (CONTRACT §25):
-# only real cron runs may write state/cron_probe.json — a manual in-app run
-# has the app's own disk access and would falsify the verdict.
-INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && { ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; }; } >> $REPO_ROOT/state/ingest.cron.log 2>&1"
-# Daily 09:07 fire WITHOUT --now (CONTRACT §17 D19): act.digest self-gates on
-# digest.frequency (off | daily | every2days | weekly, default off) + its
-# state/digest.json marker, so a cadence change in Settings needs no crontab
-# rewrite. Off/not-due fires exit silently (no log line).
-DIGEST_LINE="7 9 * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest >> $REPO_ROOT/state/digest.log 2>&1"
-TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
-
-# 第 6 步的 crontab 写入与判决，抽成函数（tests 用 stub crontab 真跑它，同
-# install_mac_app / failed_deploy_steps 的手法）。读全局 NEW_CRON / CURRENT_CRON /
-# INGEST_CHAIN / DIGEST_LINE / CRON_PY。失败分两类（§23 / §56.5）：
-#   - stderr 带 "Operation not permitted" = launchd 会话被 TCC 拒写 crontab
-#     （2026-09-02 v0.48.12 实战：timer 触发的自动部署在这里翻车 → 回滚 → 回滚
-#     的 install.sh 撞同一堵墙 → rollback_failed + sha 中毒，所有后续部署停摆。
-#     回滚治不了环境问题）→ `cron=skipped_tcc`，不计入 failed_deploy_steps；
-#     doctor 的 `cron write access` 行负责把它亮成 WARN + FDA 指引。
-#   - 其余（语法错、crontab 不存在等）仍是 `cron=fail`，照旧算部署失败步。
-# 报错里的 `tmp/tmp.<pid>` 是 crontab 自己的 spool 相对路径（它先 chdir 到
-# /usr/lib/cron → /var/at，再写 tmp/tmp.<pid>，与 TMPDIR 无关），所以这里不
-# 摆弄环境，只抓 stderr 原文判类。匹配的是 Darwin strerror 的英文（Darwin libc
-# 不本地化 strerror）；万一没匹配上就落回 `fail`——旧行为，只会更保守。
+# The crontab write and its verdict (§23 / §56.5): "Operation not permitted" =
+# TCC refused the rewrite in this session → cron=skipped_tcc (not a failed step,
+# doctor `cron write access` makes it visible); any other failure = cron=fail.
 apply_crontab() {
     if [ "$NEW_CRON" = "$CURRENT_CRON" ]; then
         report_step "cron" "ok" "already installed"
@@ -1855,13 +1046,12 @@ apply_crontab() {
     fi
     if _cron_err="$(printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' | crontab - 2>&1)"; then
         ok "crontab rewritten (other lines preserved)"
-        report_step "cron" "ok" "ingest chain + digest + telemetry installed"
+        report_step "cron" "ok" "ingest chain installed${CRON_STRIPPED:+; removed $CRON_STRIPPED retired line(s)}"
         return 0
     fi
     [ -n "$_cron_err" ] && printf '%s\n' "$_cron_err" >&2
-    warn "crontab update failed — add these lines manually with 'crontab -e':"
+    warn "crontab update failed — add this line manually with 'crontab -e':"
     info "$INGEST_CHAIN"
-    info "$DIGEST_LINE"
     case "$_cron_err" in
         *"Operation not permitted"*)
             warn "crontab is TCC-blocked in this session — grant Full Disk Access to $CRON_PY, then rerun bash install.sh"
@@ -1874,127 +1064,262 @@ apply_crontab() {
     return 0
 }
 
-# Compose the target crontab from the current one (idempotent merges), then
-# apply_crontab writes it — or, under --no-launchd (§69), nothing is read or
-# written: a scheduler-less run leaves the user's crontab exactly as found.
 install_cron_lines() {
+    if [ "$NO_LAUNCHD" -eq 1 ]; then
+        echo "==> 7. crontab — skipped (--no-launchd)"
+        report_step "cron" "skipped" "--no-launchd: crontab not touched"
+        return 0
+    fi
+    echo "==> 7. crontab — the ingest chain (§18)"
+    chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || true
     CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
-    NEW_CRON="$CURRENT_CRON"
-
-    # idempotent: replace any legacy screenpipe-export line with the unified chain
-    if printf '%s\n' "$NEW_CRON" | grep -Fq "$INGEST_CHAIN"; then
-        ok "ingest cron chain already installed"
-    else
-        NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'screenpipe-export\.sh' || true)"
-        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$INGEST_CHAIN")"
-        ok "ingest cron chain installed (legacy screenpipe-export lines replaced)"
-    fi
-
-    # idempotent: exact line present -> keep; otherwise replace any older
-    # act.digest line (the pre-D19 Monday-only `--now` form would keep forcing a
-    # weekly card past an `off` knob) with the daily self-gating one.
-    if printf '%s\n' "$NEW_CRON" | grep -Fq "$DIGEST_LINE"; then
-        ok "digest cron already installed"
-    else
-        NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'act\.digest' || true)"
-        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
-        ok "digest cron installed (daily 09:07; cadence = digest.frequency, default off)"
-    fi
-
-    # idempotent: append the hourly telemetry sync if absent (default-on anonymous
-    # usage stats, docs/TELEMETRY.md — the sync is a silent no-op when the user
-    # opts out, so the line is harmless to keep)
-    if printf '%s\n' "$NEW_CRON" | grep -q 'act\.analytics_sync'; then
-        ok "telemetry sync cron already installed"
-    else
-        NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$TELEMETRY_LINE")"
-        ok "telemetry sync cron installed (hourly; opt out in app Settings or telemetry.enabled: false)"
-    fi
-
+    CRON_STRIPPED="$(printf '%s\n' "$CURRENT_CRON" | grep -E "$CRON_OURS_RE" | grep -cvF "$INGEST_CHAIN" || true)"
+    [ "$CRON_STRIPPED" = "0" ] && CRON_STRIPPED=""
+    NEW_CRON="$(printf '%s\n' "$CURRENT_CRON" | compose_crontab)"
+    [ -n "$CRON_STRIPPED" ] && info "removing $CRON_STRIPPED retired / outdated line(s) of ours (radar, digest, telemetry, old chain)"
     apply_crontab
 }
 
-if [ "$NO_LAUNCHD" -eq 1 ]; then
-    info "crontab left untouched (--no-launchd): the ingest chain, digest and telemetry lines are not installed"
-    report_step "cron" "skipped" "--no-launchd: crontab not touched"
-else
-    install_cron_lines
-fi
-
-# --------------------------------------------------------------------------
-echo ""
-if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-    echo "==> 7. diagnostics — skipped (non-interactive pkg mode; run anytime: bash install.sh --check)"
-elif [ "$NON_INTERACTIVE" -eq 1 ]; then
-    echo "==> 7. diagnostics — left to the caller (auto-deploy runs the doctor and gates on it, §56)"
-elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
-    echo "==> 7. post-install diagnostics (python -m act.doctor)"
-    if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
-        warn "doctor reported problems above — fix them, then re-check: bash install.sh --check"
+# ------------------------------------------------------------------ report
+write_install_report() {
+    _rpy="${RUNTIME_PY:-${PY:-}}"
+    { [ -n "$_rpy" ] && [ -x "$_rpy" ]; } || _rpy="$(command -v python3 || true)"
+    if [ -z "$_rpy" ]; then
+        warn "no python3 — skipped state/install_report.json"
+        return 0
     fi
-else
-    echo "==> 7. diagnostics — skipped (no usable python3); run later: bash install.sh --check"
-fi
-
-# --------------------------------------------------------------------------
-# install report (CONTRACT §23) — what this run actually did, machine-readable
-echo ""
-write_install_report
-
-# --------------------------------------------------------------------------
-# --non-interactive (§56): no banner; the exit code IS the verdict — one per
-# failed step, the legacy Mac app (`app`) excepted (see header). The caller
-# (scripts/auto-deploy.sh) rolls back on non-zero.
-if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    FAILED_STEPS="$(failed_deploy_steps)"
-    N_FAILED="$(printf '%s' "$FAILED_STEPS" | grep -c . || true)"
-    if [ "$N_FAILED" -gt 0 ]; then
-        echo "install.sh --non-interactive: $N_FAILED failed step(s): $(printf '%s' "$FAILED_STEPS" | cut -d= -f1 | tr '\n' ' ')"
+    _mode=interactive
+    [ "$NON_INTERACTIVE" -eq 1 ] && _mode=non-interactive
+    [ "$FROM_UPGRADE" -eq 1 ] && _mode=upgrade
+    if printf '%s' "$REPORT_STEPS" | (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
+        "$_rpy" -m act.lib.install_report --mode "$_mode" --steps-stdin \
+        --agents "$LOADED_LABELS" >/dev/null 2>&1); then
+        ok "state/install_report.json written"
     else
-        echo "install.sh --non-interactive: ok (v${STAMPED_VERSION:-?})"
+        warn "could not write state/install_report.json (non-fatal)"
     fi
-    exit "$N_FAILED"
-fi
+}
 
-# The interactive closing banner. The machine-checked version of this list is
-# `bash install.sh --check --fresh-install` (§69) — it prints the SAME items
-# with this machine's real paths and drops the ones already done; the banner
-# below is the fixed narrative for readers who want the why. Unquoted heredoc:
-# ${STABLE_CLAUDE_BIN} (§55 第五幕) is the one path the Full Disk Access grant
-# has to name; everything else is literal (backticks and $ escaped).
-cat <<EOF
+# ------------------------------------------------------------------ steps 1–3
+check_dependencies() {
+    echo "==> 1. dependency checks"
+    if command -v claude >/dev/null 2>&1; then
+        ok "claude found: $(command -v claude)"
+    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+        warn "claude CLI not found — ingest and recaps stay idle until Claude Code is installed"
+    else
+        echo "  [ERR ] claude CLI not found (REQUIRED). Install Claude Code first, then re-run." >&2
+        exit 1
+    fi
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        info "swift toolchain not required here — the shell app (step 5) is skipped when swiftc is absent"
+    elif bash "$REPO_ROOT/shell/build.sh" --check-toolchain; then
+        ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
+    else
+        echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
+        exit 1
+    fi
+    PY="$(command -v python3 || true)"
+    if [ -z "$PY" ]; then
+        echo "  [ERR ] python3 not found (xcode-select --install provides /usr/bin/python3)." >&2
+        exit 1
+    fi
+    ok "python3 found: $PY"
+    if "$PY" -c "import yaml" >/dev/null 2>&1; then
+        ok "PyYAML available"
+    elif "$PY" -m pip install --user pyyaml >/dev/null 2>&1 \
+        || "$PY" -m pip install --user --break-system-packages pyyaml >/dev/null 2>&1; then
+        ok "PyYAML installed"
+    else
+        echo "  [ERR ] PyYAML install failed (REQUIRED)." >&2
+        info "fix: $PY -m pip install --user --break-system-packages pyyaml"
+        exit 1
+    fi
+    if command -v npx >/dev/null 2>&1; then
+        ok "node/npx found: $(command -v npx) — the recording engine runs via npx"
+    else
+        warn "node/npx not found — nothing records without it (brew install node)"
+    fi
+}
+
+setup_config_and_runtime() {
+    echo "==> 2. config, interpreter, claude, isolation dirs, API key"
+    if [ -f "$REPO_ROOT/config.yaml" ]; then
+        ok "config.yaml already exists (left untouched)"
+        report_step "config" "ok" "existing config.yaml kept"
+    else
+        cp "$REPO_ROOT/config.example.yaml" "$REPO_ROOT/config.yaml"
+        ok "created config.yaml from config.example.yaml"
+        report_step "config" "ok" "created from config.example.yaml"
+    fi
+    if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ] && [ -f "$REPO_ROOT/config/redaction_terms.example.txt" ]; then
+        cp "$REPO_ROOT/config/redaction_terms.example.txt" "$REPO_ROOT/config/redaction_terms.txt"
+        ok "created config/redaction_terms.txt from template (gitignored)"
+    fi
+    stamp_version
+    mkdir -p "$REPO_ROOT/config"
+    _saved_ifs="$IFS"
+    IFS='
+'
+    # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+    pick_daemon_python $(daemon_python_candidates) || true
+    IFS="$_saved_ifs"
+    RUNTIME_PY="$DAEMON_PY"
+    if [ -n "${AIASSISTANT_PYTHON:-}" ] && [ "$RUNTIME_PY" != "$AIASSISTANT_PYTHON" ]; then
+        warn "AIASSISTANT_PYTHON=$AIASSISTANT_PYTHON did not pass the daemon interpreter gates — ignored"
+    fi
+    if [ -n "$RUNTIME_PY" ]; then
+        printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
+        ok "config/runtime.json -> $RUNTIME_PY"
+        if [ -n "$DAEMON_PY_NOTE" ]; then
+            warn "$DAEMON_PY_NOTE"
+            report_step "runtime_python" "ok" "$RUNTIME_PY ($DAEMON_PY_NOTE)"
+        else
+            report_step "runtime_python" "ok" "$RUNTIME_PY"
+        fi
+    else
+        echo "  [ERR ] no python3 with PyYAML found — the server agent and the cron chain need one" >&2
+        info "fix: $(command -v python3 || echo python3) -m pip install --user --break-system-packages pyyaml"
+        report_step "runtime_python" "fail" "no candidate python3 can import yaml"
+    fi
+    resolve_claude_login_bin
+    if [ -n "$CLAUDE_LOGIN_BIN" ]; then
+        ok "claude: $CLAUDE_LOGIN_BIN (login-shell resolution)"
+        report_step "claude_bin" "ok" "$CLAUDE_LOGIN_BIN"
+    else
+        warn "claude not resolvable from the login shell — the cron PATH falls back to ~/.local/bin"
+        report_step "claude_bin" "missing"
+    fi
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        refresh_stable_claude "$CLAUDE_LOGIN_BIN"
+    else
+        report_step "stable_claude" "skipped" "not macOS"
+    fi
+    if mkdir -p "$APP_SUPPORT_DIR" && printf '%s\n' "$REPO_ROOT" > "$APP_SUPPORT_DIR/home.txt"; then
+        ok "home pointer -> $APP_SUPPORT_DIR/home.txt"
+    else
+        warn "could not write $APP_SUPPORT_DIR/home.txt — the app assumes ~/Projects/zelin-ai-assistant"
+    fi
+    ensure_claude_config_dirs
+    install_api_key
+}
+
+make_state_dirs() {
+    echo "==> 3. state directories"
+    if mkdir -p "$REPO_ROOT/state/recap"; then
+        ok "state/ ready"
+        report_step "state_dirs" "ok"
+    else
+        report_step "state_dirs" "fail" "mkdir state/ failed"
+    fi
+}
+
+run_doctor() {
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        echo "==> 8. diagnostics — skipped (non-interactive; run: bash install.sh --check)"
+    elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
+        echo "==> 8. post-install diagnostics (python -m act.doctor)"
+        if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
+            warn "doctor reported problems above — fix them, then re-check: bash install.sh --check"
+        fi
+    else
+        echo "==> 8. diagnostics — skipped (no usable python3); run later: bash install.sh --check"
+    fi
+}
+
+closing_banner() {
+    cat <<EOF
 
 ==============================================
- Install complete. What is left is yours (the machine cannot do it):
+ Install complete. What is left is yours:
    bash install.sh --check --fresh-install   # the live, path-exact version of this list
 ==============================================
- 1. Open the board: "Zelin's AI Assistant" (bundle Zelin's AI Assistant.app, the board
-    shell) in /Applications (or ~/Applications) — or http://127.0.0.1:<server.port, default 47820>/
-    in a browser. The board server runs as launchd agent com.zelin.aiassistant.server.
-    Its first-run wizard (?page=setup) walks config → disk access → credentials (steps 2-4).
- 2. Anthropic API key (headless claude under launchd/cron cannot read Keychain OAuth):
-      mkdir -p config/secrets && chmod 700 config/secrets
-      printf '%s\n' 'sk-ant-…' > config/secrets/anthropic-api-key.txt && chmod 600 config/secrets/anthropic-api-key.txt
-    (~/.config/anthropic-key.txt is still honored as the legacy fallback.)
- 3. Full Disk Access (System Settings > Privacy & Security > Full Disk Access, "+", ⌘⇧G, paste the path)
-    — macOS grants it PER BINARY and launchd jobs never inherit your terminal's grant:
-      - the daemon interpreter from config/runtime.json ("python")  — actd / radars / server
+ 1. Open "Zelin's AI Assistant" from /Applications (or ~/Applications), or
+    http://127.0.0.1:${SERVER_PORT:-47820}/ in a browser. Turn on recording and, if you want
+    it after a restart, "Launch at login" in the app.
+ 2. Anthropic API key — the only credential (headless claude never reads your Claude Code
+    login, CONTRACT §78): Settings > Credentials, or config/secrets/anthropic-api-key.txt (0600).
+ 3. Full Disk Access (System Settings > Privacy & Security > Full Disk Access), per binary:
+      - the daemon interpreter in config/runtime.json — the board server
       - ${STABLE_CLAUDE_BIN}
-        (the stable daemon copy of claude — install.sh refreshes it in place, so this grant
-        survives claude updates, CONTRACT §55; confirm with the doctor's \`launchd claude\` row)
-      - /usr/sbin/cron  — the ingest chain reads the Obsidian vault under ~/Documents
-    Required when this repo or your task repos live under ~/Documents, ~/Desktop, ~/Downloads
-    or an external volume; harmless otherwise.
- 4. Edit config.yaml (or the board's Settings) when you connect sources: Obsidian vault path,
-    watched people, Slack IDs, Gmail. Everything idles safely until then.
- 5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」— type a task into the
-    board's capture box → approve ✅ → a reviewable draft arrives minutes later
-    (needs only claude + API key — no screenpipe/Obsidian material required).
- 6. Anything off later? bash install.sh --check   (full diagnostics; exit code = FAILs)
- 7. Updating this machine later: re-run the same command that installed it —
-    curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
-    (or: git pull && bash install.sh); merges to main also auto-deploy (CONTRACT §56).
-    The legacy menu-bar app now lives at "Zelin's AI Assistant (old).app" (D3; same bundle
-    id as before, so its permissions carried over) and is never rebuilt by this mode.
+      - /usr/sbin/cron — the ingest chain reads the Obsidian vault
+    Needed when the repo or the vault sits under ~/Documents, ~/Desktop or an external volume.
+ 4. Screen Recording + Microphone for com.zelin.ai-board: the app's Permissions page.
+ 5. Upgrades: the About page's "Upgrade now" (scripts/upgrade.sh, CONTRACT §79).
 ==============================================
 EOF
+}
+
+usage() {
+    echo "usage: bash install.sh [--non-interactive] [--no-launchd] [--from-upgrade] | --check [doctor flags]" >&2
+}
+
+main() {
+    # --check [doctor flags…]: delegate to act.doctor (exit = number of FAILs).
+    if [ "${1:-}" = "--check" ]; then
+        shift
+        _dpy="$(pick_python "$(pinned_python)" "$(command -v python3 || echo /usr/bin/python3)" /usr/bin/python3 || true)"
+        [ -n "$_dpy" ] || _dpy="$(command -v python3 || echo /usr/bin/python3)"
+        cd "$REPO_ROOT" || exit 1
+        AIASSISTANT_HOME="$REPO_ROOT" exec "$_dpy" -m act.doctor "$@"
+    fi
+    NON_INTERACTIVE=0; NO_LAUNCHD=0; FROM_UPGRADE=0
+    for _arg in "$@"; do
+        case "$_arg" in
+            --non-interactive) NON_INTERACTIVE=1 ;;
+            --no-launchd) NO_LAUNCHD=1 ;;
+            --from-upgrade) FROM_UPGRADE=1; NON_INTERACTIVE=1 ;;
+            --pkg-postinstall|--reinstall-agent)
+                echo "install.sh: $_arg was retired in v2.0.0 (full text at git tag full)" >&2
+                usage; exit 2 ;;
+            *)
+                echo "install.sh: unknown flag '$_arg'" >&2
+                usage; exit 2 ;;
+        esac
+    done
+
+    echo "=============================================="
+    echo " Zelin's AI Assistant — installer"
+    echo " repo: $REPO_ROOT"
+    echo "=============================================="
+    echo ""; check_dependencies
+    echo ""; setup_config_and_runtime
+    echo ""; make_state_dirs
+    echo ""; migrate_from_1x
+    SERVER_PORT="$(server_port)"
+    echo ""; install_ui
+    echo ""; install_server_agent
+    note_engine
+    # cron runs outside the login shell: the same validated interpreter (§55) and
+    # the login shell's claude directory first on PATH.
+    _saved_ifs="$IFS"
+    IFS='
+'
+    # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+    CRON_PY="$(pick_python "${RUNTIME_PY:-}" $(daemon_python_candidates) || echo "${PY:-python3}")"
+    IFS="$_saved_ifs"
+    CRON_CLAUDE_DIR="$HOME/.local/bin"
+    [ -n "$CLAUDE_LOGIN_BIN" ] && CRON_CLAUDE_DIR="$(dirname "$CLAUDE_LOGIN_BIN")"
+    # process-screenpipe.sh exits 3 when another run holds the lock (a skip, not a
+    # failure). AIASSISTANT_CRON=1 arms the FDA probe in screenpipe-export.sh (§25).
+    INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && { ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; }; } >> $REPO_ROOT/state/ingest.cron.log 2>&1"
+    echo ""; install_cron_lines
+    echo ""; run_doctor
+    echo ""; write_install_report
+
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        _failed="$(failed_deploy_steps)"
+        _n="$(printf '%s' "$_failed" | grep -c . || true)"
+        if [ "$_n" -gt 0 ]; then
+            echo "install.sh --non-interactive: $_n failed step(s): $(printf '%s' "$_failed" | cut -d= -f1 | tr '\n' ' ')"
+        else
+            echo "install.sh --non-interactive: ok (v${STAMPED_VERSION:-?})"
+        fi
+        exit "$_n"
+    fi
+    closing_banner
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

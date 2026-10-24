@@ -33,7 +33,8 @@ build.sh; nothing real is installed, /Applications is a temp dir):
     pre-rename "Zelin AI Board.app" is removed after the install only when its
     id is com.zelin.ai-board; a com.zelin.ai-board bundle on the product path
     is simply replaced; nothing is ever moved or deleted by folder name alone;
-  - `--pkg-postinstall` skips the whole step;
+  - `--from-upgrade` leaves the relaunch to scripts/upgrade.sh (§79); the .pkg
+    postinstall mode retired in v2.0.0 (full text at tag full);
   - failed_deploy_steps counts `ui=fail`, never `ui=skipped`;
   - relaunch rule: only --non-interactive, only after this run installed a
     bundle, only when the app is running (pkill -TERM … then open -g); the
@@ -226,7 +227,8 @@ class InstallUiStepTestCase(unittest.TestCase):
                   "REPORT_STEPS=''\n"
                   + _ui_globals()
                   + "".join(_install_sh_fn(fn) for fn in _FNS)
-                  + 'REPO_ROOT="$1"; NON_INTERACTIVE="$2"; PKG_POSTINSTALL="$3"; SERVER_PORT="$4"\n'
+                  + 'REPO_ROOT="$1"; NON_INTERACTIVE="$2"; SERVER_PORT="$4"\n'
+                  + 'FROM_UPGRADE="${FROM_UPGRADE:-0}"\n'
                   "install_ui\n"
                   '[ "${RUN_RELAUNCH:-0}" = 1 ] && relaunch_shell_app\n'
                   "printf '@@REPORT@@%s' \"$REPORT_STEPS\"\n")
@@ -485,12 +487,6 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertTrue(ui.startswith("ui=ok:"), ui)
         self.assertIn("shell skipped", ui)
 
-    def test_pkg_postinstall_skips_the_whole_step(self):
-        self._with_toolchains()
-        _, report = self._run(pkg=1)
-        self.assertEqual(self._ui_line(report), "ui=skipped:pkg-postinstall never builds the UI")
-        self.assertEqual(self._calls(), [])
-
     # -- fail ------------------------------------------------------------------- #
 
     def test_web_build_failure_is_ui_fail(self):
@@ -587,8 +583,9 @@ class InstallUiStepTestCase(unittest.TestCase):
                          "TCC refusal is not a deploy failure (a rollback cannot grant FDA)")
         self.assertEqual(failed("config=ok\nui=fail:web fail (npm run build exit 2); shell ok\nlaunchd=ok\n"),
                          ["ui=fail:web fail (npm run build exit 2); shell ok"])
-        self.assertEqual(failed("app=fail:legacy\nui=ok:web ok; shell ok\n"), [],
-                         "the legacy app exception stays; a good ui step adds nothing")
+        self.assertEqual(failed("migrate=fail:still loaded: x\nui=ok:web ok; shell ok\n"),
+                         ["migrate=fail:still loaded: x"],
+                         "v2.0.0: the legacy-app exception retired with the app; every fail counts")
 
     # -- the relaunch rule (§56.5) ------------------------------------------------ #
 
@@ -654,10 +651,16 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertIsNone(re.search(r"pkill[^\n]*screenpipe", text),
                           "install.sh must never pkill the screenpipe engine (§61.8 adopt semantics)")
 
-    def test_the_pkg_postinstall_path_never_touches_anything(self):
+    @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")
+    def test_from_upgrade_leaves_the_relaunch_to_the_upgrader(self):
+        """§79: scripts/upgrade.sh writes the handoff and reopens the shell itself."""
+        self._with_toolchains(web=False)
+        self.running_flag.write_text("", encoding="utf-8")
         self.engine_flag.write_text("", encoding="utf-8")
-        self._run(pkg=1)
-        self.assertEqual(self._calls(), [], "pkg mode returns before anything in the ui step")
+        out, _ = self._run(non_interactive=1, relaunch=True, env={"FROM_UPGRADE": "1"})
+        calls = self._calls()
+        self.assertFalse(any(c.startswith(("pkill", "open", "defaults")) for c in calls), calls)
+        self.assertIn("left to scripts/upgrade.sh", out)
         self.assertTrue(self.engine_flag.exists())
 
     @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")
