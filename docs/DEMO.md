@@ -46,7 +46,16 @@ AIASSISTANT_HOME=/tmp/assistant-demo HOME=/tmp/assistant-demo ZAI_PORT=47821 pyt
 
 - web 视觉基线与 e2e（`web/e2e/demoServer.ts`，场景 `initial`）；
 - `scripts/qa/readme_audit.py --render`（经 `scripts/qa/readme_render.mjs`）；
+- README 截图（`scripts/qa/readme_shots.mjs`：固定时钟 `--now`，写 `docs/images/*.png`）；
 - `scripts/dev-preview.sh`；
 - server 测试的公共夹具（`tests/test_server_common.seed_scene`）。
 
-README 截图只许真渲染（CONTRACT §77.5）：从 demo server 拍，绝不手绘、绝不用生成模型画界面。
+README 截图只许真渲染（CONTRACT §77.5）：从 demo server 拍，绝不手绘、绝不用生成模型画界面。重拍：
+
+```bash
+(cd web && npm ci && npx playwright install chromium && npm run build)
+node scripts/qa/readme_shots.mjs          # 覆盖 docs/images/ 下 README 引用的几张 PNG
+```
+
+拍之前脚本只做一件改写：把拍图机器上的路径（本 checkout、临时 home、运行者的 `~`）换成一台普通安装上的
+`~/Projects/zelin-ai-assistant` 与 `~`，免得 README 带上拍图那台机器的用户名与临时目录；界面本身不动。
