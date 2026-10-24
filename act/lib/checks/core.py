@@ -1,9 +1,10 @@
 """doctor 探针家族的共享件（CONTRACT §25；入口 act/doctor.py）。
 
-住这里的东西被两个以上家族用到：状态常量、``CheckResult``、service label /
-unit / task 名（与 act/launchd、act/systemd、act/tasksched 模板逐字一致，
-tests/test_doctor.py 钉住漂移）、永不 raise 的子进程 runner、§15 双语
-``pick``、``launchctl list`` 表解析、config/runtime.json 的解释器 pin。
+住这里的东西被两个以上家族用到：状态常量、``CheckResult``、唯一的 launchd label
+（与 act/launchd 模板逐字一致，tests/test_doctor.py 钉住漂移；§78 封闭清单）、永不
+raise 的子进程 runner、§15 双语 ``pick``、``launchctl list`` 表解析、config/runtime.json
+的解释器 pin。v2.0.0 起只有 macOS（Linux / Windows 的 systemd / Task Scheduler 镜像随
+Act 管线退役，全文见 tag full）。
 ``probes`` 参数一律是 ``act.doctor.Probes``（注入缝）——本层只调用它的字段，
 不 import 它（lib 永不向上，§58.3）。
 """
@@ -15,44 +16,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from act.lib import board_server, config, failures, platform, taskscheduler
+from act.lib import board_server, config, failures, platform
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
-ACTD_LABEL = "com.zelin.aiassistant.actd"      # launchd label (macOS)
-SYNCD_LABEL = "com.zelin.aiassistant.syncd"
-# §54 看板 server（`python3 -m server`）——v0.48.18 起由 launchd 托管而非壳 app
-# 的子进程（GUI app 是子进程的 TCC responsible process，壳没有磁盘授权）。
-# 探针与判决的纯逻辑住 act/lib/board_server.py。
+# §54 看板 server（`python3 -m server`）——由 launchd 托管而非壳 app 的子进程（GUI app
+# 是子进程的 TCC responsible process，壳没有磁盘授权）。探针与判决的纯逻辑住
+# act/lib/board_server.py。§78：它是封闭常驻清单里**唯一**的 LaunchAgent。
 SERVER_LABEL = board_server.LABEL
-# 常驻 agent（模板 KeepAlive=true）：进程一退出 launchd 就在 ThrottleInterval 后
-# 再拉起。这类 label「已加载、无 pid、上次退出码非 0」= 正在 crash-loop（每个周期
-# 死一次），不是周期性 agent 的「上次跑失败一次」——FAIL（§55；§56.3 的回滚判据
-# 由此看见 syncd / server 被新版本弄坏）。集合与 act/launchd/*.plist 的 KeepAlive
-# 键逐字一致，tests/test_doctor.py 钉住漂移。
-RESIDENT_LABELS = frozenset({ACTD_LABEL, SYNCD_LABEL, SERVER_LABEL})
-ACTD_UNIT = "zelin-actd.service"               # systemd --user unit (Linux)
-SERVER_UNIT = board_server.UNIT                # §54 board server (Linux mirror)
-ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
-# Resident systemd services doctor expects up (the rest are timer-driven
-# oneshots that are correctly inactive between fires — the timer is the signal).
-# zelin-webui.service retired 2026-09-14 (§49 追记, owner 决策 D67): the board
-# server is the UI on every platform, so there is nothing else to keep resident.
-SYSTEMD_RESIDENT = ("zelin-actd.service", SERVER_UNIT)
+# 常驻 agent（模板 KeepAlive=true）：「已加载、无 pid、上次退出码非 0」= crash-loop → FAIL
+# （§55）。集合与 act/launchd/*.plist 的 KeepAlive 键逐字一致，tests/test_doctor.py 钉住漂移。
+RESIDENT_LABELS = frozenset({SERVER_LABEL})
 LABEL_PREFIX = "com.zelin.aiassistant."
 
 PROBE_TIMEOUT = 90  # ceiling for the live claude call
 
 
 def installer() -> str:
-    """The installer to point fixes at on this OS."""
-    if platform.is_darwin():
-        return "install.sh"
-    if platform.is_windows():
-        return "install.ps1"
-    return "install-linux.sh"
+    """The installer to point fixes at (macOS only since v2.0.0)."""
+    return "install.sh"
 
 
 def pick(zh: str, en: str) -> str:
@@ -68,11 +52,13 @@ def pick(zh: str, en: str) -> str:
 # Default probe implementations shared by several families
 # --------------------------------------------------------------------------- #
 def run(cmd: List[str], env: Optional[dict] = None,
-        timeout: Optional[float] = PROBE_TIMEOUT) -> Tuple[int, str]:
-    """(exit code, combined stdout+stderr). Never raises: 124 timeout, 127 spawn error."""
+        timeout: Optional[float] = PROBE_TIMEOUT,
+        cwd: Optional[str] = None) -> Tuple[int, str]:
+    """(exit code, combined stdout+stderr). Never raises: 124 timeout, 127 spawn error.
+    ``cwd`` (add-only, §78): the live claude probes run in ``config.headless_cwd()``."""
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout, env=env,
+                              timeout=timeout, env=env, cwd=cwd,
                               stdin=subprocess.DEVNULL)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except subprocess.TimeoutExpired:
@@ -114,7 +100,7 @@ class CheckResult:
     failure_id: str = ""
     action_id: str = ""
     # §25 row class, derived from failure_id: "owner_action" when the remedy is
-    # the owner's manual grant — the §56.3 deploy verdict skips such rows.
+    # the owner's manual grant (a TCC toggle) — no code change can clear it.
     row_class: str = ""
 
     def with_failure(self, failure_id: str) -> "CheckResult":

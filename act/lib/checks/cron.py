@@ -1,16 +1,15 @@
-"""doctor 探针家族：§18 cron 链（CONTRACT §25 行目录；§17 D19 digest 行；
-§23 ``cron=skipped_tcc``；``state/cron_probe.json`` FDA 探针）。
+"""doctor 探针家族：§18 cron 链（CONTRACT §25 行目录；§23 ``cron=skipped_tcc``；
+``state/cron_probe.json`` FDA 探针）。
 
 行：``cron ingest chain`` / ``cron write access``（最近一次 install.sh 改写
-crontab 被 TCC 拒）/ ``cron digest``（legacy ``--now`` 形 WARN）/
-``cron disk access``（cron 链自己写的 FDA 探针：新鲜且 read_ok=false 才 FAIL
-``cron_fda_blocked``——#1 静默失败的唯一诚实信号）。macOS only。
+crontab 被 TCC 拒）/ ``cron disk access``（cron 链自己写的 FDA 探针：新鲜且
+read_ok=false 才 FAIL ``cron_fda_blocked``——#1 静默失败的唯一诚实信号）。macOS only。
+v2.0.0：``cron digest`` 行随 §17 退役（全文见 tag full）；§78 的封闭清单只剩一条 cron 行。
 """
 from __future__ import annotations
 
 import datetime as _dt
 import json
-import re
 from typing import List, Optional
 
 from act.lib import config
@@ -21,10 +20,6 @@ from act.lib.checks.core import (FAIL, OK, WARN, CheckResult, pick,
 # the chain stopped firing or it comes from an install predating the probe.
 CRON_PROBE_FRESH_SECONDS = 2 * 3600
 CRON_PROBE_PATH = config.STATE_DIR / "cron_probe.json"
-# §17 D19: the installer's digest line never passes --now; a crontab line
-# that does is the pre-D19 Monday form (or a hand edit) and forces a card
-# every fire, past digest.frequency.
-_LEGACY_DIGEST_NOW_RE = re.compile(r"act\.digest\s+--now\b")
 
 _ROW = "cron disk access"
 
@@ -69,36 +64,8 @@ def _ingest_chain_row(text: str) -> CheckResult:
         return CheckResult("cron ingest chain", OK, "installed (CONTRACT §18)")
     return CheckResult(
         "cron ingest chain", FAIL,
-        "missing from crontab - screen captures never become vault notes or radar cards",
+        "missing from crontab - screen captures never become vault notes or meeting recaps",
         "bash install.sh (reinstalls the §18 cron lines)",
-    ).with_failure("cron_missing")
-
-
-def _digest_row(text: str) -> CheckResult:
-    digest_lines = [ln for ln in text.splitlines()
-                    if "act.digest" in ln and not ln.lstrip().startswith("#")]
-    if any(_LEGACY_DIGEST_NOW_RE.search(ln) for ln in digest_lines):
-        # §17 D19: a crontab line that still passes --now is the pre-D19
-        # Monday form — --now bypasses the cadence gate, so this line forces
-        # a card every fire no matter what digest.frequency says (default
-        # off). Calling it "installed" here would be the lie the knob exists
-        # to end; only `bash install.sh` replaces the line.
-        return CheckResult(
-            "cron digest", WARN,
-            "legacy `act.digest --now` line - forces a card every fire, "
-            "ignoring digest.frequency (default off)",
-            "bash install.sh (replaces it with the daily self-gated line)",
-        ).with_failure("cron_missing")
-    if digest_lines:
-        # the line fires daily; the cadence (default off) lives in config,
-        # so "installed" says nothing about whether cards appear.
-        return CheckResult(
-            "cron digest", OK,
-            "installed (daily 09:07; cadence = digest.frequency)")
-    return CheckResult(
-        "cron digest", WARN,
-        "digest line missing from crontab",
-        "bash install.sh",
     ).with_failure("cron_missing")
 
 
@@ -106,7 +73,6 @@ def check_cron(probes):
     text = probes.crontab()
     results = [_ingest_chain_row(text)]
     results.extend(cron_write_access_rows())
-    results.append(_digest_row(text))
     results.append(check_cron_probe(probes, cron_installed="screenpipe-export.sh" in text))
     return results
 

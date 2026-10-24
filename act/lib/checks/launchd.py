@@ -1,14 +1,16 @@
 """doctor 探针家族：macOS launchd（CONTRACT §25 行目录；§55 模板路径纪律与
-TCC 三幕；§56.3 第 1 步卷访问）。
+TCC 三幕；§78 封闭常驻清单）。
 
-行：``<agent short>``（每个模板 label 一行：未注册 / running / loaded /
-crash-loop 并按日志归因 ``No module named 'act'`` vs ``'yaml'``）、
-``launchd paths`` + ``launchd python``（§55 四种症状）、``launchd orphans``
-（退役 agent 残留）、``launchd fd limit``（只抬 soft）、``launchd claude``
-（在一次性 launchd job 里问 launchd 本人 claude 读不读得到任务目录）、
-``launchd volume access``（读 §56.4 HOME 镜像的无人值守判决）。默认探针实现
-（agent 日志路径 / 尾部 / mtime、已装 plist label、launchd claude 探针）也住
-这里——tests 一律注入，绝不真起 launchd（tests/__init__.py 的 env 保险）。
+行：``<agent short>``（每个模板 label 一行——v2.0.0 起只有 ``server``：未注册 /
+running / loaded / crash-loop 并按日志归因 ``No module named 'act'`` vs ``'yaml'``）、
+``launchd paths`` + ``launchd python``（§55 四种症状）、``launchd orphans``（退役
+agent 残留）、``launchd claude``（在一次性 launchd job 里问 launchd 本人：server 派生
+的 headless claude 在 §78 的中性 cwd 里起不起得来）、``isolation footprint``（§78：
+清单外的 LaunchAgent / cron 行）。默认探针实现（agent 日志路径 / 尾部 / mtime、已装
+plist label、launchd claude 探针）也住这里——tests 一律注入，绝不真起 launchd。
+
+v2.0.0：``launchd fd limit``（actd 的 soft 上限）与 ``launchd volume access``（自动部署
+的无人值守判决）随 Act 管线退役（全文见 tag full）。
 """
 from __future__ import annotations
 
@@ -24,11 +26,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from act.lib import claude_bin as claude_bin_lib
-from act.lib import config, deploy_state, platform
-from act.lib.checks.core import (ACTD_LABEL, FAIL, LABEL_PREFIX, OK,
-                                 RESIDENT_LABELS, WARN, CheckResult, installer,
+from act.lib import config, platform
+from act.lib.checks.core import (FAIL, LABEL_PREFIX, OK, RESIDENT_LABELS,
+                                 SERVER_LABEL, WARN, CheckResult, installer,
                                  launchctl_table, pick, pinned_interpreter,
-                                 row_from, templated_labels)
+                                 templated_labels)
 
 # 两条 ModuleNotFoundError 在 `launchctl list` 里长得一模一样，修复动作却相反
 # （§55）。断言 PyYAML 而不读日志，正是 2026-08-31 那次把排查带偏几个小时的原因：
@@ -36,9 +38,15 @@ from act.lib.checks.core import (ACTD_LABEL, FAIL, LABEL_PREFIX, OK,
 MISSING_ACT = "act"      # 解释器看不见 repo（TCC per-binary / PYTHONPATH 错）
 MISSING_YAML = "yaml"    # 守护进程唯一的非 stdlib 依赖没装
 
-AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"
-_VOLUME_ROW = "launchd volume access"
-_FD_LIMIT_MIN = 4096   # anything below this is the launchd default territory
+# §78 closed footprint: the only label families this app may leave in
+# ~/Library/LaunchAgents are its own prefix (server only) and the retired
+# `com.zelin.screenpipe-*` agents install.sh's 1.x migration removes.
+FOOTPRINT_PREFIXES: tuple = (LABEL_PREFIX, "com.zelin.screenpipe-")
+# The one crontab line the app owns (§18 ingest chain) is recognised by this
+# marker; any other line that runs this repo's modules is a 1.x leftover.
+_CRON_CHAIN_MARKER = "screenpipe-export.sh"
+_CRON_RETIRED_MARKERS: tuple = ("act.radar", "act.digest", "act.analytics_sync",
+                                "act.weekly_digest")
 
 # launchd 在 spawn 前触碰的 plist 键——任何一个指向 repo 都是 §55 之前的渲染
 _PLIST_SPAWN_PATH_KEYS = ("StandardOutPath", "StandardErrorPath",
@@ -46,8 +54,7 @@ _PLIST_SPAWN_PATH_KEYS = ("StandardOutPath", "StandardErrorPath",
 # repo 路径唯一允许出现的地方（§55）——这两个值必须是 PHYSICAL 路径
 _PLIST_REPO_PATH_KEYS = ("AIASSISTANT_HOME", "PYTHONPATH")
 
-INSTALL_SH_FIX = ("bash install.sh  # re-renders ALL agents; the app's"
-                  " one-click repair only re-renders actd")
+INSTALL_SH_FIX = "bash install.sh  # re-renders the server agent"
 
 # 解释器「看得见 yaml、看不见 repo」时的唯一正确动作（§55）。install.sh 自
 # 起用 launchd 真实探针挑解释器（§55 第二道闸门），所以重跑就会换掉瞎的
@@ -60,7 +67,7 @@ INTERPRETER_BLIND_FIX = (
 
 # The payload is /bin/sh (an Apple platform binary — it can cd anywhere the
 # way python's pre-exec chdir did on 2026-08-31); only the exec'd claude is
-# what TCC judges, exactly as in a real dispatch. Stages let the reader tell
+# what TCC judges, exactly as in a real recap run. Stages let the reader tell
 # "cd itself failed" from "claude started and hung" from "claude exited".
 _CLAUDE_PROBE_SH = (
     'cd "$1" || { echo "cd_failed:$?" > "$3"; exit 0; }; '
@@ -100,12 +107,16 @@ def launchd_log_mtime(short: str) -> Optional[float]:
 
 def installed_agent_labels() -> List[str]:
     """~/Library/LaunchAgents 里带我们前缀的 plist 文件名（label）——孤儿探测
-    用（§55）：有文件没模板 = 退役 agent 的残留，下次登录还会被 launchd 装载。"""
+    用（§55）：有文件没模板 = 退役 agent 的残留，下次登录还会被 launchd 装载。
+    §78 起两个前缀都算（``com.zelin.screenpipe-*`` 是 1.x 的 ingest / prune agent）。"""
     d = Path.home() / "Library" / "LaunchAgents"
-    try:
-        return sorted(p.stem for p in d.glob(LABEL_PREFIX + "*.plist"))
-    except OSError:
-        return []
+    labels: set = set()
+    for prefix in FOOTPRINT_PREFIXES:
+        try:
+            labels.update(p.stem for p in d.glob(prefix + "*.plist"))
+        except OSError:
+            continue
+    return sorted(labels)
 
 
 def log_missing_module(tail: str) -> Optional[str]:
@@ -343,31 +354,25 @@ def _crash_detail(short: str, status: str, loop: str, missing: Optional[str]) ->
 
 def _crash_loop_row(probes, short: str, label: str, status: str) -> CheckResult:
     # A KeepAlive agent with no pid and a non-zero exit is crash-looping
-    # (launchd respawns it every ThrottleInterval, it dies again) — FAIL
-    # for every resident label, not just actd: a broken syncd is the
-    # phone/web board gone, and only FAIL rows drive §56's rollback.
-    # Periodic agents (RunAtLoad radars, weeklydigest, autodeploy)
-    # exiting non-zero once is a WARN — one network blip would
-    # otherwise roll a deploy back.
+    # (launchd respawns it every ThrottleInterval, it dies again) — FAIL.
     resident = label in RESIDENT_LABELS
     missing = log_missing_module(probes.launchd_log_tail(short))
     detail, fix = _crash_detail(short, status, " (KeepAlive: crash loop)" if resident else "", missing)
     return (CheckResult(short, FAIL if resident else WARN, detail, fix)
-            .with_failure("interpreter_blind" if missing == MISSING_ACT else "agent_unloaded"))
+            .with_failure("board_server_down"))
 
 
 def _agent_row(probes, label: str, table: dict) -> CheckResult:
     short = label.rsplit(".", 1)[-1]
-    # actd is the resident daemon the whole product hangs off; the radar
-    # agents are periodic and recommended via cron anyway (TCC), so their
-    # absence only warns.
+    # the server is the one resident agent (§78): absent = WARN — the shell's
+    # spawn fallback still serves the board while the app is open.
     if label not in table:
         return CheckResult(
-            short, FAIL if label == ACTD_LABEL else WARN,
-            "%s not registered with launchd%s" % (
-                label, " - cards never move" if label == ACTD_LABEL else ""),
-            "bash install.sh (renders + loads the agents)",
-        ).with_failure("agent_unloaded")
+            short, WARN,
+            "%s not registered with launchd - recaps and the board are only "
+            "reachable while the app is open" % label,
+            "bash install.sh (renders + loads the server agent)",
+        ).with_failure("board_server_down")
     pid, status = table[label]
     if pid != "-":
         return CheckResult(short, OK, "running (pid %s)" % pid)
@@ -485,7 +490,7 @@ def _python_row(scan: _PlistScan, paths: CheckResult) -> Optional[CheckResult]:
             "the repo when launchd spawns it (macOS grants file access per "
             "binary, and launchd jobs do not inherit your terminal's grant)"
             % (", ".join(sorted(scan.blind_py)), _agents_named(scan.blind_py)),
-            INTERPRETER_BLIND_FIX).with_failure("interpreter_blind")
+            INTERPRETER_BLIND_FIX)
     return None
 
 
@@ -509,7 +514,7 @@ def check_paths(probes):
        所以自成一行，且只在 1/2 都干净时才报——否则先修路径。
 
     repo 在 $HOME 下时 1/2 只让 agent 变慢/变脏而不致命，降级为 WARN；3/4 永远
-    是 FAIL。App 的「一键修复」只重渲染 actd，所以这里点名每一个坏 agent。
+    是 FAIL。
     """
     scan = _PlistScan(str(config.HOME).rstrip("/"))
     crashing = crashing_agents(probes)
@@ -528,7 +533,7 @@ def check_paths(probes):
 # §55 orphans / fd limit
 # --------------------------------------------------------------------------- #
 def _is_orphan(label: str, known: set) -> bool:
-    return label.startswith(LABEL_PREFIX) and label not in known
+    return label.startswith(FOOTPRINT_PREFIXES) and label not in known
 
 
 def _on_disk_orphans(probes, known: set, loaded: list) -> list:
@@ -563,61 +568,18 @@ def check_orphans(probes):
             % ", ".join(loaded),
             "bash install.sh  # unloads retired labels; or by hand: "
             + "; ".join(uid_hint % (lbl, lbl) for lbl in loaded),
-        ).with_failure("launchd_orphan")
+        ).with_failure("isolation_footprint_violation")
     return CheckResult(
         "launchd orphans", WARN,
         "retired agent plist(s) left in ~/Library/LaunchAgents (not loaded now, but "
         "launchd reloads them at next login): %s" % ", ".join(on_disk),
         "bash install.sh  # or: rm " + " ".join(
             "~/Library/LaunchAgents/%s.plist" % lbl for lbl in on_disk),
-    ).with_failure("launchd_orphan")
-
-
-def _shown_limit(soft: Optional[int]) -> str:
-    return str(soft) if soft is not None else "unset"
-
-
-def _fd_limit_row(soft: Optional[int], hard: Optional[int]) -> CheckResult:
-    if hard is not None:
-        return CheckResult(
-            "launchd fd limit", WARN,
-            "installed actd plist sets HardResourceLimits.NumberOfFiles=%d - launchd's "
-            "default hard limit is unlimited, so this only LOWERS the ceiling (the "
-            "2026-08-31 hotfix shape; soft=%s)" % (hard, _shown_limit(soft)),
-            "bash install.sh  # re-renders the agents: soft limit only, hard left unlimited",
-        ).with_failure("fd_limit")
-    if soft is not None and soft >= _FD_LIMIT_MIN:
-        return CheckResult("launchd fd limit", OK,
-                           "installed actd plist raises the soft NumberOfFiles limit to %d "
-                           "(hard stays launchd's unlimited)" % soft)
-    return CheckResult(
-        "launchd fd limit", WARN,
-        "installed actd plist carries no soft NumberOfFiles limit (soft=%s) - launchd's "
-        "default is 256, thin headroom for a daemon and its children (EMFILE)"
-        % _shown_limit(soft),
-        "bash install.sh  # re-renders the agents with SoftResourceLimits.NumberOfFiles",
-    ).with_failure("fd_limit")
-
-
-def check_fd_limit(probes):
-    """§55 资源上限：已安装 actd plist 的 SoftResourceLimits.NumberOfFiles。
-
-    launchd gui domain 给 job 的默认是 soft 256 / hard unlimited。模板只抬
-    soft（余量）；**HardResourceLimits 不该出现**——它只会把 unlimited 压低
-    （2026-09-01 实测：Soft+Hard 8192 → [8192, 8192]，只 Soft → [8192,
-    unlimited]）。当晚 hotfix 的形状正是两把都设，而 8-31 的派发失败根本不是
-    fd 问题（TCC，见 check_claude）——所以这一行只说资源上限的事实，
-    不再把 dispatch 失败归到它头上。
-    """
-    text = probes.installed_plist_text(ACTD_LABEL)
-    if not text:
-        return []   # 没装——check_agents 已经报 unregistered
-    return _fd_limit_row(plist_number_of_files(text, "SoftResourceLimits"),
-                         plist_number_of_files(text, "HardResourceLimits"))
+    ).with_failure("isolation_footprint_violation")
 
 
 # --------------------------------------------------------------------------- #
-# §55 第三幕 launchd claude / §56.3 volume access
+# §55 第三幕 launchd claude / §78 isolation footprint
 # --------------------------------------------------------------------------- #
 def _resolved(path: Path) -> Path:
     try:
@@ -646,10 +608,10 @@ def _claude_failed_row(res: dict, claude_bin: str, cwd: Path, text: str,
         return CheckResult(
             "launchd claude", FAIL,
             "launchd-spawned %s cannot read %s (rc=%s: %s) - macOS grants Full Disk "
-            "Access per executable path and this claude has none; every dispatch into "
-            "that folder dies the same way" % (claude_bin, cwd, res.get("rc"), first),
+            "Access per executable path and this claude has none; every recap the "
+            "server starts dies the same way" % (claude_bin, cwd, res.get("rc"), first),
             fda_fix,
-        ).with_failure("claude_blind")
+        )
     return CheckResult(
         "launchd claude", WARN,
         "`%s --version` under launchd with cwd=%s exited %s: %s"
@@ -661,9 +623,7 @@ def _claude_failed_row(res: dict, claude_bin: str, cwd: Path, text: str,
 def _claude_probe_row(res: dict, claude_bin: str, cwd: Path) -> CheckResult:
     state = res.get("state")
     text, first = _first_line(res)
-    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: %s, or move the "
-               "repo under $HOME on the boot volume; then Stop > Discard & re-propose > "
-               "approve the halted cards"
+    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: %s"
                % claude_bin_lib.grant_text(claude_bin, _real_bin(claude_bin), installer()))
     if state == "ok":
         return CheckResult("launchd claude", OK,
@@ -679,8 +639,7 @@ def _claude_probe_row(res: dict, claude_bin: str, cwd: Path) -> CheckResult:
             "launchd claude", FAIL,
             "even /bin/sh inside a launchd job cannot cd into %s - the folder is "
             "missing or unreadable to background jobs" % cwd,
-            "check the path in config.yaml (execution.default_target_repo) and that the "
-            "volume is mounted")
+            "bash install.sh (re-creates the §78 claude-config/cwd directory)")
     if state == "hang":
         return CheckResult(
             "launchd claude", WARN,
@@ -688,45 +647,82 @@ def _claude_probe_row(res: dict, claude_bin: str, cwd: Path) -> CheckResult:
             "macOS file-access prompt looks like for a job that has no UI to show it"
             % (claude_bin, cwd),
             fda_fix,
-        ).with_failure("claude_blind")
+        )
     return _claude_failed_row(res, claude_bin, cwd, text, first, fda_fix)
 
 
 def check_claude(probes):
-    """§55 第三幕（v0.48.4）：launchd 起的 claude 可执行文件能否读任务目录。
+    """§55 第三幕 / §78：server agent 派生的 headless claude 能否在 launchd 会话里起来。
 
-    macOS 按可执行文件路径授「完全磁盘访问」；终端里的 claude 继承终端的授权，
-    launchd 里的 claude 只有它自己的——而 ~/.local/share/claude/versions/<v>
-    每次更新都是新路径。任务目录在外置卷 / Documents / Desktop / Downloads 时，
-    每次派发都死在 Bun 的「possibly due to low max file descriptors」上。
-    2026-08-31 事故就是这个，抬 fd 上限一字未改。doctor 自己在终端里看不见
-    它，所以照 §55 的规矩问 launchd 本人（probes.launchd_claude_probe，测试注入）。
-    没有 actd plist（没装 launchd 服务）→ 无此行：本行说的是 launchd 会话。
+    macOS 按可执行文件路径授「完全磁盘访问」；终端里的 claude 继承终端的授权，launchd
+    里的 claude 只有它自己的。v2.0.0 起 server（唯一的 LaunchAgent）派生 recap 的
+    ``--generate``，cwd = §78 的 ``config.headless_cwd()``（Application Support 下的空
+    目录，不在 TCC 保护位置）——所以本行问的是「launchd 起的 claude 能不能在那里跑
+    ``--version``」。doctor 自己在终端里看不见它，所以问 launchd 本人
+    （probes.launchd_claude_probe，测试注入）。没装 server plist → 无此行。
     """
-    if not probes.installed_plist_text(ACTD_LABEL):
+    if not probes.installed_plist_text(SERVER_LABEL):
         return []
     cfg = config.load_config()
     claude_bin = config.resolve_claude_bin(cfg)
-    cwd = _resolved(cfg.target_repo_path)
+    cwd = _resolved(Path(config.headless_cwd()))
     if not cwd.is_dir():
-        return []   # 默认工作 repo 不存在 — _check_target_repo 之类另有报法
+        return []
     res = probes.launchd_claude_probe(claude_bin, str(cwd))
     return _claude_probe_row(res, claude_bin, cwd)
 
 
-def check_volume_access(probes):
-    """§56.3 第 1 步：部署 agent 在 launchd 会话里能否读写 repo 所在的卷。doctor 跑在
-    终端里、借着终端的 TCC 授权什么都读得到，所以本行**不探**，只读无人值守那一轮的
-    证据（判决与文案：`deploy_state.unattended_verdict` / `volume_access_row`）。没装
-    autodeploy plist、或它部署的是另一个 checkout → 无此行。"""
-    text = probes.installed_plist_text(AUTODEPLOY_LABEL)
-    if not text:
+def _footprint_cron_lines(text: str) -> list:
+    """1.x leftovers in the crontab: uncommented lines that run a retired module."""
+    out = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        if any(marker in line for marker in _CRON_RETIRED_MARKERS):
+            out.append(line.strip()[:120])
+    return out
+
+
+def _footprint_cron(probes) -> list:
+    """Stray cron lines: retired-module lines + any ingest-chain line beyond the first."""
+    try:
+        cron_text = probes.crontab()
+    except Exception:  # noqa: BLE001 - 探针不许崩
+        cron_text = ""
+    stray = _footprint_cron_lines(cron_text)
+    chains = sum(1 for ln in cron_text.splitlines()
+                 if _CRON_CHAIN_MARKER in ln and not ln.lstrip().startswith("#"))
+    if chains > 1:
+        stray.append("%d ingest-chain lines (expected 1)" % chains)
+    return stray
+
+
+def _footprint_agents(probes) -> list:
+    """Installed plists of ours outside the template set (server only)."""
+    known = set(templated_labels(probes))
+    try:
+        return sorted(lbl for lbl in probes.installed_agent_labels()
+                      if lbl.startswith(FOOTPRINT_PREFIXES) and lbl not in known)
+    except Exception:  # noqa: BLE001 - 探针不许崩
         return []
-    repo = str(config.HOME)
-    if not deploy_state.same_repo(plist_string(text, "AIASSISTANT_HOME"), repo):
-        return []
-    interp = plist_interpreter(text) or "<ProgramArguments[0] of the autodeploy plist>"
-    verdict = deploy_state.unattended_verdict(
-        probes.deploy_mirror_read(), repo, probes.launchd_log_tail("autodeploy"),
-        probes.launchd_log_mtime("autodeploy"), probes.now())
-    return row_from(deploy_state.volume_access_row(verdict, interp, repo), _VOLUME_ROW)
+
+
+def check_footprint(probes):
+    """§78 closed resident footprint (constitution art.13): one LaunchAgent
+    (``com.zelin.aiassistant.server``), one cron line (the §18 ingest chain), the
+    opt-in login item, the engine. Anything else under our names — a 1.x agent
+    plist, a radar / digest cron line, a second ingest-chain line — is a
+    violation. WARN (install.sh's 1.x migration removes it); file reads only."""
+    agents = _footprint_agents(probes)
+    stray_cron = _footprint_cron(probes)
+    if not agents and not stray_cron:
+        return CheckResult("isolation footprint", OK,
+                           pick("常驻足迹 = 封闭清单（§78）", "resident footprint = the closed list (§78)"))
+    parts = (["LaunchAgents: " + ", ".join(agents)] if agents else []) \
+        + (["cron: " + "; ".join(stray_cron)] if stray_cron else [])
+    return CheckResult(
+        "isolation footprint", WARN,
+        pick("清单外的后台项（§78）：%s", "background items outside the closed list (§78): %s")
+        % " | ".join(parts),
+        "bash install.sh  # migrates a 1.x install: boots out retired agents, strips retired cron lines",
+    ).with_failure("isolation_footprint_violation")

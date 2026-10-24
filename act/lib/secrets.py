@@ -1,20 +1,16 @@
-"""secrets — credential files under ``<AIASSISTANT_HOME>/config/secrets/`` (CONTRACT §19).
+"""secrets — the Anthropic credential under ``<AIASSISTANT_HOME>/config/secrets/`` (CONTRACT §19).
 
-The Mac app's settings window writes pasted tokens here (dir 0700, files 0600);
-every Python reader resolves credentials in the SAME fixed order:
+The web Settings page writes pasted keys here (dir 0700, files 0600). v2.0.0
+keeps exactly one credential — the Anthropic API key every headless ``claude -p``
+runs on (§78: ``--bare`` never reads OAuth or the keychain, so a key file is the
+only way in). Resolution order:
 
-    1. secrets file (exists and non-empty)      config/secrets/<name>
-    2. explicit path from config.yaml           e.g. sources.slack_token_path
-    3. legacy default path                      e.g. ~/Desktop/Keys/slack-user-token.txt
+    1. config/secrets/anthropic-api-key.txt   (exists and non-empty)
+    2. ~/.config/anthropic-key.txt            (the pre-app location, still honoured)
 
-Fixed file names (one line, just the token):
-    slack-user-token.txt / gmail-app-password.txt / anthropic-api-key.txt
-
-The legacy paths stay as the final fallback so Zelin's existing setup keeps
-working unchanged — nothing breaks when config/secrets/ is empty. That tier is
-DEPRECATED (CONTRACT §19): resolving through it logs a one-line stderr warning
-plus a ``legacy_secret_path`` analytics event (name only, never the credential),
-because ~/Desktop is iCloud-synced on default macOS setups.
+Never the owner's Claude Code login or the macOS keychain. The Slack / Gmail
+credential files retired with the radars (full text in tag ``full``); files left
+on disk are simply never read.
 """
 from __future__ import annotations
 
@@ -25,57 +21,34 @@ from typing import Optional, Union
 
 from act.lib import config
 
-# Directory + canonical file names (CONTRACT §19 — must match the Swift app).
+# Directory + canonical file name (CONTRACT §19 — server/secrets_store.py mirrors it).
 SECRETS_DIR: Path = config.HOME / "config" / "secrets"
-
-SLACK_TOKEN_FILE = "slack-user-token.txt"  # nosec B105 - file NAME, not a secret
-GMAIL_APP_PASSWORD_FILE = "gmail-app-password.txt"  # nosec B105 - file NAME, not a secret
 ANTHROPIC_API_KEY_FILE = "anthropic-api-key.txt"
-
-# §19 第三层（旧默认路径，已弃用但仍是最后兜底）——单源表：radar_slack /
-# radar_gmail 的 DEFAULT_*_PATH 与 dashboard `secret_present` 探针（§48.4）都
-# 从这里取，雷达解析到什么、投影就报什么。判例 patch 这张表指进沙箱。
-LEGACY_DEFAULT_PATHS: dict = {
-    SLACK_TOKEN_FILE: "~/Desktop/Keys/slack-user-token.txt",  # nosec B105 - file PATH
-    GMAIL_APP_PASSWORD_FILE: "~/Desktop/Keys/gmail-app-password.txt",  # nosec B105 - file PATH
-}
+# §19 second tier: the location ingest used before the app had a Settings page.
+LEGACY_ANTHROPIC_KEY_PATH = "~/.config/anthropic-key.txt"
 
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 
-
-# origins already warned about in this process — radars poll in a loop, so the
-# multiline warning must fire once per file, not once per scan.
+# origins already warned about in this process — the multiline warning fires once per file.
 _warned_multiline: set = set()
 
 
 def _first_token_line(text: str, origin) -> Optional[str]:
-    """契约形态是「各一行纯 token」（§19）：多行内容取首个非空行，其余按
-    畸形丢弃并 log 一条（只报来源，绝不带凭证值）。整段带 ``\\n`` 返回只会
-    变成难排查的 IMAP/HTTP auth 失败——用户误粘的第二行（注释/警告文字）
-    不能混进凭证值。"""
+    """契约形态是「一行纯 token」（§19）：多行内容取首个非空行，其余按畸形丢弃并 log
+    一条（只报来源，绝不带凭证值）。"""
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
     if not lines:
         return None
-    if len(lines) > 1:
-        _warn_multiline_once(origin, len(lines))
+    if len(lines) > 1 and str(origin) not in _warned_multiline:
+        _warned_multiline.add(str(origin))
+        try:
+            print(f"[secrets] WARNING: {origin} has {len(lines)} non-empty lines"
+                  " — expected a single-line token (CONTRACT §19); using the first line only",
+                  file=sys.stderr)
+        except Exception:  # noqa: BLE001 - warning must never break resolution
+            pass
     return lines[0]
-
-
-def _warn_multiline_once(origin, count: int) -> None:
-    """一次性（每个来源）的畸形提示——只报来源与行数，绝不带凭证值。"""
-    if str(origin) in _warned_multiline:
-        return
-    _warned_multiline.add(str(origin))
-    try:
-        print(
-            f"[secrets] WARNING: {origin} has {count} non-empty lines"
-            " — expected a single-line token (CONTRACT §19);"
-            " using the first line only",
-            file=sys.stderr,
-        )
-    except Exception:  # noqa: BLE001 - warning must never break resolution
-        pass
 
 
 def read_secret(name: str) -> Optional[str]:
@@ -88,10 +61,7 @@ def read_secret(name: str) -> Optional[str]:
 
 
 def write_secret(name: str, value: str) -> Path:
-    """Write a secret file, enforcing dir 0700 / file 0600. Returns the path.
-
-    多行粘贴只保留首个非空行（§19 一行 token）——写成两行的文件会让所有
-    读者拿到带 ``\\n`` 的"凭证"。"""
+    """Write a secret file, enforcing dir 0700 / file 0600. Returns the path."""
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(SECRETS_DIR, _DIR_MODE)
@@ -108,9 +78,7 @@ def write_secret(name: str, value: str) -> Path:
 
 
 def read_path(path: Union[str, Path, None]) -> Optional[str]:
-    """First token line of a credential FILE at ``path``, or None. Public: the
-    doctor's key probe reads the §19 legacy path through it without the
-    deprecation warning（防腐 #2——跨模块不引 `_私名`）。"""
+    """First token line of a credential FILE at ``path``, or None."""
     if not path:
         return None
     p = Path(str(path)).expanduser()
@@ -121,54 +89,17 @@ def read_path(path: Union[str, Path, None]) -> Optional[str]:
     return _first_token_line(raw, p)
 
 
-_read_path = read_path   # 本模块内部沿用的旧名
-
-
-# names already warned about in this process — radars poll in a loop, so the
-# deprecation line must fire once per credential, not once per scan.
-_warned_legacy: set = set()
-
-
-def _warn_legacy(secret_name: str, path: Union[str, Path]) -> None:
-    """One-line deprecation notice (stderr + analytics). Never raises (§19:
-    the credential VALUE must not appear in any log — only name and path)."""
-    if secret_name in _warned_legacy:
-        return
-    _warned_legacy.add(secret_name)
-    try:
-        print(
-            f"[secrets] DEPRECATED: {secret_name} resolved via legacy path "
-            f"{path} — paste the token in the app's Settings window instead "
-            "(stored under config/secrets/, see docs/CONTRACT.md §19)",
-            file=sys.stderr,
-        )
-    except Exception:  # noqa: BLE001 - warning must never break resolution
-        pass
-    try:
-        from act.lib import analytics
-        analytics.log_event("legacy_secret_path", name=secret_name)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def resolve_credential(
     secret_name: str,
     explicit_path: Union[str, Path, None] = None,
     legacy_default: Union[str, Path, None] = None,
 ) -> Optional[str]:
     """Return the credential CONTENT per the §19 order (secrets → explicit → legacy).
+    Empty files count as missing."""
+    return (read_secret(secret_name) or read_path(explicit_path)
+            or read_path(legacy_default))
 
-    ``explicit_path`` / ``legacy_default`` are file PATHS; the return value is
-    always the file's stripped content (empty files count as missing). The
-    legacy tier still works but is deprecated — see ``_warn_legacy``.
-    """
-    val = read_secret(secret_name)
-    if val:
-        return val
-    val = _read_path(explicit_path)
-    if val:
-        return val
-    val = _read_path(legacy_default)
-    if val:
-        _warn_legacy(secret_name, legacy_default)
-    return val
+
+def resolve_anthropic_key() -> Optional[str]:
+    """The Anthropic API key per §19 (secrets file, then ~/.config/anthropic-key.txt)."""
+    return resolve_credential(ANTHROPIC_API_KEY_FILE, None, LEGACY_ANTHROPIC_KEY_PATH)

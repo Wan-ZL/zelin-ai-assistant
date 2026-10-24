@@ -4,8 +4,8 @@
 接收 ``act.doctor.Probes``（注入缝，duck-typed——本层不 import act.doctor，
 lib 永不向上，§58.3）。``core`` 放共享件：OK/WARN/FAIL、CheckResult、label
 常量、子进程 runner、双语 pick。家族：``environment``（工具链 / 配置 /
-凭证 / 目录）、``launchd``（macOS 服务 + §55 路径纪律 + TCC 三幕）、
-``services``（systemd / Task Scheduler 镜像）、``cron``（§18 链 + FDA 探针）、
-``pipeline``（store2 / dashboard / 心跳 / 看板 server / 部署）。模型旋钮两行
-（§59）留在 act/doctor.py——它们经 act/llm.py 单一边界，lib 层不可达。
+凭证 / 目录）、``launchd``（server agent + §55 路径纪律 + TCC + §78 足迹）、
+``cron``（§18 链 + FDA 探针）、``pipeline``（看板 server / UI 构建）。花钱的活探针
+（claude auth、模型活性）与 §78 的 ``claude bare supported`` 行留在 act/doctor.py——
+它们经 act/llm.py 单一边界，lib 层不可达。
 """
