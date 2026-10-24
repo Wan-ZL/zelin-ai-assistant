@@ -84,7 +84,7 @@ refuse_diverged() { # $1 = reason, $2 = sentence, rest = the manual commands
         _cmds+=("commands=$_c")
     done
     write_state diverged "reason=$_reason" "from=$FROM" "target=$TARGET" "${_cmds[@]}"
-    notify_failure "$_why — the About page lists the commands to run by hand"
+    notify_failure "$_why — the commands to run by hand are in state/upgrade_state.json"
     exit 4
 }
 
