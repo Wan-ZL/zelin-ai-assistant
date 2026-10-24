@@ -1,6 +1,8 @@
 # Fresh install (macOS) — the machine-readable version of the owner's
-# acceptance criterion (CONTRACT §69; vnext2-plan 2026-09-02: 「我能够在另一台
-# 电脑上起一个空白环境……就能够直接使用」).
+# acceptance criterion (CONTRACT §69: 「我能够在另一台电脑上起一个空白环境……
+# 就能够直接使用」), and since lite 2.0 also the machine check of the closed
+# footprint (§78, constitution art.13): an install leaves exactly one
+# LaunchAgent, exactly one crontab line of ours, and never creates ~/.claude.
 #
 # A clean macOS runner plays the "other computer": an EMPTY temp $HOME (no
 # config, no secrets, no state, no claude, no PyYAML), a local bare repo that
@@ -10,54 +12,56 @@
 #     curl … scripts/bootstrap.sh | bash
 #
 # except the script comes from THIS checkout (the commit under test, not
-# whatever main's raw URL serves at that moment).
-# `--no-launchd` because a CI session owns no login launchd domain worth
-# wiring: install.sh proves the daemon with one real `actd --once` pass
-# instead (§23 step `actd_once`). Assertions, in order:
+# whatever main's raw URL serves at that moment). bootstrap.sh clones, runs
+# `bash install.sh --non-interactive` (the real thing: the board server
+# LaunchAgent is loaded into this runner's gui domain and the crontab line is
+# written) and then `act.doctor --fresh-install`. Assertions, in order:
 #
-#   1. bootstrap.sh exits 0 (install.sh: zero failed steps; doctor
-#      --fresh-install: zero BROKEN rows — TCC grants / credentials are the
-#      human's and never count);
-#   2. the §23 install report says what a fresh machine must say: config ok
-#      (bootstrap created it from the example first; install.sh kept it),
-#      runtime_python ok, version ok, ui ok (web + shell both built on this
-#      runner — the web half builds from a mirror of web/ OUTSIDE the repo,
-#      which is what the first real run, 2026-09-03, broke on), launchd skipped
-#      (--no-launchd), actd_once ok, stable_claude skipped + claude_bin missing
-#      (no claude on a fresh machine — cleanly, never a fail), no step `fail`;
-#   3. the board server answers /api/board (200, JSON), /api/health,
-#      /api/setup (§68.5 wizard: needed=true — no credentials yet — and
-#      config_exists=true) and /api/permissions (the Full Disk Access list
-#      names the daemon interpreter and a claude path);
-#   4. `python3 -m act.doctor --fresh-install --json` with the server up: exit
-#      0, broken bucket EMPTY, and the --no-launchd classes explicit — actd +
-#      cron ingest chain are `unwired`, claude CLI is `human`, board server is
-#      `unwired` with a `reachable` detail (it answers, but it is the step's
-#      hand-started server, not the launchd job — §54.2 says that is a warn),
-#      the manual steps list the board / claude / key / three FDA grants /
-#      wire-the-daemons items;
-#   5. a second bootstrap run is an UPDATE: exit 0, config.yaml byte-identical,
-#      the checkout still on main.
+#   1. the §23 install report says what a fresh machine must say: config ok
+#      (bootstrap created it first; install.sh kept it), runtime_python ok,
+#      version ok, state_dirs ok, migrate ok (nothing of 1.x here), ui ok (web
+#      + shell both built on this runner), launchd ok with exactly one agent,
+#      cron ok, no step `fail`; stable_claude / claude_bin say "no claude"
+#      when the runner has none;
+#   2. the closed footprint (§78): `test ! -e $FRESH_HOME/.claude`; the
+#      LaunchAgents directory holds exactly com.zelin.aiassistant.server.plist
+#      (no 1.x Act / radar / digest / auto-deploy / screenpipe-* plist), and
+#      `launchctl list` shows no other label of ours; the crontab holds exactly
+#      one line of ours (the */30 ingest chain, no act.* tail) and every line
+#      the runner had before is still there;
+#   3. the board server the LaunchAgent started answers GET /api/health,
+#      /api/recaps, /api/setup (§68.5 wizard: needed=true, config_exists=true,
+#      no credential) and /api/permissions (the FDA list names the daemon
+#      interpreter and a claude path), and serves the web app at /;
+#   4. `python3 -m act.doctor --fresh-install --json` runs: exit 0, broken
+#      bucket EMPTY, the scheduler rows wired (not `unwired`: this run passed
+#      no --no-launchd), the claude CLI in `human` when the runner has none;
+#      ~/.claude still absent afterwards;
+#   5. a second bootstrap run is an UPDATE: exit 0, config.yaml
+#      byte-identical, still on main, and still exactly one agent and one
+#      crontab line (re-install is idempotent on the footprint);
+#   6. `bash uninstall.sh --yes` removes the footprint item by item: no
+#      LaunchAgent of ours, no crontab line of ours, the app bundle gone, the
+#      runner's own crontab lines kept.
 #
-# The job summary carries the doctor's human-readable list — what a real Mac
-# still needs from its owner (claude install, API key, FDA grants) — so the
-# verdict stays about the install path and the to-do list stays readable.
+# The job summary carries the doctor's human-readable list (what a real Mac
+# still needs from its owner: the API key, the FDA grants), so the verdict
+# stays about the install path and the to-do list stays readable.
 #
-# WHEN IT RUNS (CONTRACT §56.8 matrix): push to main, nightly, and on demand
-# — NOT per pull request. The owner is on the free plan, where macOS runner
-# concurrency (5 slots) is the resource dozens of parallel agent PRs queue
-# on; this job holds one slot for up to 40 minutes and its verdict is about
-# the install path as a whole, not about any single PR's diff. A red run
-# here is a bug in the one-command install (CONTRIBUTING), found within a
-# day of landing rather than blocking the PR that landed it. Informational
-# (never in the required-checks list — it has no PR context to attach to).
+# WHEN IT RUNS (CONTRACT §56.8 matrix): push to main, nightly, and on demand,
+# NOT per pull request. The owner is on the free plan, where macOS runner
+# concurrency (5 slots) is the resource parallel agent PRs queue on; this job
+# holds one slot for up to 40 minutes and its verdict is about the install
+# path as a whole, not about any single PR's diff. Informational (never in the
+# required-checks list; it has no PR context to attach to). A red run here is
+# a bug in the one-command install, found within a day of landing.
 name: Fresh install (macOS)
 
 on:
   push:
     branches: [main]
   schedule:
-    - cron: "17 11 * * *" # daily at 11:17 UTC (04:17 US Pacific) — last of the nightlies (mutation 09:03, insights 09:23, ci-nightly 10:43) so they never compete for slots
+    - cron: "17 11 * * *" # daily at 11:17 UTC (04:17 US Pacific), after mutation-nightly (09:03) so they never compete for slots
   workflow_dispatch:
 
 permissions:
@@ -82,20 +86,23 @@ jobs:
           persist-credentials: false
 
       - name: Paths for the rest of the job
-        # The `runner` context is not available in job-level env, so the three
-        # paths every later step shares are exported once here ($GITHUB_ENV).
+        # The `runner` context is not available in job-level env, so the paths
+        # every later step shares are exported once here ($GITHUB_ENV). The app
+        # bundle goes to $FRESH_HOME/Applications (install.sh's
+        # AIASSISTANT_UI_APPS_DIR seam), the same ~/Applications uninstall.sh
+        # searches, so nothing of this run lands in the runner's /Applications.
         run: |
           {
             echo "FRESH_HOME=$RUNNER_TEMP/fresh-home"
             echo "ORIGIN=$RUNNER_TEMP/origin.git"
             echo "CHECKOUT=$RUNNER_TEMP/fresh-home/Projects/zelin-ai-assistant"
+            echo "AIASSISTANT_UI_APPS_DIR=$RUNNER_TEMP/fresh-home/Applications"
           } >> "$GITHUB_ENV"
 
-      - name: Select newest Xcode
-        # shell/build.sh targets a recent toolchain (same rule as ci.yml)
+      - name: Select pinned Xcode
+        # shell/build.sh needs a recent toolchain; same pin as ci.yml / release.yml
         run: |
-          XCODE="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -V | tail -n1)"
-          sudo xcode-select -s "$XCODE/Contents/Developer"
+          bash scripts/ci/select_xcode.sh
           swiftc --version
           node --version && npm --version
 
@@ -106,46 +113,58 @@ jobs:
           git push -q "$ORIGIN" --tags || true
           git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main
           echo "origin main = $(git -C "$ORIGIN" rev-parse --short main)"
-          mkdir -p "$FRESH_HOME"
+          mkdir -p "$FRESH_HOME" "$AIASSISTANT_UI_APPS_DIR"
+          # the runner's own crontab (per user, not per HOME): every line must survive
+          crontab -l > "$RUNNER_TEMP/crontab-before.txt" 2>/dev/null || : > "$RUNNER_TEMP/crontab-before.txt"
+          echo "runner crontab before: $(grep -c . "$RUNNER_TEMP/crontab-before.txt" || true) line(s)"
 
-      - name: Bootstrap into an empty HOME (first run = clone + install)
+      - name: Bootstrap into an empty HOME (first run = clone + install.sh --non-interactive)
         # HOME is the empty temp dir for the whole step: pip --user, the home
-        # pointer, ~/Library/Logs, the web build cache all land there. PATH
-        # keeps the runner's node so the web half of the ui step is exercised;
-        # claude is absent by construction (a fresh machine).
+        # pointer, ~/Library/LaunchAgents, ~/Library/Logs, the web build cache
+        # all land there. PATH keeps the runner's node so the web half of the ui
+        # step is exercised. The exit code is kept for the assertion step, so
+        # the report and footprint checks still run and say what went wrong.
         env:
           HOME: ${{ env.FRESH_HOME }}
           ZAI_BOOTSTRAP_REPO_URL: ${{ env.ORIGIN }}
           ZAI_BOOTSTRAP_NO_OPEN: "1"
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --no-launchd --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-1.log"
-          test "${PIPESTATUS[0]}" -eq 0
+          rc=0
+          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --dir "$CHECKOUT" > "$RUNNER_TEMP/bootstrap-1.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/bootstrap-1.log"
+          echo "$rc" > "$RUNNER_TEMP/bootstrap-1.rc"
+          echo "bootstrap exit: $rc"
 
       - name: Assert the install report says what a fresh machine must say
         env:
           HOME: ${{ env.FRESH_HOME }}
         run: |
-          python3 - "$CHECKOUT/state/install_report.json" <<'PY'
+          HAS_CLAUDE=0; command -v claude >/dev/null 2>&1 && HAS_CLAUDE=1
+          python3 - "$CHECKOUT/state/install_report.json" "$HAS_CLAUDE" <<'PY'
           import json, sys
           doc = json.load(open(sys.argv[1]))
+          has_claude = sys.argv[2] == "1"
           steps = {s["name"]: s for s in doc["steps"]}
           print(json.dumps(steps, indent=1, ensure_ascii=False))
           # ui is strictly ok: this runner has node AND swiftc, so `skipped` here would
-          # mean the installer failed to see a toolchain that exists. stable_claude /
-          # claude_bin: no claude on a fresh machine — the copy step must skip cleanly
-          # (never warn/fail), that is the human's install to do (§55 第五幕, §69.3).
+          # mean the installer failed to see a toolchain that exists.
           want = {"config": "ok", "runtime_python": "ok", "version": "ok", "state_dirs": "ok",
-                  "ui": "ok", "launchd": "skipped", "actd_once": "ok", "cron": "skipped",
-                  "stable_claude": "skipped", "claude_bin": "missing"}
+                  "migrate": "ok", "ui": "ok", "launchd": "ok", "cron": "ok"}
+          if not has_claude:
+              # no claude on a fresh machine: the copy step skips cleanly (never warn/fail)
+              want.update({"stable_claude": "skipped", "claude_bin": "missing"})
           bad = {k: steps.get(k, {}).get("status") for k, v in want.items()
                  if steps.get(k, {}).get("status") != v}
           assert not bad, "unexpected step statuses: %r" % bad
-          assert "--no-launchd" in (steps["launchd"].get("detail") or "")
-          assert "no claude" in (steps["stable_claude"].get("detail") or ""), steps["stable_claude"]
+          if not has_claude:
+              assert "no claude" in (steps["stable_claude"].get("detail") or ""), steps["stable_claude"]
           # bootstrap step 4 created config.yaml from the example BEFORE install.sh ran,
           # so install.sh's own config step must report the file as kept, never rewritten
           assert "kept" in (steps["config"].get("detail") or ""), steps["config"]
-          assert doc["mode"] == "non-interactive"
+          assert "nothing to migrate" in (steps["migrate"].get("detail") or ""), steps["migrate"]
+          assert "1 agent loaded" in (steps["launchd"].get("detail") or ""), steps["launchd"]
+          assert doc["mode"] == "non-interactive", doc["mode"]
+          assert doc.get("agents_loaded") == ["com.zelin.aiassistant.server"], doc.get("agents_loaded")
           ui = steps["ui"].get("detail") or ""
           assert "web ok" in ui and "shell ok" in ui, ui
           failed = [k for k, s in steps.items() if s.get("status") == "fail"]
@@ -155,67 +174,92 @@ jobs:
           test -f "$CHECKOUT/config.yaml"
           test -f "$CHECKOUT/config/runtime.json"
           test -f "$CHECKOUT/web/dist/index.html"
-          test -f "$CHECKOUT/state/store2_truth.json"
-          test -f "$CHECKOUT/state/actd.heartbeat"
-          for app in "/Applications/Zelin's AI Assistant.app" "$HOME/Applications/Zelin's AI Assistant.app"; do
-            [ -d "$app" ] && echo "shell bundle: $app"
-          done
-          test -d "/Applications/Zelin's AI Assistant.app" || test -d "$HOME/Applications/Zelin's AI Assistant.app"
+          test -d "$AIASSISTANT_UI_APPS_DIR/Zelin's AI Assistant.app"
+          test -d "$HOME/Library/Application Support/ZelinAIAssistant/claude-config/cwd"
 
-      - name: Board server answers /api/board, /api/health, /api/setup, /api/permissions
+      - name: "Assert the closed footprint (§78) — one agent, one cron line, no ~/.claude"
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          set -euo pipefail
+          test ! -e "$FRESH_HOME/.claude" || { echo "::error::install created $FRESH_HOME/.claude (art.13)"; ls -la "$FRESH_HOME/.claude"; exit 1; }
+          AGENTS="$(ls "$FRESH_HOME/Library/LaunchAgents")"
+          echo "LaunchAgents: $AGENTS"
+          test "$AGENTS" = "com.zelin.aiassistant.server.plist"
+          LOADED="$(launchctl list | awk '$3 ~ /^com\.zelin\./ {print $3}' | sort)"
+          echo "loaded labels of ours: $LOADED"
+          test "$LOADED" = "com.zelin.aiassistant.server"
+          crontab -l > "$RUNNER_TEMP/crontab-after.txt"
+          cat "$RUNNER_TEMP/crontab-after.txt"
+          OURS="$(grep -Ec '^[^#]*(screenpipe-export\.sh|act\.|zelin-ai-assistant)' "$RUNNER_TEMP/crontab-after.txt" || true)"
+          test "$OURS" -eq 1 || { echo "::error::expected exactly one crontab line of ours, found $OURS"; exit 1; }
+          grep -E '^\*/30 .*screenpipe-export\.sh.*screenpipe-cleanup\.sh.*process-screenpipe\.sh.*state/ingest\.cron\.log' "$RUNNER_TEMP/crontab-after.txt"
+          if grep -Eq 'act\.(radar|digest|weekly_digest|analytics_sync)' "$RUNNER_TEMP/crontab-after.txt"; then
+            echo "::error::a 1.x module line is in the crontab"; exit 1
+          fi
+          # every line the runner had before is still there, byte for byte
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            grep -qxF -- "$line" "$RUNNER_TEMP/crontab-after.txt" || { echo "::error::install dropped a crontab line: $line"; exit 1; }
+          done < "$RUNNER_TEMP/crontab-before.txt"
+
+      - name: The LaunchAgent's board server answers /api/health, /api/recaps, /api/setup, /api/permissions
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          set -euo pipefail
+          # 90 s: http.server's bind does a reverse DNS lookup that can stall on
+          # macOS runners (web/e2e/demoServer.ts measured 25 s on the first run)
+          for _ in $(seq 1 180); do
+            curl -fsS http://127.0.0.1:47820/api/health >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:47820/api/health | tee "$RUNNER_TEMP/health.json" | python3 -m json.tool
+          curl -fsS http://127.0.0.1:47820/api/recaps | tee "$RUNNER_TEMP/recaps.json" | python3 -m json.tool | head -n 20
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d.get("recaps"), list), d.keys(); print("recaps:", len(d["recaps"]), "counts:", d.get("recap_counts"))' "$RUNNER_TEMP/recaps.json"
+          curl -fsS http://127.0.0.1:47820/api/setup | tee "$RUNNER_TEMP/setup.json" | python3 -m json.tool
+          # §68.5: a fresh machine lands in the wizard: config exists (bootstrap step 4), no credential yet, no completion marker
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print({k: d[k] for k in ("needed","done","config_exists")}); assert d["needed"] is True; assert d["done"] is False; assert d["config_exists"] is True; assert not any(d["secrets"].values())' "$RUNNER_TEMP/setup.json"
+          curl -fsS http://127.0.0.1:47820/api/permissions | tee "$RUNNER_TEMP/permissions.json" | python3 -m json.tool | head -n 40
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); roles={e["role"]: e for e in d["fda"]["executables"]}; print({r: e["path"] for r, e in roles.items()}); assert roles["daemon_python"]["exists"], roles["daemon_python"]; assert "claude" in roles' "$RUNNER_TEMP/permissions.json"
+          curl -fsS -o /dev/null -w 'index: %{http_code}\n' http://127.0.0.1:47820/
+
+      - name: doctor --fresh-install runs with the scheduler wired
         env:
           HOME: ${{ env.FRESH_HOME }}
         run: |
           PY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$CHECKOUT/config/runtime.json")"
           echo "daemon python: $PY"
-          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" ZAI_PORT=47820 "$PY" -m server > "$RUNNER_TEMP/server.log" 2>&1 &)
-          for _ in $(seq 1 40); do
-            curl -fsS http://127.0.0.1:47820/api/health >/dev/null 2>&1 && break
-            sleep 0.5
-          done
-          curl -fsS http://127.0.0.1:47820/api/health | python3 -m json.tool
-          curl -fsS -o "$RUNNER_TEMP/board.json" -w 'board: %{http_code}\n' http://127.0.0.1:47820/api/board
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, dict) and "generated_at" in d, d.keys(); print("board keys:", sorted(d)[:12])' "$RUNNER_TEMP/board.json"
-          curl -fsS http://127.0.0.1:47820/api/setup | tee "$RUNNER_TEMP/setup.json" | python3 -m json.tool
-          # §68.5: a fresh machine lands in the wizard — config exists (bootstrap step 4), no credential yet, no completion marker
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print({k: d[k] for k in ("needed","done","config_exists")}); assert d["needed"] is True; assert d["done"] is False; assert d["config_exists"] is True; assert not any(d["secrets"].values())' "$RUNNER_TEMP/setup.json"
-          curl -fsS http://127.0.0.1:47820/api/permissions | tee "$RUNNER_TEMP/permissions.json" | python3 -m json.tool | head -n 40
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); roles={e["role"]: e for e in d["fda"]["executables"]}; print({r: e["path"] for r, e in roles.items()}); assert roles["daemon_python"]["exists"], roles["daemon_python"]; assert "claude" in roles' "$RUNNER_TEMP/permissions.json"
-          curl -fsS -o /dev/null -w 'index: %{http_code}\n' http://127.0.0.1:47820/
-          # doctor once more, with the server up (board server row: reachable, not launchd-hosted)
+          HAS_CLAUDE=0; command -v claude >/dev/null 2>&1 && HAS_CLAUDE=1
           rc=0
           (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh.json") || rc=$?
           echo "doctor --fresh-install exit: $rc"
-          python3 - "$RUNNER_TEMP/doctor-fresh.json" <<'PY'
+          python3 - "$RUNNER_TEMP/doctor-fresh.json" "$HAS_CLAUDE" <<'PY'
           import json, sys
           d = json.load(open(sys.argv[1]))
+          has_claude = sys.argv[2] == "1"
           names = {k: [r["name"] for r in rows] for k, rows in d["buckets"].items()}
           for k in ("broken", "human", "unwired", "notes", "wired"):
               print("%s: %s" % (k, names[k]))
-          # --no-launchd acceptance classes (§69.3): nothing broken; the scheduler rows are
-          # "not wired in this run", the claude CLI is the human's — none of them is a FAIL
-          # of the install path. The board server answers right now but is hand-started
-          # (no launchd job under --no-launchd) → §54.2 warn → unwired, detail says reachable.
-          assert d["no_launchd"] is True
+          # the scheduler IS wired in this run: nothing may be filed as "not wired on purpose"
+          assert d["no_launchd"] is False
+          assert names["unwired"] == [], "unwired rows without --no-launchd: %r" % names["unwired"]
           assert names["broken"] == [], "broken rows on a fresh machine: %r" % names["broken"]
           assert d["exit_code"] == 0
-          for name in ("actd", "cron ingest chain"):
-              assert name in names["unwired"], "%s should be unwired under --no-launchd: %r" % (name, names)
-          assert "claude CLI" in names["human"], names
-          server_row = next((r for r in d["buckets"]["unwired"] if r["name"] == "board server"), None)
-          assert server_row is not None, "board server should be unwired (reachable, not launchd-hosted): %r" % names
-          assert "reachable" in server_row["detail"], server_row
+          if not has_claude:
+              assert "claude CLI" in names["human"], names
           ids = [s["id"] for s in d["manual_steps"]]
-          for step in ("open_board", "install_claude", "api_key", "fda_python", "fda_claude", "fda_cron", "wire_scheduler"):
+          assert "wire_scheduler" not in ids, ids
+          for step in ("open_board", "api_key", "fda_python", "fda_cron"):
               assert step in ids, (step, ids)
           PY
           test "$rc" -eq 0
-          pkill -f "python3 -m server" || pkill -f "\-m server" || true
+          test ! -e "$FRESH_HOME/.claude" || { echo "::error::the doctor created $FRESH_HOME/.claude (art.13)"; exit 1; }
+          test "$(cat "$RUNNER_TEMP/bootstrap-1.rc")" -eq 0 || { echo "::error::bootstrap exited $(cat "$RUNNER_TEMP/bootstrap-1.rc") (install.sh failed steps + doctor broken rows; see its log above)"; exit 1; }
 
       - name: Job summary — what a real Mac still needs from its owner
         # The same text bootstrap.sh prints (act.doctor --fresh-install), rendered from
-        # the JSON the previous step saved: the FDA grants, the claude install, the key.
-        # The verdict above is about the install path; this is the human's to-do list.
+        # the JSON the previous step saved: the API key, the FDA grants, the claude install.
         if: always()
         env:
           HOME: ${{ env.FRESH_HOME }}
@@ -227,13 +271,13 @@ jobs:
               echo
               echo '```'
               (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -c 'import json,sys; from act.lib import fresh_install as fi; print(fi.render(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/doctor-fresh.json") \
-                || echo "(could not render $RUNNER_TEMP/doctor-fresh.json — it is in the evidence artifact)"
+                || echo "(could not render $RUNNER_TEMP/doctor-fresh.json; it is in the evidence artifact)"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           elif [ -f "$RUNNER_TEMP/bootstrap-1.log" ]; then
-            # the acceptance failed before the server step: show what bootstrap itself said
+            # the acceptance failed before the doctor step: show what bootstrap itself said
             {
-              echo "## Fresh install — FAILED before the board server step; bootstrap's own verdict:"
+              echo "## Fresh install — FAILED before the doctor step; bootstrap's own verdict:"
               echo
               echo '```'
               grep -E '^\s*\[(warn|ERR |FAIL)\]|failed step|^exit [0-9]+ —|^==> ' "$RUNNER_TEMP/bootstrap-1.log" | head -n 80
@@ -243,7 +287,7 @@ jobs:
             echo "## Fresh install — bootstrap never ran (see the job log)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Second bootstrap run is an update (idempotent, config untouched)
+      - name: Second bootstrap run is an update (idempotent, config and footprint unchanged)
         env:
           HOME: ${{ env.FRESH_HOME }}
           ZAI_BOOTSTRAP_REPO_URL: ${{ env.ORIGIN }}
@@ -251,11 +295,33 @@ jobs:
         run: |
           echo "# local edit that must survive an update" >> "$CHECKOUT/config.yaml"
           before="$(shasum -a 256 "$CHECKOUT/config.yaml")"
-          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --no-launchd --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-2.log"
+          bash "$GITHUB_WORKSPACE/scripts/bootstrap.sh" --dir "$CHECKOUT" 2>&1 | tee "$RUNNER_TEMP/bootstrap-2.log"
           test "${PIPESTATUS[0]}" -eq 0
           grep -q "bootstrap done (updated)" "$RUNNER_TEMP/bootstrap-2.log"
           test "$before" = "$(shasum -a 256 "$CHECKOUT/config.yaml")"
           test "$(git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD)" = "main"
+          test "$(ls "$FRESH_HOME/Library/LaunchAgents")" = "com.zelin.aiassistant.server.plist"
+          test "$(crontab -l | grep -Ec '^[^#]*(screenpipe-export\.sh|act\.|zelin-ai-assistant)' || true)" -eq 1
+          test ! -e "$FRESH_HOME/.claude"
+
+      - name: uninstall.sh removes the footprint item by item
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          set -euo pipefail
+          bash "$CHECKOUT/uninstall.sh" --yes 2>&1 | tee "$RUNNER_TEMP/uninstall.log"
+          LEFT="$(find "$FRESH_HOME/Library/LaunchAgents" -maxdepth 1 -name 'com.zelin.*' 2>/dev/null || true)"
+          test -z "$LEFT" || { echo "::error::LaunchAgents left after uninstall: $LEFT"; exit 1; }
+          test -z "$(launchctl list | awk '$3 ~ /^com\.zelin\./ {print $3}')"
+          OURS="$( (crontab -l 2>/dev/null || true) | grep -Ec '^[^#]*(screenpipe-export\.sh|act\.|zelin-ai-assistant)' || true)"
+          test "$OURS" -eq 0 || { echo "::error::$OURS crontab line(s) of ours left after uninstall"; exit 1; }
+          test ! -e "$AIASSISTANT_UI_APPS_DIR/Zelin's AI Assistant.app"
+          test ! -e "$HOME/Library/Application Support/ZelinAIAssistant/claude-config"
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            (crontab -l 2>/dev/null || true) | grep -qxF -- "$line" || { echo "::error::uninstall dropped a crontab line: $line"; exit 1; }
+          done < "$RUNNER_TEMP/crontab-before.txt"
+          test ! -e "$FRESH_HOME/.claude"
 
       - name: Upload evidence (logs, install report, doctor buckets)
         if: always()
@@ -266,7 +332,11 @@ jobs:
           path: |
             ${{ runner.temp }}/bootstrap-1.log
             ${{ runner.temp }}/bootstrap-2.log
-            ${{ runner.temp }}/server.log
+            ${{ runner.temp }}/uninstall.log
+            ${{ runner.temp }}/crontab-before.txt
+            ${{ runner.temp }}/crontab-after.txt
+            ${{ runner.temp }}/health.json
+            ${{ runner.temp }}/recaps.json
             ${{ runner.temp }}/setup.json
             ${{ runner.temp }}/permissions.json
             ${{ runner.temp }}/doctor-fresh.json
