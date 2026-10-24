@@ -59,7 +59,7 @@ name: Fresh install (macOS)
 
 on:
   push:
-    branches: [main]
+    branches: [main, lite/e-release-docs] # TEMPORARY: one acceptance run of this branch (PAT has no actions:write); reverted next commit
   schedule:
     - cron: "17 11 * * *" # daily at 11:17 UTC (04:17 US Pacific), after mutation-nightly (09:03) so they never compete for slots
   workflow_dispatch:
