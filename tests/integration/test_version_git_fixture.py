@@ -2,7 +2,7 @@
 
 住在 tests/integration/（防腐 #7：真 IO 只许住这里，单文件时间预算
 BUDGET_SECONDS）。夹具 = 一个临时 git repo，里面是**真的**
-act/__init__.py、act/lib/version.py、scripts/version_stamp.py 与两份 iOS pin 文件
+act/__init__.py、act/lib/version.py、scripts/version_stamp.py
 的逐字拷贝（其余一律不拷——stamper 用自己的路径定 repo root 并只 import
 act.lib.version，所以夹具里的 act 包就是被测代码）。钉住的行为：
 
@@ -23,8 +23,8 @@ act.lib.version，所以夹具里的 act 包就是被测代码）。钉住的行
     （[info] 行带它的最后一行 stderr）；全部失败 → warn（不 fail）且 §23 report 的
     `version` detail 带每个解释器的最后一行 stderr；launchd 式洁净环境（无 LANG/LC_*、
     最小 PATH、cwd=repo）下 tag 在 → tag，tag 不在 → 回落值，都不失败；
-  - `--ios` 只改工作树里的 pin、`--check-pins` 随之变红；`--stamp-into DIR` 往
-    打包 stage 落 stamp。
+  - `--stamp-into DIR` 往打包 stage 落 stamp；`--check-pins` 在 v2.0.0 起没有
+    提交 pin 的树上恒 0，`--ios` 随 ios/ 退役（argparse 拒收）。
 """
 import os
 import re
@@ -41,8 +41,7 @@ _WIN = sys.platform.startswith("win")
 BUDGET_SECONDS = 60
 _T0 = [time.monotonic()]
 
-COPIED = ("act/__init__.py", "act/lib/__init__.py", "act/lib/version.py", "scripts/version_stamp.py",
-          "ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj")
+COPIED = ("act/__init__.py", "act/lib/__init__.py", "act/lib/version.py", "scripts/version_stamp.py")
 
 
 def setUpModule():
@@ -209,16 +208,14 @@ class VersionGitFixtureTestCase(unittest.TestCase):
         self.assertIn('__version__ = "1.2.3"', (stage / "act" / "_version.py").read_text(encoding="utf-8"))
         self.assertFalse((self.repo / "act" / "_version.py").exists(), "--stamp-into must not touch the repo")
 
-    # -- iOS pins ----------------------------------------------------------- #
+    # -- committed pins (none since v2.0.0) ---------------------------------- #
 
-    def test_ios_pins_stamped_in_the_working_tree_only(self):
+    def test_check_pins_passes_and_ios_flag_is_gone(self):
         self.assertEqual(self.stamper("--check-pins")[2], 0)
-        out, err, _ = self.stamper("--ios")
-        self.assertEqual(out, "0.48.16")
-        for rel in ("ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj"):
-            self.assertIn("0.48.16", (self.repo / rel).read_text(encoding="utf-8"))
-        self.assertEqual(self.stamper("--check-pins", check=False)[2], 1)
-        self.assertIn("MARKETING_VERSION", _git(self.repo, "diff", "--stat", "--", "ios") + _git(self.repo, "diff", "--", "ios"))
+        _, err, rc = self.stamper("--ios", check=False)
+        self.assertEqual(rc, 2)
+        self.assertIn("--ios", err)
+        self.assertEqual(_git(self.repo, "diff", "--stat"), "", "the stamper must not edit a tracked file")
 
     # -- install.sh stamp_version ------------------------------------------- #
 

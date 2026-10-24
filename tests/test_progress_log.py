@@ -1,4 +1,6 @@
-"""vnext2-plan §8 进度日志 fragment 判例（CONTRACT §56.7）：scripts/ci/progress_log.py。
+"""进度日志 fragment 判例（CONTRACT §56.7）：scripts/ci/progress_log.py。
+
+v2.0.0 起默认计划书 = docs/design/lite2-plan.md（没有 §8 → 默认表头），fragment 目录缺席 = ok (0)。
 
   - parse_fragment：文件名 `<YYYY-MM-DD>-<kebab-slug>.md`（日期进 日期 列）；头部 = 首个空行前的
     `pr:` / `phase:` / `law:`（顺序不限、缺一即问题、未知键即问题）；正文非空；多段正文压成一格、`|` 转义；
@@ -97,6 +99,17 @@ class RenderTestCase(unittest.TestCase):
     def test_render_table_without_plan_uses_default_header(self):
         table = pl.render_table("", [])
         self.assertEqual(table, "\n".join(pl.DEFAULT_HEADER))
+
+
+class DefaultsTestCase(unittest.TestCase):
+    def test_default_plan_is_the_lite2_plan(self):
+        self.assertEqual(pl.PLAN_FILE, "docs/design/lite2-plan.md")
+
+    def test_missing_fragment_dir_is_ok_zero(self):
+        out = io.StringIO()
+        missing = os.path.join(tempfile.mkdtemp(prefix="pl-none-"), "progress")
+        self.assertEqual(pl.main(["check", missing], stdout=out), 0)
+        self.assertEqual(out.getvalue(), "progress fragments: ok (0)\n")
 
 
 class CliTestCase(unittest.TestCase):

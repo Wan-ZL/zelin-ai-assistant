@@ -4,7 +4,7 @@
 # 建议账本写进 $QA_REPORT_DIR（默认 .qa-report/，已 gitignore；CI 上传为
 # artifact——收账 = 从 artifact 拷回 qa/*_baseline.txt）。
 # v2.0.0：[ui-parity]（§66.2）随 §66 退役——它比对的原生看板 / 雷达设置面随 Act 管线删除
-# （全文见 tag full；scripts/ui/ 与 ui/parity/ 在后续切片整目录删除）。
+# （全文见 tag full；scripts/ui/ 的 parity 工具与 ui/ 目录在 PR-C 删除）。
 # 用法：bash scripts/qa/run_gates.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1

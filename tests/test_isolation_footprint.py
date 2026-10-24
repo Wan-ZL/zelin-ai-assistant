@@ -47,9 +47,6 @@ TOMBSTONE = re.compile(r"(#|//|/\*|\*|<!--).*\b(retired|tombstone|退役)\b", re
 
 # file → the lite-2.0 slice that deletes or rewrites it (shrink-only; see docstring)
 PENDING = {
-    "scripts/skills_sync.sh": "PR-C (skills/ store retired)",
-    "scripts/ui/extract_native_inventory.py": "PR-C (§66 parity tooling retired)",
-    "scripts/qa/coverage_run.py": "PR-C (§77 inventory tooling retired)",
 }
 
 

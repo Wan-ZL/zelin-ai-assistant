@@ -12,10 +12,10 @@
 #      updates, so the grant survives — the versioned path under
 #      ~/.local/share/claude/versions/ changed under every update)
 #   3. create state/ and state/inbox/
-#   3b. `skills` step (CONTRACT §67): scripts/skills_sync.sh — link the
-#      default_enabled store skills into ~/.claude/skills (never overriding a
-#      recorded decision or a custom copy) so a fresh machine has them
-#   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
+#   3b. (retired v2.0.0) the `skills` step — the repo's skills/ store and
+#      scripts/skills_sync.sh were removed with §67 (full text at tag full)
+#   4. (retired v2.0.0) the legacy Mac app — mac/ was removed; the step only
+#      records app=skipped so the §23 report keeps its row
 #   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
 #      npm ci + npm run build) and the board shell app (shell/build.sh) and
 #      install the bundle to /Applications as "Zelin's AI Assistant.app" —
@@ -37,17 +37,11 @@
 #
 # Run from anywhere; it locates the repo root via its own path.
 #
-# --pkg-postinstall: non-interactive mode used by the .pkg installer's
-#   postinstall (mac/package.sh). Skips dependency checks (nothing to ask a
-#   user for) and the Mac app build/install (the pkg already installed it),
-#   but does everything else: config files, state dirs, the launchd agents
-#   (actd + radars per config — without them the product is inert) and the
-#   ingest cron chain. Every run (both modes) ends by writing
-#   state/install_report.json (CONTRACT §23) with what actually happened.
-#   REFUSES a git checkout (CONTRACT §74.2, exit 3, nothing touched): this
-#   flag only ever runs on a .pkg-seeded copy, and a .pkg never writes into a
-#   working tree (2026-09-07 incident, issue #333). The other modes are
-#   unaffected — they are meant to run inside a checkout.
+# --pkg-postinstall: retired in v2.0.0 (CONTRACT §74 追记) — no .pkg ships, so
+#   the flag always refuses (exit 3, nothing touched, no report). It was the
+#   .pkg installer's postinstall mode (mac/package.sh, removed with mac/). Every
+#   other run ends by writing state/install_report.json (CONTRACT §23) with what
+#   actually happened.
 #
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
@@ -341,9 +335,11 @@ done
 # 命中即**什么都不做**：不拷配置、不建 state、不装 launchd、不写 crontab、不写
 # §23 报告。交互模式与 `--non-interactive`（自动部署）**不**受本条约束——它们
 # 本来就该在 checkout 里跑。
-if [ "$PKG_POSTINSTALL" -eq 1 ] && ! bash "$REPO_ROOT/mac/scripts/pkg_dest_guard.sh" "$REPO_ROOT" >/dev/null; then
-    echo "install.sh --pkg-postinstall: refusing to configure a git checkout — nothing changed (CONTRACT §74)." >&2
-    echo "install.sh --pkg-postinstall: run 'bash install.sh' in that checkout yourself." >&2
+# v2.0.0（§74 追记）：2.0 不发 .pkg，合法调用者（.pkg 的 postinstall）与它的守卫
+# mac/scripts/pkg_dest_guard.sh 随 mac/ 删除——这个 flag 因此无条件拒绝，副作用前退出。
+if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+    echo "install.sh --pkg-postinstall: no .pkg ships since v2.0.0 — nothing changed (CONTRACT §74)." >&2
+    echo "install.sh --pkg-postinstall: run 'bash install.sh' in your checkout yourself." >&2
     exit 3
 fi
 
@@ -377,74 +373,12 @@ failed_deploy_steps() {
     printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
 }
 
-# Step 3b — the skill store (CONTRACT §67; §23 step `skills`). Runs
-# scripts/skills_sync.sh with the daemon interpreter: re-points ~/.claude/skills
-# links at THIS checkout, applies `default_enabled` where this machine has no
-# recorded decision (state/skills.json), never touches a custom copy. A fresh
-# machine therefore has board-agent + test-code linked after one install.sh.
-# Verdict (§56.5 spirit — environment problems never roll a deploy back):
-#   ok       sync ran; detail = the store's one-line summary
-#   skipped  no daemon interpreter (runtime_python already failed) or the
-#            script is missing (partial checkout)
-#   fail     exit 3 = skills/index.yaml broken — the repo is broken, same class
-#            as a build failure (tests/test_skills_manifest_repo.py pins it)
-#   warn     any other non-zero (store refused / ~/.claude unwritable …); detail
-#            carries the last stderr line so the log says WHY
-# A function so tests run it against a stub skills_sync.sh (tests/test_install_skills_step.py).
-install_skills() {
-    _sync="$REPO_ROOT/scripts/skills_sync.sh"
-    if [ -z "${RUNTIME_PY:-}" ]; then
-        warn "skill store not synced — no daemon python (see runtime_python above)"
-        report_step "skills" "skipped" "no daemon python"
-        return 0
-    fi
-    if [ ! -f "$_sync" ]; then
-        warn "skill store not synced — $_sync missing"
-        report_step "skills" "skipped" "scripts/skills_sync.sh missing"
-        return 0
-    fi
-    _err="$(mktemp 2>/dev/null || printf '/tmp/zai-skills-sync.%s' "$$")"
-    _summary="$(AIASSISTANT_PYTHON="$RUNTIME_PY" bash "$_sync" 2>"$_err")"
-    _rc=$?
-    _why="$(tail -n 1 "$_err" 2>/dev/null)"
-    rm -f "$_err"
-    if [ "$_rc" -eq 0 ]; then
-        ok "skills: ${_summary:-synced}"
-        report_step "skills" "ok" "${_summary:-synced}"
-    elif [ "$_rc" -eq 3 ]; then
-        warn "skills/index.yaml is broken — ${_why:-manifest error}"
-        report_step "skills" "fail" "manifest broken — ${_why:-see log}"
-    else
-        warn "skill store sync did not complete (exit $_rc) — ${_why:-no detail}"
-        report_step "skills" "warn" "exit $_rc — ${_why:-no detail}"
-    fi
-    return 0
-}
-
-# Step 4 — build + install the Mac app (CONTRACT §23 step `app`; §56.5).
-# A function so tests can run it against a fake mac/build.sh. Skipped by the
-# .pkg postinstall (the pkg installed the app) and by --non-interactive:
-# auto-deploy must NEVER rebuild the frozen legacy app (D3) — build.sh quits
-# and relaunches the running instance, taking screenpipe (its direct child)
-# and live captions down with it, and a `swift build` + `codesign` under
-# launchd can hang on a keychain prompt nobody is there to click.
+# Step 4 — the legacy Mac app (CONTRACT §23 step `app`). Retired in v2.0.0:
+# mac/ was removed (the board shell, step 4b, is the product). The function
+# stays so the §23 report keeps its `app` row (add-only) — always skipped.
 install_mac_app() {
-    if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-        echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
-        report_step "app" "skipped" "installed by the .pkg"
-    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
-        echo "==> 4. build + install Mac app — skipped (--non-interactive never rebuilds the frozen legacy app; run bash install.sh by hand)"
-        report_step "app" "skipped" "non-interactive never rebuilds the app (D3); bash install.sh to rebuild"
-    else
-        echo "==> 4. build + install Mac app"
-        if bash "$REPO_ROOT/mac/build.sh" --install; then
-            ok "Mac app built + installed"
-            report_step "app" "ok" "built and installed"
-        else
-            warn "Mac app build failed — see output above"
-            report_step "app" "fail" "mac/build.sh --install failed"
-        fi
-    fi
+    echo "==> 4. legacy Mac app — retired in v2.0.0 (mac/ removed; the board shell is step 4b)"
+    report_step "app" "skipped" "legacy Mac app retired in v2.0.0"
 }
 
 # --------------------------------------------------------------------------
@@ -1385,13 +1319,14 @@ else
     exit 1
 fi
 
-# swift toolchain (required to build the Mac app) — presence AND minimum
-# version. MIN_SWIFT lives in mac/build.sh (single source); on failure it
-# prints the exact fix (update Xcode, xcode-select) so we just exit.
-# --non-interactive never builds the app (§56.5), so it does not need one.
+# swift toolchain (required to build the board shell) — presence AND minimum
+# version. The floor lives in shell/build.sh (single source since mac/ was
+# removed in v2.0.0); on failure it prints the exact fix (update Xcode,
+# xcode-select) so we just exit. --non-interactive skips the shell build when
+# swiftc is absent (step 4b), so it does not need one.
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    info "swift toolchain not required — --non-interactive never rebuilds the legacy Mac app (§56.5); the board shell (step 4b) is skipped when swiftc is absent"
-elif bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
+    info "swift toolchain not required — --non-interactive skips the board shell (step 4b) when swiftc is absent"
+elif bash "$REPO_ROOT/shell/build.sh" --check-toolchain; then
     ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
 else
     echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
@@ -1589,10 +1524,6 @@ if [ ! -f "$REPO_ROOT/state/dashboard.json" ]; then
 fi
 
 # --------------------------------------------------------------------------
-echo ""
-echo "==> 3b. skill store — ~/.claude/skills links for skills/ (CONTRACT §67)"
-install_skills
-
 # --------------------------------------------------------------------------
 echo ""
 install_mac_app

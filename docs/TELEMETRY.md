@@ -82,7 +82,7 @@ v0.48 首启页新增一个**默认未勾选**的「分享输入文本以帮助�
 | `milestone_first_approval{req}` | daemon | 第一次批准一张卡（`actd` approve 分支） |
 | `milestone_first_delivery{req}` | daemon | 第一次成功派发执行（`executor` dispatch 成功处） |
 
-> 报告侧（`scripts/insights_report.py`）另派生两个视图，**不新增任何事件**：
+> （v2.0.0 起报告脚本 scripts/insights_report.py 已删除，下面这段只作 1.x 记录。）报告侧另派生两个视图，**不新增任何事件**：
 > retention（按 `client_ts` 推每装机的返访日）与 abandonment（配了源却没拿到首卡 /
 > 某路径只用过一次）。这些聚合**只输出计数/比例**，device id 永不出现在报告里，
 > 且当前跨所有装机的匿名 device 合并计（多用户共享部署会拉高漏斗/留存数，per-tenant
@@ -246,10 +246,12 @@ diff 掉。历史的 v2 标记文件 `state/telemetry_consent_shown_v2`（v0.18 
 
 ## 聚合数据的公开发布
 
-上传的事件会以**聚合形式**公开：GitHub Actions（`.github/workflows/insights.yml`）
+**v2.0.0 起这条发布链已退役**：insights.yml workflow 与 scripts/insights_report.py 都已删除，置顶 issue 不再更新。下面是 1.x 时的做法，留作记录。
+
+上传的事件会以**聚合形式**公开：GitHub Actions（insights.yml）
 **每天**把聚合报告写进本仓库一个公开的置顶 issue（「📊 Usage Insights」——只更新
 这一个 issue，不会每次新开）。报告只含聚合值：按事件/日期/版本/级别的**计数**、
-错误率、去重设备**数**（`scripts/insights_report.py`）——**绝不**出现原始事件行、
+错误率、去重设备**数**（insights_report.py）——**绝不**出现原始事件行、
 device id 或任何 capture_input 内容文本。事件总量没有变化的日子跳过更新。
 
 ## 容量预算（Supabase free tier）

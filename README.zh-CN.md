@@ -135,8 +135,7 @@ bash shell/build.sh && open "shell/build/Zelin's AI Assistant.app"   # 连接正
 | 操作系统 | 状态 |
 |---|---|
 | macOS 14+ | **完整产品**——Dock 壳里的网页看板、launchd/cron 定时、屏幕录制 ingest、Slack/Gmail 雷达 |
-| Linux | **核心已可移植,欢迎认领移植**——headless 流水线(雷达、`actd`、执行器)是纯 Python,完整测试套件在 ubuntu CI 上全绿;还缺 systemd 服务接线、ingest 链和 UI。移植地图与第一个里程碑:[docs/PORTING.md](docs/PORTING.md) |
-| Windows | **核心已可移植,欢迎认领移植**——与 Linux 相同(暂无 CI 覆盖);Task Scheduler 对照表见 [docs/PORTING.md](docs/PORTING.md) |
+| Windows / Linux | **2.0 起移除**——1.x 安装器、各平台指南与移植地图在 git tag `full` |
 
 Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一在看板上做。
 
@@ -165,7 +164,6 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 - [x] v1:三路雷达 cron/launchd 接入,审批回传,周一 digest
 - [x] v2:SwiftUI 菜单栏 app(看板主窗口 + 快速捕获 + 回收站 + 双语)——已冻结:它的活由看板接手;先留着,等 owner 下令再退役
 - [x] 架构基线(当前大版本——看页首 Release 徽章):SQLite 唯一真源、Dock 壳里的网页看板 + 录制/字幕开关、合并即发版即部署、质量仪表作为合并硬门、版本号由 git tag 铸出。大白话说明见 [CHANGELOG.md](CHANGELOG.md) `[Unreleased]`;总设计与终态验收清单见 [docs/design/vnext2-plan.md](docs/design/vnext2-plan.md)
-- [ ] v3:iOS 遥控器(`ios/` 为占位)
 
 进行中与接下来的方向,见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -197,7 +195,6 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 | [docs/DEMO.md](docs/DEMO.md) | demo 模式(虚构数据、零 key)与录屏指南 |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | 数据出境清单 / 漏洞上报 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图:进行中 / 下一步 / 以后 |
-| [docs/PORTING.md](docs/PORTING.md) | Windows/Linux 移植地图:今天哪些已可移植、OS seam、服务管理器对照表、第一个里程碑 |
 | [CHANGELOG.md](CHANGELOG.md) | 人类可读的版本历史 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 贡献指南 / 社区行为准则 |
 | [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT 实务问答:公司内能不能用、什么算竞争用途、满 2 年转 MIT |
@@ -220,7 +217,6 @@ act/
   registry/        # 需求注册表(YAML,一条需求一个文件,运行时生成)
   launchd/         # actd + 雷达 plists
 mac/               # SwiftUI 菜单栏 app(读 dashboard.json,写 inbox,永不碰密钥)
-ios/               # v3: 纯遥控器(占位)
 ```
 
 ## 贡献者

@@ -12,7 +12,7 @@
 # checkout fast-forwards it and re-runs the installer (idempotent = update).
 #
 # What it does, in order (each step prints ok / warn / ERR):
-#   1. preflight — macOS only (Linux: install-linux.sh, Windows: install.ps1);
+#   1. preflight — macOS only (lite 2.0 dropped the Linux / Windows installers);
 #      Xcode Command Line Tools (git, swiftc, /usr/bin/python3 come with them —
 #      checked with `xcode-select -p`, which never pops the install dialog);
 #      git; python3.
@@ -79,7 +79,7 @@ preflight() {
     echo "==> 1. preflight"
     _os="$(uname -s 2>/dev/null || echo unknown)"
     if [ "$_os" != "Darwin" ]; then
-        err "this bootstrap is for macOS (found: $_os). Linux: bash install-linux.sh · Windows: install.ps1 (docs/LINUX.md, docs/WINDOWS.md)"
+        err "this bootstrap is for macOS (found: $_os). lite 2.0 is macOS-only — the Linux / Windows installers retired in v2.0.0 (the last 1.x is at git tag full)"
         return 2
     fi
     _ver="$(sw_vers -productVersion 2>/dev/null || echo unknown)"

@@ -167,10 +167,9 @@ Building the board needs Node.js LTS; `scripts/dev-preview.sh` and `install.sh` 
 | OS | Status |
 |---|---|
 | macOS 14+ | **Full product** — board, scheduled jobs and agents, screen-capture ingest, Slack/Gmail radars, Dock shell with notifications and terminal takeover |
-| Windows | **v1 beta** — `install.ps1` installs the headless core, registers the scheduled tasks, runs the board server as the UI (the React board is the Windows UI) and wires native toasts; the screen-capture ingest chain and the Dock shell are deferred. Exact scope: [docs/WINDOWS.md](docs/WINDOWS.md) |
-| Linux | **v1 beta** — `install-linux.sh` installs the core under systemd user units with the same board; ingest is deferred. Scope: [docs/LINUX.md](docs/LINUX.md) |
+| Windows / Linux | **Removed in 2.0** — the 1.x installers live at git tag `full` |
 
-Off macOS the board is the whole UI, so install it as a PWA and you get a window with an icon; Slack self-DM is the cross-platform capture surface, and approvals always happen on the board. The porting map — what is portable, where the OS seam is, what a new platform must implement — is [docs/PORTING.md](docs/PORTING.md).
+The 1.x per-OS guides and the porting map were removed together with the installers; they also live at git tag `full`.
 
 ## Telemetry
 
@@ -186,7 +185,6 @@ This tool records your screen, can read your Slack and Gmail, and runs unattende
 - [x] Radars on a schedule, approval round-trip, digests
 - [x] SQLite source of truth, the web board as the product UI, merge = release = deploy, quality gates as merge gates, versions minted from git tags
 - [x] Windows and Linux v1 beta: headless core plus the board, installed by one script per OS
-- [ ] iOS remote approver (`ios/` is a placeholder)
 
 Plain-language release notes: [CHANGELOG.md](CHANGELOG.md). What's in flight and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md); the current round's plan and acceptance checklist: [docs/design/vnext2-plan.md](docs/design/vnext2-plan.md).
 
@@ -218,7 +216,6 @@ More questions — use at work, forks, what counts as competing use, per-release
 | [docs/DEMO.md](docs/DEMO.md) | demo mode (fictional data, no keys needed) and the recording guide |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | data egress inventory / vulnerability reporting |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what's in progress, next, and later |
-| [docs/WINDOWS.md](docs/WINDOWS.md) / [docs/LINUX.md](docs/LINUX.md) / [docs/PORTING.md](docs/PORTING.md) | per-OS scope and the porting map |
 | [CHANGELOG.md](CHANGELOG.md) | human-readable release history |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | how to contribute / community standards |
 | [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT in practice: company use, competing use, the MIT conversion |
@@ -231,7 +228,6 @@ Design docs ([docs/design/](docs/design/README.md)) record intent and owner deci
 
 ```
 ingest/                    # screenpipe → Obsidian chain (export / process / cleanup + skill)
-skills/                    # in-repo skill store: manifest + skills, enabled by symlink (CONTRACT §67)
 act/recap.py               # meeting recaps (the one headless claude site, §63 / §78 isolated)
 act/doctor.py              # post-install diagnostics (§25)
 act/lib/                   # config / recap store / notify / secrets / …
@@ -239,7 +235,6 @@ server/                    # stdlib HTTP + SSE server: board API, settings, reca
 web/                       # the React board (the product UI on every OS)
 shell/                     # thin macOS Dock shell: notifications, hotkey, terminal takeover
 scripts/qa/                # the quality gates (complexity / CRAP / coverage / hygiene / README audit)
-ios/                       # remote approver (placeholder)
 ```
 
 Every claim on this page is machine-checked: `python3 scripts/qa/readme_audit.py --summary` extracts each sentence, bullet, table row and command above and re-verifies its paths, its retired-feature wording and its UI labels against the shipped code.

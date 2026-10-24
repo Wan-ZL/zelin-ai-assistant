@@ -1,1 +1,0 @@
-../../../../shared/Sources/Contract.swift

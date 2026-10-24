@@ -28,7 +28,6 @@ per_mutant_timeout_seconds = 60
 # §64 待验收卡 AI 摘要 + 评语：输出消毒 / 指纹闸门 / 「永不改 status」——一个存活体 = 建议变成了判决。
 # P3a (executor CRAP ≤ 6 轮)：执行器及其拆出的 lib 模块进靶区，映射 = 直接钉住它们的判例
 # （golden prompt / roster / relaunch / harvest / stop 确认 / transcript 读取）。
-# §67 skill 商店：状态判定 / 自定义永不被碰 / 决策优先于默认——一个存活体 = 商店覆盖了 owner 的副本。
 # R-292（2026-09-08，夜报 116 体 51% 杀伤）：两份早就存在的判例从没进靶区——test_store2_store_helpers.py
 # （verb 表 / 审计行 / 行参数装配）与 test_two_stage_card_ids.py（schema v1→v2 升级梯子）；余下的体钉在
 # test_store2_mutation_kills.py（等价体理由也记在它的 docstring）。
@@ -48,29 +47,6 @@ per_mutant_timeout_seconds = 60
 # 只剩 4 个等价体（trust rank 保序 ±1 / cfg 形状探针 / 已拒出身上未读的 lane 标志）。
 # 映射 = 各模块的直接判例（每个都 < 5 s），夜间续跑。
 
-# test-code skill（skills/test-code；vnext2-plan R2.8）——skill 自己也接受每晚第 4 档考验。
-# 2026-09-02 首轮：1,581 变异体 62% 杀伤，存活体 75% 是 CATALOG 数据表里的时间估计常数（±1），
-# 逻辑存活体已在 tests/test_skill_test_code_mutation_kills.py 逐个钉死。
-"skills/test-code/scripts/ladder_common.py" = ["tests/test_skill_test_code_common.py", "tests/test_skill_test_code_mutation_kills.py"]
-"skills/test-code/scripts/complexity_min.py" = ["tests/test_skill_test_code_complexity_min.py"]
-"skills/test-code/scripts/structure_check.py" = ["tests/test_skill_test_code_structure.py"]
-"skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
-"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
-"skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
-
-# test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
-# 2026-09-03 首轮（ad-hoc map，见 tests/test_skill_test_ui_mutation_kills.py 的 docstring）之后进夜间靶区。
-"skills/test-ui/scripts/testui_common.py" = ["tests/test_skill_test_ui_common.py", "tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_cli_entrypoints.py"]
-"skills/test-ui/scripts/parity.py" = ["tests/test_skill_test_ui_pair.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_cli_entrypoints.py", "tests/test_skill_test_ui_tokens.py"]
-"skills/test-ui/scripts/visual.py" = ["tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_cli_entrypoints.py"]
-"skills/test-ui/scripts/tokens.py" = ["tests/test_skill_test_ui_tokens.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_cli_entrypoints.py"]
-"skills/test-ui/scripts/inventory_a11y.py" = ["tests/test_skill_test_ui_inventory_source.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_cli_entrypoints.py", "tests/test_skill_test_ui_reference_regen.py"]
-"skills/test-ui/scripts/reference.py" = ["tests/test_skill_test_ui_reference.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_reference_regen.py"]
-"skills/test-ui/scripts/detect_ui.py" = ["tests/test_skill_test_ui_detect.py", "tests/test_skill_test_ui_mutation_kills.py"]
-"skills/test-ui/scripts/checks_ui.py" = ["tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_catalog_docs.py"]
-"skills/test-ui/scripts/run_ui.py" = ["tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_reference_regen.py"]
-"skills/test-ui/scripts/sensors.py" = ["tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py", "tests/test_skill_test_ui_reference_regen.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_runtime_verdicts.py"]
-
 # P3b（refactor/p3b-rest）：registry / store2 / config / quick_capture 之外的清账模块进靶区——
 # 每个映射 = 本轮为它写的判例文件 + 既有的行为判例；映射子集都 < 3 s。
 "act/lib/config.py" = ["tests/test_config_load_blocks.py", "tests/test_config_defaults.py", "tests/test_config_models.py", "tests/test_config_obsidian.py", "tests/test_capture_exclusion.py", "tests/test_config_mutation_kills_train.py"]
@@ -85,7 +61,6 @@ per_mutant_timeout_seconds = 60
 "act/lib/install_report.py" = ["tests/test_install_report_cli_inprocess.py", "tests/test_install_report.py"]
 "act/llm.py" = ["tests/test_llm_boundary.py"]
 "scripts/demo_seed.py" = ["tests/test_demo_seed_golden.py", "tests/test_demo_seed.py"]
-"scripts/insights_report.py" = ["tests/test_insights_report_golden.py"]
 
 # 2026-09-15 dev train：本轮新建/重写的模块补进靶区（§57；tier-5 定向变异用）。
 # doctor 探针家族三件（2026-09-15 补映射）：原来 core 只映射了默认探针那一份判例、

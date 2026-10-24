@@ -21,5 +21,5 @@ pathlib.Path("promo/build/scenes.js").write_text(out, encoding="utf-8")
 print("wrote promo/build/scenes.js")
 EOF
 
-sips -s format png -Z 512 mac/AppIcon.icns --out promo/build/icon.png >/dev/null
+sips -s format png -Z 512 shell/AppIcon.icns --out promo/build/icon.png >/dev/null
 echo "prepare: done"

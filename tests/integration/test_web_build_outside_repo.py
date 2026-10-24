@@ -56,14 +56,14 @@ def _mirror_ignore(_dir, names):
     return [n for n in names if n in _MIRROR_EXCLUDES or n.startswith(".zai-")]
 
 
-@unittest.skipIf(_WIN, "install.sh's mirror build is POSIX-only (install.ps1 has no ui step)")
+@unittest.skipIf(_WIN, "install.sh's mirror build is POSIX-only")
 @unittest.skipUnless(shutil.which("npm") and (NODE_MODULES / ".package-lock.json").exists(),
                      "needs npm and an installed web/node_modules (cd web && npm ci)")
 class WebBuildOutsideRepoTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # the copy lives under a temp dir that is NOT inside the repo: ../../ui/parity
-        # resolves to nothing there, exactly like ~/Library/Caches/zelin-ai-assistant/web-build
+        # the copy lives under a temp dir that is NOT inside the repo: any path that escapes
+        # web/ resolves to nothing there, exactly like ~/Library/Caches/zelin-ai-assistant/web-build
         cls.tmp = Path(tempfile.mkdtemp(prefix="zai-web-mirror-"))
         cls.copy = cls.tmp / "web-build"
         shutil.copytree(WEB, cls.copy, ignore=_mirror_ignore, symlinks=True)

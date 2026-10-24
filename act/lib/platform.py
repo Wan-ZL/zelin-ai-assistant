@@ -105,7 +105,8 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
     darwin: osascript ``display notification``. linux: notify-send when
     present (desktop sessions; headless boxes just return False). windows:
     a WinRT toast via PowerShell (no pip dep; _WINDOWS_TOAST_PS). Other OSes:
-    False until a port lands (docs/PORTING.md).
+    False until a port lands (1.x porting map: docs/PORTING.md at git tag
+    ``full``).
     """
     argv = _notify_argv(title, body, subtitle)
     if argv is None:
@@ -130,7 +131,7 @@ def service_list_text(runner: Optional[Runner] = None) -> str:
     ``--all`` keeps cleanly-stopped units visible (so doctor can tell "inactive"
     from "never installed") and ``--no-legend``/``--no-pager`` keep the output
     to just the unit rows. Other OSes return "" (doctor then honestly reports
-    the agents as not registered); see docs/PORTING.md.
+    the agents as not registered); see docs/PORTING.md at git tag ``full``.
     """
     argv = _service_list_argv()
     if argv is None:

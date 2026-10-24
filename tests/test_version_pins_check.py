@@ -1,21 +1,23 @@
 """CI 门「Version pins untouched」判例（CONTRACT §56.1）：纯函数 check(diff, latest_tag)。
 
-  - iOS 两处 MARKETING_VERSION 行任何增删 = FAIL；
+  - version.PIN_FILES 里的 MARKETING_VERSION 行任何增删 = FAIL（v2.0.0 起清单为空：
+    退役的 ios/ 路径上的同形行不再判）；
   - act/__init__.py 的 `__version__ = "…"` 行：改到 == 最新 tag（刷新）放行，
     别的值 = FAIL，只删不加 = FAIL；
   - CHANGELOG.md 新增 `## [X.Y.Z]` 标题或 `[X.Y.Z]: https://…` 链接 = FAIL；
   - CHANGELOG.md 新增顶格 bullet / `### 组` 标题 = FAIL（§56.7：[Unreleased] 冻结，写 changelog.d/ fragment）；
     删行、头部散文、缩进续行放行；
-  - docs/design/vnext2-plan.md 新增 `| YYYY-MM-DD |` 表格行 = FAIL（§8 进度表冻结，写 progress/ fragment）；
-    别的行、删行放行；别的 markdown 里的同形行不算；
+  - （v2.0.0 退役）vnext2-plan §8 表行规则：计划书只剩历史，追加同形行不再判；
   - act/_version.py 出现在 diff 里 = FAIL；
   - 无关文件里出现同名字串不算（只看路径匹配的文件）；
+  - 被删文件（`+++ /dev/null`）的 `-` 行记在它自己名下，不串到 diff 里上一个文件；
   - CLI：--legacy-base 只 notice 不 FAIL（在飞 PR 的过渡放行）。
 """
 import io
 import os
 import sys
 import unittest
+from unittest import mock
 
 _CI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "ci")
 if _CI_DIR not in sys.path:
@@ -31,21 +33,52 @@ def diff(path, removed=(), added=()):
     return "\n".join(lines) + "\n"
 
 
+def deleted(path, removed):
+    """一个被删文件的 unified diff（`+++ /dev/null`）。"""
+    lines = ["diff --git a/%s b/%s" % (path, path), "deleted file mode 100644", "--- a/%s" % path,
+             "+++ /dev/null", "@@ -1,%d +0,0 @@" % len(removed)]
+    lines += ["-" + r for r in removed]
+    return "\n".join(lines) + "\n"
+
+
 class PinsTestCase(unittest.TestCase):
-    def test_ios_pins_edit_fails(self):
+    def test_no_committed_pins_since_ios_retired(self):
+        self.assertEqual(vpc.ver.PIN_FILES, ())
+        # the retired iOS pin files are ordinary paths now — deleting them is not a bump
         for path in ("ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj"):
-            problems = vpc.check(diff(path, ['    MARKETING_VERSION: "0.0.0-dev"'],
+            self.assertEqual(vpc.check(deleted(path, ['    MARKETING_VERSION: "0.0.0-dev"']), "v0.48.16"), [])
+
+    def test_a_pin_file_edit_fails_when_one_is_listed(self):
+        with mock.patch.object(vpc.ver, "PIN_FILES", ("build/pin.yml",)):
+            problems = vpc.check(diff("build/pin.yml", ['    MARKETING_VERSION: "0.0.0-dev"'],
                                       ['    MARKETING_VERSION: "0.48.17"']), "v0.48.16")
             self.assertEqual(len(problems), 1, problems)
             self.assertIn("MARKETING_VERSION", problems[0])
-            self.assertIn(path, problems[0])
-
-    def test_other_ios_edits_pass(self):
-        self.assertEqual(vpc.check(diff("ios/project.yml", ['    SWIFT_VERSION: "5.0"'], ['    SWIFT_VERSION: "6.0"']),
-                                   "v0.48.16"), [])
+            self.assertIn("build/pin.yml", problems[0])
+            self.assertEqual(vpc.check(diff("build/pin.yml", ['    SWIFT_VERSION: "5.0"'],
+                                            ['    SWIFT_VERSION: "6.0"']), "v0.48.16"), [])
 
     def test_marketing_version_in_unrelated_file_is_ignored(self):
         self.assertEqual(vpc.check(diff("docs/CONTRACT.md", added=["MARKETING_VERSION = 0.48.17;"]), "v0.48.16"), [])
+
+
+class DeletedFileAttributionTestCase(unittest.TestCase):
+    """`+++ /dev/null` 的被删文件：它的 `-` 行归它自己，不归 diff 里上一个文件。"""
+
+    def test_deleted_file_after_init_does_not_count_as_removing_the_fallback(self):
+        text = (diff("act/__init__.py", added=["# comment"])
+                + deleted("act/old_module.py", ['__version__ = "0.1.0"', "x = 1"]))
+        self.assertEqual(vpc.check(text, "v0.48.16"), [])
+
+    def test_deleting_the_init_file_itself_still_fails(self):
+        problems = vpc.check(deleted("act/__init__.py", ['__version__ = "0.48.16"']), "v0.48.16")
+        self.assertTrue(any("removed" in p for p in problems), problems)
+
+    def test_deleted_file_after_the_stamp_rule_is_not_blamed_on_it(self):
+        text = (diff("CHANGELOG.md", ["- old shipped entry"], [])
+                + deleted("ios/project.yml", ['MARKETING_VERSION: "0.0.0-dev"'])
+                + diff("README.md", added=["x"]))
+        self.assertEqual(vpc.check(text, "v0.48.16"), [])
 
 
 class FallbackLineTestCase(unittest.TestCase):
@@ -105,23 +138,11 @@ class ChangelogTestCase(unittest.TestCase):
         self.assertEqual(vpc.check(diff("docs/RELEASES.md", added=["## [0.48.17] - x"]), "v0.48.16"), [])
 
 
-class PlanProgressTableTestCase(unittest.TestCase):
-    PLAN = "docs/design/vnext2-plan.md"
-
-    def test_added_progress_row_fails_pointing_at_fragments(self):
-        problems = vpc.check(diff(self.PLAN, added=["| 2026-09-02 | `ci/x` | P2 | did x | §56.7 |"]), "v0.48.16")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("docs/design/progress/", problems[0])
-
-    def test_other_plan_edits_and_row_deletions_pass(self):
-        self.assertEqual(vpc.check(diff(self.PLAN, ["| 2026-09-01 | `a` | P0 | did a | §1 |"],
-                                        ["| D23 | a new decision | quote | 09-02 |", "| #99 | closed | why |",
-                                         "**2026-09-02 起本表冻结** — prose mentioning a date is fine",
-                                         "| 日期 | PR / 分支 | 阶段 | 做了什么 | 法典 |"]), "v0.48.16"), [])
-
-    def test_date_row_in_other_markdown_is_ignored(self):
-        self.assertEqual(vpc.check(diff("docs/design/progress/README.md",
-                                        added=["| 2026-09-02 | example | row |"]), "v0.48.16"), [])
+class RetiredPlanTableRuleTestCase(unittest.TestCase):
+    def test_vnext2_plan_rows_are_no_longer_judged(self):
+        self.assertFalse(hasattr(vpc, "PLAN_FILE"))
+        self.assertEqual(vpc.check(diff("docs/design/vnext2-plan.md",
+                                        added=["| 2026-09-02 | `ci/x` | P2 | did x | §56.7 |"]), "v0.48.16"), [])
 
 
 class StampFileTestCase(unittest.TestCase):
@@ -133,7 +154,7 @@ class StampFileTestCase(unittest.TestCase):
 
 class MultiFileAndCliTestCase(unittest.TestCase):
     def test_multi_file_diff_reports_each_once(self):
-        text = (diff("ios/project.yml", ['MARKETING_VERSION: "0.0.0-dev"'], ['MARKETING_VERSION: "0.48.17"'])
+        text = (diff("act/_version.py", added=['__version__ = "0.48.17"', "x = 1"])
                 + diff("CHANGELOG.md", added=["## [0.48.17] - d"])
                 + diff("act/__init__.py", ['__version__ = "0.48.16"'], ['__version__ = "0.48.17"'])
                 + diff("README.md", added=["hello"]))

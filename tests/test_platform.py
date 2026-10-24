@@ -1,4 +1,4 @@
-"""act/lib/platform.py — the OS seam (docs/PORTING.md).
+"""act/lib/platform.py — the OS seam (1.x map: docs/PORTING.md at git tag full).
 
 Darwin implementations are smoke-tested via injected runners (no osascript /
 open / launchctl ever actually runs), and dispatch is pinned by patching

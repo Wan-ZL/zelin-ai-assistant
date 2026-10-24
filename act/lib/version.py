@@ -4,7 +4,7 @@
 版本号（六个并行 PR 为同一个 patch 号互相 rebase 的那一夜之后的结论）。
 运行时 ``act.__version__`` 按以下顺序解析，第一个答得上来的赢：
 
-1. ``act/_version.py``——生成文件（git-ignored），install.sh / mac/build.sh /
+1. ``act/_version.py``——生成文件（git-ignored），install.sh /
    shell/build.sh / release 打包 / ``scripts/version_stamp.py --write`` 写。
    守护进程只读它、永不 spawn git（launchd 下 git 是另一个二进制，TCC 按
    二进制授权——外置卷上的 checkout 会让它读不到 .git）。
@@ -36,11 +36,12 @@ REPO_ROOT = PKG_DIR.parent
 STAMP_PATH = PKG_DIR / "_version.py"
 INIT_PATH = PKG_DIR / "__init__.py"
 
-# iOS 的两处 MARKETING_VERSION pin（ios/project.yml + pbxproj 两行）：提交的
-# 永远是这个中性占位，构建前由 scripts/version_stamp.py --ios 在 runner 上
-# sed 成真版本、绝不提交（CI「Version pins untouched」把关）。
+# 提交进 git 的版本 pin 文件：v2.0.0 起为空（iOS app 与它的两处 MARKETING_VERSION
+# 占位随 ios/ 退役，§56.1）。常量保留是因为它是 §56.1 的锚点——将来哪个构建物再要
+# 一个提交的占位 pin，就加进这里，scripts/ci/version_pins_check.py 的「Version pins
+# untouched」门照旧判它；占位值不变。
 PIN_PLACEHOLDER = "0.0.0-dev"
-PIN_FILES = ("ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj")
+PIN_FILES: Tuple[str, ...] = ()
 
 # §54 看板壳的 bundle 目录名（壳即产品，owner 2026-09-02）——与 install.sh UI_APP_NAME /
 # shell/build.sh APP_NAME 逐字一致（tests/test_version_resolution.py 钉住漂移）。

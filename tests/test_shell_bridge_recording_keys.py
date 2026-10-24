@@ -20,6 +20,9 @@ restartRecording 与其余原生 restart 按钮一样不带守卫。另 add-only
 - `PermissionsProbe.screenRequestedKey` 与原生 Permissions.swift 的 UserDefaults 键同名。
 
 行为本身（缝注入下的请求次数 / 顺序）由 `shell/tests/run.sh` 的 BridgeHarness 钉。
+
+v2.0.0：对照原生源（mac/Sources 的 Onboarding / Permissions / SetupWizard 等）的那几句随 mac/ 删除退役
+（tombstone，全文见 tag full）；上面列的原生事实是这些判例当初的依据，自此只钉壳与 web 两侧。
 """
 import re
 import unittest
@@ -27,7 +30,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHELL = REPO_ROOT / "shell" / "Sources"
-MAC = REPO_ROOT / "mac" / "Sources"
 HARNESS = REPO_ROOT / "shell" / "tests" / "BridgeHarness.swift"
 TS = REPO_ROOT / "web" / "src" / "shellBridge.ts"
 
@@ -123,25 +125,6 @@ class RefreshAndTurnOnTestCase(unittest.TestCase):
                       self.swift)
         self.assertIn("static var setMode: (String) -> Void = { RecordingController.shared.setMode($0) }", self.swift)
 
-    # 冻结参考里的那句守卫；`granted, ` 是 Onboarding.record 的前置条件
-    GUARD = (r"if (?:granted, )?!RecordingController\.hasScreenPermission\(\) \{\s*"
-             r"RecordingController\.requestScreenPermission\(\)\s*\}\s*(?://[^\n]*\n\s*)*")
-
-    def test_native_set_mode_turn_on_sites_share_the_guard(self):
-        # 冻结参考：原生两处 setMode「开启」确实都是「守卫 → setMode」（本批复原的依据）
-        guard_then_set_mode = re.compile(self.GUARD + r"(?:RecordingController\.shared|rec)\.setMode\(")
-        for name in ("Onboarding.swift", "Permissions.swift"):
-            with self.subTest(file=name):
-                self.assertIsNotNone(guard_then_set_mode.search(_read(MAC / name)),
-                                     "%s lost the guard → setMode pair" % name)
-
-    def test_setup_wizard_start_engine_is_a_restart_site_not_a_set_mode_site(self):
-        # SetupWizard 终章「启动引擎」= 守卫 → restartEngine（不是 setMode）：它对应桥的 restartRecording，
-        # 不归 setRecording 的守卫管；SetupWizard 里根本没有 setMode 调用
-        wizard = _read(MAC / "SetupWizard.swift")
-        self.assertIsNotNone(re.search(self.GUARD + r"rec\.restartEngine\(\)", wizard))
-        self.assertNotIn(".setMode(", wizard)
-
     def test_restart_recording_stays_unguarded_like_every_native_restart_button(self):
         # 桥的 restartRecording 直连 restartEngine、不经 RecordingActions（原生 DashboardView / Pages /
         # Diagnostics / Doctor 的 restart 都不带守卫）；向导终章的守卫在 web 半边 FinaleStep 自己那里
@@ -149,9 +132,6 @@ class RefreshAndTurnOnTestCase(unittest.TestCase):
                           self.swift.index('case "openScreenRecordingSettings":')]
         self.assertIn("RecordingController.shared.restartEngine()", case)
         self.assertNotIn("RecordingActions", case)
-        for name in ("DashboardView.swift", "Pages.swift", "Diagnostics.swift", "Doctor.swift"):
-            with self.subTest(file=name):
-                self.assertNotIn("requestScreenPermission", _read(MAC / name))
         finale = _read(REPO_ROOT / "web" / "src" / "components" / "setup" / "FinaleStep.tsx")
         start_engine = finale[finale.index('text("启动引擎"'):]
         request = start_engine.index('shellCall("requestPermission", { kind: "screen" })')
@@ -171,7 +151,6 @@ class ScreenRequestedKeyTestCase(unittest.TestCase):
     def test_pref_key_matches_native_permissions_model(self):
         system = _read(SHELL / "ShellSystem.swift")
         self.assertIn('static let screenRequestedKey = "screenPermissionRequested"', system)
-        self.assertIn('Prefs.bool("screenPermissionRequested", default: false)', _read(MAC / "Permissions.swift"))
         # request("screen") 写的与快照读的是同一把键
         self.assertIn("UserDefaults.standard.set(true, forKey: Self.screenRequestedKey)", system)
 

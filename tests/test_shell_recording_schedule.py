@@ -5,20 +5,23 @@
 
 - 快照 `recording.schedule` 五键 + 方法 `setRecordingSchedule` 在 Swift 桥与 `web/src/shellBridge.ts` 两侧都有，
   且页面用 `schedulePaused` 判据（防腐 #10 逐字镜像）；
-- 门长在 `shell/Sources/RecordingSchedule.swift` 的**外面**：`Recording.swift` 仍是 mac/ 冻结副本（§61.3 的
-  逐字节判例在 test_shell_engine_mirror.py，这里只再钉一句「日程文件不在 VERBATIM 清单里、也没动引擎文件」）；
+- 门长在 `shell/Sources/RecordingSchedule.swift` 的**外面**：`Recording.swift` 仍是冻结的引擎文件（§61.3；
+  mac/ 原件 v2.0.0 删除后改钉退役时的哈希，判例在 test_shell_engine_mirror.py，这里只再钉一句「日程文件不在
+  冻结清单里、也没动引擎文件」）；
 - main.swift 四个执法点接了线：启动窗外跳过 autostart、5 s tick 调 enforce、注册醒来观察者；
 - 偏好键名冻结、默认关（always-on 现状不变）；
 - 三个非录制态在 header 文案表里可区分（关 / 未在录制 / 按日程暂停），且暂停禁用「重启」；
 - CONTRACT §61.7 存在且法条引用的判例文件都在。
 """
+import hashlib
 import re
 import unittest
 from pathlib import Path
 
+from tests.test_shell_engine_mirror import PINNED_SHA256
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHELL = REPO_ROOT / "shell" / "Sources"
-MAC = REPO_ROOT / "mac" / "Sources"
 WEB = REPO_ROOT / "web" / "src"
 HARNESS = REPO_ROOT / "shell" / "tests" / "BridgeHarness.swift"
 CONTRACT = REPO_ROOT / "docs" / "CONTRACT.md"
@@ -86,9 +89,10 @@ class WireMirrorTestCase(unittest.TestCase):
 class FrozenEngineUntouchedTestCase(unittest.TestCase):
     def test_gate_lives_outside_the_frozen_engine_file(self):
         self.assertTrue((SHELL / "RecordingSchedule.swift").exists())
-        self.assertFalse((MAC / "RecordingSchedule.swift").exists(), "the schedule is shell-only (D3: mac/ is frozen)")
-        # 引擎副本仍逐字节 = 冻结参考（test_shell_engine_mirror 也钉；这里是本节的近身一句）
-        self.assertEqual((SHELL / "Recording.swift").read_bytes(), (MAC / "Recording.swift").read_bytes())
+        self.assertNotIn("shell/Sources/RecordingSchedule.swift", PINNED_SHA256)
+        # 引擎文件仍是冻结字节（test_shell_engine_mirror 也钉；这里是本节的近身一句）
+        self.assertEqual(hashlib.sha256((SHELL / "Recording.swift").read_bytes()).hexdigest(),
+                         PINNED_SHA256["shell/Sources/Recording.swift"])
         # 日程文件里没有任何 "schedule" 字样漏进引擎文件
         self.assertNotIn("RecordingSchedule", _read(SHELL / "Recording.swift"))
 

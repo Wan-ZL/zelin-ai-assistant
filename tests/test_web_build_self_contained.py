@@ -1,4 +1,4 @@
-"""web/ 的构建在仓库之外也成立（CONTRACT §56.5 ui 步、§66.2、§69.4）。
+"""web/ 的构建在仓库之外也成立（CONTRACT §56.5 ui 步、§69.4）。
 
 install.sh 的 ui 步把 web/（除 node_modules / dist）镜像到 $HOME 下的构建目录里
 `npm run build`——仓库根不在那里。2026-09-03 首次 fresh-install 验收（run
@@ -16,6 +16,9 @@ tests/integration/test_web_build_outside_repo.py）：
     web/src 不再读任何仓库根 fixture；
   - install.sh 的镜像排除集不变（node_modules / dist / .zai-*），tsconfig.build.json
     因此随镜像走。
+
+v2.0.0：当年那个读仓库根 fixture 的 parity 判例（§66）随 ui/parity/ 退役；web/src 自此没有
+任何文件读仓库根，下面另钉「不再有人引用 ui/parity/」。
 """
 import json
 import re
@@ -133,20 +136,21 @@ class NoEscapingImportTestCase(unittest.TestCase):
         offenders = sorted(str(p.relative_to(REPO_ROOT)) for p in _source_files()
                            if "ui/parity/" in p.read_text(encoding="utf-8"))
         self.assertEqual(offenders, [])
+        self.assertFalse((REPO_ROOT / "ui" / "parity").exists())
 
     def test_detector_sees_an_escaping_import(self):
         # the detector itself must not be a no-op: plant an escaping import in a temp file under src
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".test.ts", dir=str(SRC), delete=False,
                                          encoding="utf-8") as fh:
-            fh.write('import x from "../../ui/parity/native-inventory.json";\n'
+            fh.write('import x from "../../fixtures/inventory.json";\n'
                      'import { y } from "./types";\n'
                      '// import z from "../../not-an-import";\n'
-                     'const w = await import("../../ui/parity/fixtures/lanes.json");\n')
+                     'const w = await import("../../fixtures/lanes.json");\n')
             planted = Path(fh.name)
         try:
             self.assertEqual(_escaping_imports(planted),
-                             ["../../ui/parity/native-inventory.json", "../../ui/parity/fixtures/lanes.json"])
+                             ["../../fixtures/inventory.json", "../../fixtures/lanes.json"])
         finally:
             planted.unlink()
 

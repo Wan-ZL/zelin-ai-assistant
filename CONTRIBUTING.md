@@ -4,7 +4,7 @@ Issues, suggestions, and pull requests are all welcome — bug reports, feature 
 
 ## Hacking without the full stack
 
-You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on this project. The test suite plus a fully fictional demo runtime cover most development:
+You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on this project. The test suite and the shell build cover most development:
 
 ```bash
 # 1. Run the whole test suite — needs only python3 (3.9+) and PyYAML.
@@ -12,16 +12,10 @@ You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on thi
 #    tests must never touch a real state/ or registry.
 AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-# 2. Build the menu-bar app, without installing it — needs Xcode / Swift 6.x.
-bash mac/build.sh
-
-# 3. Run the app against entirely fictional data — no keys, no recording:
-python3 scripts/demo_seed.py /tmp/assistant-demo          # add --english for English demo data
-AIASSISTANT_HOME=/tmp/assistant-demo \
-  "mac/build/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
+# 2. Build the Dock shell, without installing it — needs Xcode / Swift 6.x.
+#    The bundle lands in shell/build/; shell/tests/run.sh is its test suite.
+bash shell/build.sh
 ```
-
-The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` and `--english` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
 
 What you need for what:
 
@@ -29,33 +23,29 @@ What you need for what:
 |---|---|---|---|---|---|
 | run the tests | ✅ | — | — | — | — |
 | build the app | — | ✅ | — | — | — |
-| demo mode (full UI, fictional data) | ✅ (stdlib only) | ✅ | — | — | — |
 | run the full pipeline | ✅ | ✅ | ✅ | ✅ (engine runs via `npx screenpipe`) | ✅ (Obsidian optional but recommended) |
 
-Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads launchd agents, and edits your crontab. As a contributor you usually don't want any of that on your dev machine; the three commands above are enough.
+Note that `install.sh` is the *end-user* installer — it installs the app to /Applications, loads launchd agents, and edits your crontab. As a contributor you usually don't want any of that on your dev machine; the two commands above are enough.
 
 ## Dev environment
 
 - **Python 3.9+ with PyYAML** — deliberately the only Python dependency (that's why there is no lockfile). If `pip install --user pyyaml` fails with "externally managed environment" (Homebrew Python, PEP 668), retry with `--break-system-packages`; CI uses the same fallback.
-- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI, which pins one exact Xcode for both `ci.yml` and `release.yml` — truth = `.github/xcode-version`, applied by `scripts/ci/select_xcode.sh`; a pin missing from the runner image fails loudly instead of falling back to "newest"; bump it in a PR). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
+- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI, which pins one exact Xcode for both `ci.yml` and `release.yml` — truth = `.github/xcode-version`, applied by `scripts/ci/select_xcode.sh`; a pin missing from the runner image fails loudly instead of falling back to "newest"; bump it in a PR). `shell/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash shell/build.sh` is the whole build (the 1.x `mac/` and `ios/` apps were removed in v2.0.0; they live at git tag `full`).
 - Only needed for full-pipeline work: [Claude Code CLI](https://claude.com/claude-code) + API key, Node.js LTS, Obsidian — setup in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## The four gates
 
 Every change batch must pass all four before merging — CI runs these on every PR (the two Swift gates on the macOS runner only when a Swift-related path changed; see "What CI runs where" below):
 
-1. `python3 -m compileall act ingest`
+1. `python3 -m compileall act ingest server`
 2. `AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests`
-3. `bash mac/build.sh`
-4. `bash mac/LogicTests/test.sh` — Swift pure-logic unit tests. With full Xcode
-   this is exactly `swift test --package-path mac/LogicTests`; the wrapper only
-   adds framework search paths on Command-Line-Tools-only machines (the CLT
-   ships Swift Testing but hides it — details at the top of the script).
+3. `bash shell/build.sh` — the product app (CONTRACT §54/§61); the recording and
+   captions engines moved here from the retired `mac/Sources`
+4. `bash shell/tests/run.sh` — swiftc typecheck of the whole shell module + the
+   XCTest-free bridge harness
 
-They are cheap; run them locally before pushing. Touching `shell/` (the product
-app since D3 — CONTRACT §54/§61) adds two more: `bash shell/build.sh` (must
-compile; engines moved from `mac/Sources` live here) and `bash shell/tests/run.sh`
-(swiftc typecheck of the whole module + the XCTest-free bridge harness). Touching
+They are cheap; run them locally before pushing (the two Swift gates matter when
+you touch `shell/`). Touching
 `web/` adds `cd web && npm run typecheck && npm run build && npx vitest run` (`build`
 type-checks only what ships — `tsconfig.build.json` — because install.sh builds web/
 from a mirror outside the repo; `typecheck` covers the tests too, CONTRACT §56.5).
@@ -64,18 +54,18 @@ from a mirror outside the repo; `typecheck` covers the tests too, CONTRACT §56.
 
 The repo is public (runner minutes are free) but the owner is on the free plan, whose *concurrency* cap (~20 jobs, 5 macOS) is what dozens of parallel agent PRs actually queue on. So per-PR CI is on a diet without touching the merge gate — the seven required checks keep their names and report on every PR and every merge-queue group:
 
-- **`ci` (macOS) and `Web tests` are path-filtered on pull requests.** A first ubuntu job (`Changed paths (per-PR filter)`) lists the PR's files; `ci` runs the Apple suite on a macOS runner only when something under `mac/`, `shell/`, `ios/`, `shared/`, any `*.swift`, the Xcode pin / selector, the version stamper the builds call or `ci.yml` itself changed — otherwise it runs on ubuntu, prints "no Swift changes — Swift gates not needed" and ends green. `Web tests` does the same for `web/`. The filter list is the truth in `.github/workflows/ci.yml`; if you make something new that only the macOS job exercises, add its path to the filter in the same PR.
+- **`ci` (macOS) and `Web tests` are path-filtered on pull requests.** A first ubuntu job (`Changed paths (per-PR filter)`) lists the PR's files; `ci` runs the Apple suite (since v2.0.0: `shell/build.sh` + `shell/tests/run.sh`, plus compileall and the full unittest run) on a macOS runner only when something under `shell/`, any `*.swift`, the Xcode pin / selector, the version stamper the builds call or `ci.yml` itself changed — otherwise it runs on ubuntu, prints "no Swift changes — Swift gates not needed" and ends green. `Web tests` does the same for `web/`. The filter list is the truth in `.github/workflows/ci.yml`; if you make something new that only the macOS job exercises, add its path to the filter in the same PR.
 - **`merge_group` and every push to `main` run everything**, filter or no filter; so does a PR whose filter step failed (a broken filter must never turn into a skipped gate).
-- **The Windows legs and the qlty sweep run nightly** (`ci-nightly.yml`, 10:43 UTC, or `gh workflow run ci-nightly.yml`), still informational (`continue-on-error`), never a required check.
+- **No nightly informational lane any more**: `ci-nightly.yml` (the Windows legs and the qlty sweep) was removed in v2.0.0 — lite 2.0 is macOS-only (CONTRACT §56.8 追记).
 - **AI review bots run on demand, not on every push.** The default review of a PR is the adversarial agent review in the lead's session. When you want the paid second opinions (Claude + Codex), put the **`review:ai`** label on the PR (`gh pr edit <n> --add-label review:ai`) — both bots start, the label is consumed as soon as they pick it up, so adding it again later reviews the then-current head. Alternative: `gh workflow run pr-review-claude.yml -f pr=<n>` (and `pr-review-codex.yml`). Fork PRs are skipped either way; a missing API-key secret is a green no-op.
 
 CI also replays the fresh-machine bootstrap on a clean macOS runner (**Fresh install (macOS)**, `.github/workflows/fresh-install.yml`, CONTRACT §69): empty `$HOME`, local origin, `bash scripts/bootstrap.sh --no-launchd`, then it asserts the install report, the board server's `/api/board` / `/api/setup`, `python3 -m act.doctor --fresh-install` exiting 0 and an idempotent second run. It runs on push to main, nightly and on `gh workflow run fresh-install.yml` — not per PR (macOS runners are the scarce slot, CONTRACT §56.8), so it is informational; a red run still means the one-command install is broken for someone — treat it as a bug. Local equivalent (safe: temp HOME, `--no-launchd`, no `/Applications` write): `HOME=$(mktemp -d) AIASSISTANT_UI_APPS_DIR=$HOME/Applications ZAI_BOOTSTRAP_REPO_URL=<bare clone of your branch> bash scripts/bootstrap.sh --no-launchd --no-open`.
 
-CI additionally runs the **QA merge gates** (per-function complexity, CRAP, coverage floor, dependency direction, hygiene caps — see docs/CONTRACT.md §58 — plus the `[ui-parity]` gate of §66, below) against the shrink-only baselines in `qa/`. Local equivalent: `bash scripts/qa/run_gates.sh` (needs `pip install coverage`, dev-side only, and node + `cd web && npm ci` for `[ui-parity]`). New code must pass clean; pre-existing debt is ledgered in `qa/*_baseline.txt` and may only shrink. The canonical environment for the coverage-derived numbers is the CI `qa-gates` job — on non-linux machines the two coverage-derived gates (CRAP, coverage floor) print their verdicts but never block; reconcile those ledgers from the job's `qa-report` artifact, not from a local darwin run. "Reconcile" only ever means shrink: on pull requests the `qa-gates` job also diffs `qa/` against the PR base (`scripts/qa/ledger_diff.py`) and fails on any added ledger key, raised score, lowered coverage floor, or loosened threshold in `qa/gates.toml` — new debt must be fixed in the code, never enrolled. Local equivalent: `python3 scripts/qa/ledger_diff.py --base origin/main`.
+CI additionally runs the **QA merge gates** (per-function complexity, CRAP, coverage floor, dependency direction, hygiene caps — see docs/CONTRACT.md §58) against the shrink-only baselines in `qa/`. Local equivalent: `bash scripts/qa/run_gates.sh` (needs `pip install coverage`, dev-side only). New code must pass clean; pre-existing debt is ledgered in `qa/*_baseline.txt` and may only shrink. The canonical environment for the coverage-derived numbers is the CI `qa-gates` job — on non-linux machines the two coverage-derived gates (CRAP, coverage floor) print their verdicts but never block; reconcile those ledgers from the job's `qa-report` artifact, not from a local darwin run. "Reconcile" only ever means shrink: on pull requests the `qa-gates` job also diffs `qa/` against the PR base (`scripts/qa/ledger_diff.py`) and fails on any added ledger key, raised score, lowered coverage floor, or loosened threshold in `qa/gates.toml` — new debt must be fixed in the code, never enrolled. Local equivalent: `python3 scripts/qa/ledger_diff.py --base origin/main`.
 
-### UI parity (web ⟷ frozen native app, CONTRACT §66)
+### UI parity (retired in v2.0.0)
 
-The retired Mac app under `mac/Sources` is the terminal UI spec; `ui/parity/native-inventory.json` is its machine extraction and `scripts/ui/parity_check.py` (the `[ui-parity]` gate inside `run_gates.sh`) checks every inventory id against the web: native controls through `web/src/parity.test.tsx` (generated from the inventory, renders the pages with demo fixtures), settings keys against `server/settings*.py`, rail / lanes / theme / layout tokens statically. Two shrink-only ledgers live next to it: `ui/parity/pending.txt` (native items the web still lacks — **every PR that adds UI must strike lines here**; a struck-but-still-missing or a newly-missing item is red) and `ui/parity/waivers.txt` (deliberately not carried over; never grows — new "not carrying this over" decisions go into the extractor's owner table with a decision reference). `ledger_diff.py` rejects any growth of either file against the PR base. Generated artifacts must stay fresh (tests fail otherwise; in particular any PR that edits `mac/Sources` — which D3 says you should not — must re-run the extractor and commit the JSON): `python3 scripts/ui/extract_native_inventory.py --write`, `python3 scripts/ui/extract_native_tokens.py --write` (also rewrites the `@generated native-tokens` block at the end of `web/src/styles/tokens.css`), `python3 scripts/ui/parity_fixture.py --write`. The human-readable state is `ui/parity/report.md`.
+The `[ui-parity]` gate of CONTRACT §66 (native inventory extracted from `mac/Sources`, checked against the web) retired with `mac/`: `scripts/ui/` keeps only `make_pwa_icons.py` (§73), and `ui/parity/` / `ui/tokens/` are gone. The `--native-*` block at the end of `web/src/styles/tokens.css` is now a frozen snapshot you edit by hand. Full text at git tag `full`.
 
 **Visual baselines** (`web/e2e/visual.spec.ts`, CI job "Web visual (playwright)", informational at birth): three pages × light/dark at 1440×900 against the goldens in `web/e2e/__screenshots__/`. Run locally with `cd web && npm run build && npx playwright install chromium && npm run visual` — expect it to be red on your Mac (see next paragraph); read the diff triplets in `web/test-results/` to judge whether a real layout change hides behind the glyph noise. A PR that changes the UI must update the goldens **deliberately** and say in the PR which screenshots changed and why; never update them to make a red job green without looking at the diff (CI uploads the expected/actual/diff triplets as the `web-visual` artifact).
 
@@ -115,10 +105,6 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 - **Always work in a git worktree and fast-forward-merge back to `main`.** The main working tree can be a live daemon runtime — actd and cron execute files straight from it, and half-edited files have caused real breakage (HANDOFF §4).
 - After merging, verify HEAD actually moved (`git log -1`) — a failed `--ff-only` merge prints "Aborting" to stderr, which pipelines can swallow.
 - External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the four gates before the merge lands.
-- After any deploy to a real machine (`bash mac/build.sh --install` / .pkg /
-  Sparkle), verify it landed with `bash scripts/smoke-deploy.sh` — version
-  match, binary feature markers, actd liveness, and the full doctor in one
-  command (also printed as step 7 at the end of `install.sh`).
 - **Social preview** (issue #19): when the board UI changes materially, `bash promo/social-preview.sh`
   re-renders `docs/assets/social-preview.png` (1280 × 640) and you upload it by hand under GitHub →
   Settings → General → Social preview — GitHub has no API for this, so it is the one manual step
@@ -138,10 +124,10 @@ while the project is pre-1.0:
 
 Merging a PR **is** the release (CONTRACT §56), and **nobody bumps a version — ever**. The version's single source of truth is the git tag on `main` (§56.1): on push to `main`, `release-on-merge.yml` tags the merged commit with the highest existing tag + 1 patch and runs the release workflow, which stamps that number into the artifacts. Put a `release: minor` or `release: major` label on the PR for a bigger bump. What a PR does and does not touch:
 
-- **Never** edit the `__version__ = "…"` fallback line in `act/__init__.py`, the `MARKETING_VERSION: "0.0.0-dev"` placeholders in `ios/project.yml` / `project.pbxproj`, or add a `## [X.Y.Z]` heading / compare link to `CHANGELOG.md`. The required CI check **Version pins untouched** rejects all of these (PRs opened before the cutover get a notice instead of a failure until they rebase).
+- **Never** edit the `__version__ = "…"` fallback line in `act/__init__.py` or add a `## [X.Y.Z]` heading / compare link to `CHANGELOG.md` (the iOS `MARKETING_VERSION` placeholders left with `ios/` in v2.0.0). The required CI check **Version pins untouched** rejects all of these (PRs opened before the cutover get a notice instead of a failure until they rebase).
 - **Release notes are fragments** (CONTRACT §56.7): add `changelog.d/<kebab-slug>.md` — first line `type: added|changed|deprecated|removed|fixed|security`, then top-level `- ` bullets; one type per file, shape in [`changelog.d/README.md`](changelog.d/README.md). **Never write into `## [Unreleased]`** in `CHANGELOG.md`: it is frozen (shrink-only) and the same CI check rejects any added bullet or `### ` heading there. The GitHub Release body is the delta of (fragments ∪ `[Unreleased]`) since the previous tag; nothing is rewritten or deleted by CI. Fragments a tag already shipped are pruned by the next PR that touches `changelog.d/` (`python3 scripts/ci/changelog_prune.py`; CI prints a `::notice::` while any are left).
-- **Progress log rows are fragments too**: the v-next-2 round's §8 table in `docs/design/vnext2-plan.md` is frozen history; a PR adds `docs/design/progress/<YYYY-MM-DD>-<slug>.md` (header `pr:` / `phase:` / `law:`, blank line, body — see [`docs/design/progress/README.md`](docs/design/progress/README.md)). `python3 scripts/ci/progress_log.py render` prints the full table on demand; a new `| YYYY-MM-DD |` row written into the plan directly is rejected by the same CI check.
-- `act.__version__` resolves at import from the generated, git-ignored `act/_version.py` (written by `install.sh`, `mac/build.sh`, `shell/build.sh`, packaging and the release job through `scripts/version_stamp.py --write`), else `git describe`, else the fallback line. `python3 scripts/version_stamp.py` prints what your checkout would be stamped with (`X.Y.Z` on a tag, `X.Y.Z+N` when ahead); `python3 -m act.doctor` has a `version` row that warns when the stamp is missing or stale.
+- **Progress log rows are fragments too**: the v-next-2 round's §8 table in `docs/design/vnext2-plan.md` is frozen history (no CI rule guards it any more — the plan is 1.x history, CONTRACT §56.7 追记); a PR that wants a progress row adds `docs/design/progress/<YYYY-MM-DD>-<slug>.md` (header `pr:` / `phase:` / `law:`, blank line, body — see [`docs/design/progress/README.md`](docs/design/progress/README.md)), and the same CI check validates its shape. `python3 scripts/ci/progress_log.py render` prints the table on demand (default plan: `docs/design/lite2-plan.md`; `--plan docs/design/vnext2-plan.md` for the 1.x history).
+- `act.__version__` resolves at import from the generated, git-ignored `act/_version.py` (written by `install.sh`, `shell/build.sh` and the release job through `scripts/version_stamp.py --write`), else `git describe`, else the fallback line. `python3 scripts/version_stamp.py` prints what your checkout would be stamped with (`X.Y.Z` on a tag, `X.Y.Z+N` when ahead); `python3 -m act.doctor` has a `version` row that warns when the stamp is missing or stale.
 - **No merge queue, but the same effect** (CONTRACT §56.6): GitHub's Merge Queue is unavailable on personal-account repositories, so `update-pr-branches.yml` merges every new `main` into every open PR branch instead and GitHub's auto-merge lands the PR the moment its rerun checks are green. Rebasing to pick up someone else's version bump is a thing of the past; rebasing at all is now something you do only when the bot tells you to. The lifecycle is spelled out below.
 
 The maintainer's Mac then fast-forwards to `main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that exact `main` commit is green — the merge commit itself is verified before it is installed — with a doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5). Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).

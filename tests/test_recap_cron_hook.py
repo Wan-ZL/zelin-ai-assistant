@@ -32,8 +32,9 @@ class CronHookTestCase(unittest.TestCase):
         self.assertIn('command -v python3', self.text[self.text.index("run_recap_once()"):])
 
     def test_no_new_daemon_or_crontab_line(self):
-        for f in (REPO / "install.sh", REPO / "install-linux.sh"):
-            self.assertNotIn("act.recap", f.read_text(encoding="utf-8"), f.name)
+        # install-linux.sh retired in v2.0.0 (lite is macOS-only); install.sh is the only installer
+        self.assertFalse((REPO / "install-linux.sh").exists())
+        self.assertNotIn("act.recap", (REPO / "install.sh").read_text(encoding="utf-8"))
         self.assertEqual(sorted(p.name for p in (REPO / "act" / "launchd").glob("*recap*")), [])
 
 
