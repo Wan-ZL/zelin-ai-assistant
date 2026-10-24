@@ -17,19 +17,9 @@ import { pickText } from "../components/settings/catalogText";
 import { copyText } from "../copyText";
 import { useI18n } from "../i18n";
 import { buildAppUrl, buildSettingsUrl, DEPS_ANCHOR, navigate } from "../route";
-import { callShell, hasShellBridge, PANE_IDS, type PermissionStatus } from "../shellBridge";
+import { callShell, hasShellBridge, PANE_IDS } from "../shellBridge";
 import { refreshPermissions, refreshSetup, useAppState } from "../store";
 import type { DoctorRow, FdaExecutable } from "../types";
-
-type Text = (zh: string, en: string) => string;
-
-export function statusLabel(status: PermissionStatus, text: Text): string {
-  switch (status) {
-    case "granted": return text("已授权", "Granted");
-    case "denied": return text("未授权", "Denied");
-    default: return text("未知 / 尚未询问", "Unknown / not asked yet");
-  }
-}
 
 function CopyPath({ path }: { path: string }) {
   const { text } = useI18n();

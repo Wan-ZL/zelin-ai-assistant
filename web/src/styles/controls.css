@@ -107,7 +107,6 @@
   white-space: nowrap;
 }
 
-.card-meta-text.is-danger { color: var(--danger); white-space: normal; }
 .card-meta-text.is-warning { color: var(--warning); white-space: normal; }
 
 /* —— 卡片（设置 → 显示 的预览：字号 / 字重 / 描边三把旋钮作用在真实类名上）—— */
@@ -258,7 +257,7 @@ a.btn { text-decoration: none; }
 .btn.btn-success:hover:not(:disabled) { background: var(--success-soft); border-color: var(--success-hover); color: var(--success-hover); }
 .btn.btn-success:active:not(:disabled) { background: var(--success-soft); border-color: var(--success-active); color: var(--success-active); }
 
-/* —— 原生 <dialog>（components/shell/ModalDialog / ForkDialog）—— */
+/* —— 原生 <dialog>（components/shell/ModalDialog）—— */
 .zai-dialog {
   min-width: 320px;
   max-width: 440px;

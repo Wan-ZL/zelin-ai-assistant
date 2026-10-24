@@ -375,8 +375,6 @@ export interface SettingsSection {
   title: BilingualText;
   help: BilingualText;
   fields: SettingsField[];
-  /** add-only（§68.7 追记，只有 `maintainer` 区带）：resolved 终端的展示名（原生 TerminalLauncher.preferred.displayName）——「会在 <终端> 中打开」；老 server 缺席 */
-  terminal_app_name?: string;
   [key: string]: unknown;
 }
 

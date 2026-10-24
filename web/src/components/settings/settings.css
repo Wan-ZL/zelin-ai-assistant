@@ -312,10 +312,6 @@
   color: var(--text-primary);
 }
 
-.settings-section.is-placeholder {
-  opacity: 0.75;
-}
-
 .settings-field {
   display: flex;
   flex-direction: column;
@@ -482,8 +478,6 @@
   font-size: calc(12px * var(--text-scale));
 }
 
-.settings-list-row.is-muted { opacity: 0.55; }
-
 .settings-list-title { font-weight: var(--w-semibold); }
 
 .settings-list-desc { margin: 0; color: var(--text-secondary); font-size: calc(11.5px * var(--text-scale)); }
@@ -526,7 +520,6 @@
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; background: var(--text-quaternary); }
 .status-dot-success { background: var(--success); }
 .status-dot-warning { background: var(--warning); }
-.status-dot-danger { background: var(--danger); }
 .engine-status { align-items: center; }
 .ingest-db-stamp { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ingest-trigger { align-items: baseline; }
@@ -711,15 +704,3 @@
   flex-wrap: wrap;
   margin-top: 4px;
 }
-
-.settings-input.is-filter {
-  flex: 0 0 160px;
-  font-size: calc(11px * var(--text-scale));
-}
-
-/* MCP servers（原生 SettingsMCP：transport 章 http .blue / sse .purple / stdio .secondary；空态的 claude mcp add 命令可选中；
-   作用域行的路径等宽、截中） */
-.chip.chip-transport-http { color: var(--info); border-color: var(--info-soft); background: var(--info-soft); }
-.chip.chip-transport-sse { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
-.chip.chip-transport-stdio { color: var(--text-secondary); border-color: var(--border); background: var(--surface-muted); }
-

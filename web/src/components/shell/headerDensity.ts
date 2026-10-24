@@ -11,8 +11,6 @@ import { createContext, useContext, useEffect, useState, type RefObject } from "
 
 export type HeaderDensity = "full" | "compact" | "tight";
 
-export const HEADER_DENSITIES: readonly HeaderDensity[] = ["full", "compact", "tight"];
-
 export interface DensityThresholds {
   /** 顶栏宽 ≥ 此值 → full */
   fullMin: number;
