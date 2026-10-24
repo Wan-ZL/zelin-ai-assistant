@@ -1,4 +1,4 @@
-// 窗口 / 标签页标题（CONTRACT §54.1 追记）：镜像原生 MainWindow.installTitleSink——
+// 窗口 / 标签页标题（CONTRACT §54「标题跟随页面」）：镜像原生 MainWindow.installTitleSink——
 // `"Zelin's AI Assistant — " + section.title`，随当前页与 UI 语言变（Mission Control / 窗口切换器里能认出在哪一页）。
 // 页标签 = 导航栏的词（会议纪要 / 录制与导入 / 设置 / 关于，v2.0.0 栏上四项）+ 两个栏外页（权限体检 / 初始设置）；
 // 依赖检查两个旧深链渲染的是设置页（D30）→ 「设置」。

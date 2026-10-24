@@ -609,7 +609,7 @@
   overflow-wrap: anywhere;
 }
 
-/* ----- 显示偏好（§54.1 第 12 项）：Apple 式 segmented control + 实物预览 ----------- */
+/* ----- 显示偏好（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役））：Apple 式 segmented control + 实物预览 ----------- */
 .settings-segmented {
   display: flex;
   flex-direction: column;

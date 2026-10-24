@@ -1,7 +1,7 @@
 // 设置页（CONTRACT §59 + §68 + §54.4；?page=settings 深链，左侧导航栏「设置」；?anchor=<id> 滚到某区；
 // ?page=deps / diagnostics 旧深链也开到这里并滚到「依赖检查」区——D30）。
 // 分区 = server 目录（server/settings_catalog.py 的 SECTIONS：通用 · 录制 · 录制数据与磁盘 · 笔记库 · 通知 · 更新 · 脱敏）
-// + web 自有 / 自带路由的区（显示 §54.1 第 12 项、模型 §59、依赖检查 D30、凭证 §19、会议纪要 §63），按语义就近排列。
+// + web 自有 / 自带路由的区（显示 §68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）、模型 §59、依赖检查 D30、凭证 §19、会议纪要 §63），按语义就近排列。
 // 依赖检查（原生 rail 页 DepsView，D30 2026-09-04 owner「合并到 setting里面」）紧跟通用区——它管的是这台机器能不能跑。
 // v2.0.0 退役（全文见 tag full）：实时字幕、Slack / Gmail 接入、导入 Claude Code 工作、Skills、MCP servers、同步 / 配对、
 // 审批 / 成本、Feature flags、每周摘要、语气档案、产品改进计划、开发者 · 开发会话、素材库、每日整理——它们服务的是 Act 管线
@@ -246,7 +246,7 @@ export function SettingsPage() {
           </a>
         ))}
       </nav>
-      {/* §54.1 第 12 项 显示：字号 / 字重 / 描边三把旋钮，点选即生效（owner 4K 屏「框细字细」） */}
+      {/* §68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役） 显示：字号 / 字重 / 描边三把旋钮，点选即生效（owner 4K 屏「框细字细」） */}
       <Fold id="display" isForced={searchActive}><DisplaySection /></Fold>
       <Fold id="models" isForced={searchActive}><ModelsSection /></Fold>
       <Fold id="general" isForced={searchActive}><CatalogSection sectionId="general"><GeneralExtras /></CatalogSection></Fold>

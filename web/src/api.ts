@@ -240,7 +240,7 @@ export function putModelsSettings(body: ModelsPatch): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
 }
 
-/** GET /api/settings/display — 字号 / 字重 / 描边三把显示旋钮（§54.1 第 12 项） */
+/** GET /api/settings/display — 字号 / 字重 / 描边三把显示旋钮（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）） */
 export function fetchDisplaySettings(signal?: AbortSignal): Promise<DisplaySettings> {
   return request<DisplaySettings>("/api/settings/display", { signal });
 }

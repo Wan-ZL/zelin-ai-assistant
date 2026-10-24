@@ -1,4 +1,4 @@
-// 设置页 section「显示」（CONTRACT §54.1 第 12 项；owner 2026-09-02 4K 屏「框细字细」）。
+// 设置页 section「显示」（CONTRACT §68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）；owner 2026-09-02 4K 屏「框细字细」）。
 // 三个 segmented control（Apple「文字大小」/「粗体文本」式）：文字大小 / 文字粗细 / 线条粗细，
 // 词表来自 server 快照（text_sizes / text_weights / strokes），client 只有文案。
 // 无保存键：点一档 = 立刻落 <html> data-*（store.saveDisplaySettings 先应用再 PUT，失败回滚 + toast）。

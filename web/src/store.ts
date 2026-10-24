@@ -71,7 +71,7 @@ export interface AppState {
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / 出厂形状）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」/「忽略」的乐观本地回执（等下一次 /api/recaps 回流覆盖）
   recapPending: Record<string, RecapPending>; // 「重新生成 / 现在生成」按下后到回执（generate_request）落地前的乐观「排队中」（§63.8）
-  displaySettings: DisplaySettings | null; // GET /api/settings/display（§54.1 第 12 项：字号 / 字重 / 描边；到达即落 <html> data-*）
+  displaySettings: DisplaySettings | null; // GET /api/settings/display（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）：字号 / 字重 / 描边；到达即落 <html> data-*）
 
   // ----- 各页的 server 快照（每页自己 refresh；读失败落 pageErrors[key]） -----
   settingsCatalog: SettingsCatalog | null; // GET /api/settings（通用 section 目录）
@@ -371,7 +371,7 @@ export function clearRecapPending(key: string) {
   setState({ recapPending: rest });
 }
 
-// ----- 显示偏好（§54.1 第 12 项） ------------------------------------------- #
+// ----- 显示偏好（§68.1 v2.0.0 修订；原 §54.1 第 12 项） ------------------------------------------- #
 
 /** 拉三把显示旋钮并立刻落到 <html>（App 启动一次 + 设置 section 挂载）；读失败落 settingsError、页面保持首帧缓存的值 */
 export async function refreshDisplaySettings(): Promise<void> {

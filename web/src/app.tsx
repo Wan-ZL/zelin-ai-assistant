@@ -73,7 +73,7 @@ export function App() {
     void refreshRecaps();
     void refreshHealth();
     void refreshFailures(); // §25 失败目录双语句（server-owned，GET /api/failures）：依赖行 / 引擎诊断行按 failure id 说人话；静态，拉一次
-    void refreshDisplaySettings(); // 字号 / 字重 / 描边（§54.1 第 12 项）：到达即落 <html> data-*，首帧由 index.html 的缓存顶住
+    void refreshDisplaySettings(); // 字号 / 字重 / 描边（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役））：到达即落 <html> data-*，首帧由 index.html 的缓存顶住
     void refreshSetup(); // §68.5 首次运行判定（config.yaml / 凭证 / 完成标记）
     // D37（§15 追记）：语言的真源是 server 的 general.language——显式值压过首帧缓存；谁都没选过（source default）就把此刻正显示的
     // 语言写进设置一次（launchd 下的 python 没有 LANG）；?lang= 在场 = 一次性覆写，不水合不写

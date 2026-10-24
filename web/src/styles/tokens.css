@@ -159,7 +159,7 @@
 }
 
 /*
- * —— 显示偏好三把旋钮（CONTRACT §54.1 第 12 项；设置页「显示」，server `ui.display`）——
+ * —— 显示偏好三把旋钮（CONTRACT §68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役）；设置页「显示」，server `ui.display`）——
  * 全站只有这三个变量是旋钮：--text-scale（字号倍率）、--weight-shift（字重平移）、
  * --stroke-w（描边宽）。JS（displayPrefs.ts）只往 <html> 写 data-text-size / data-text-weight /
  * data-stroke 三个属性，值 → 变量的映射全在本块（index.html 首帧从 localStorage zai.display
@@ -210,7 +210,7 @@
  * （定值行高同样乘 --text-scale，盒高随字号走）。
  * 与 Swift 行号的对照表（角色 → file:line → token）= web/src/styles/typeScale.ts；
  * typeScale.test.ts 钉 CSS 值 ↔ 表，tests/test_web_type_scale_mirror.py 钉 表 ↔ Swift 源行；
- * CONTRACT §54.1 第 10 项指向本块。
+ * 原 CONTRACT §54.1 第 10 项（字号/字重梯，该节 v2.0.0 退役，全文见 tag full）指向本块。
  * 字体栈：-apple-system 在 macOS 解析到 San Francisco，"SF Pro Text" 显式列出是给非 WebKit
  * 引擎；中文回落 PingFang SC（macOS）→ Hiragino → 微软雅黑（Windows），Segoe UI 只在 Windows 命中。
  * 颜色映射（不新造色值）：原生 .primary → --text-primary；.secondary → --text-secondary；

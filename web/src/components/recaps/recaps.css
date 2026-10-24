@@ -1,6 +1,6 @@
 /*
  * 会议纪要页样式（CONTRACT §63）。只引用 tokens.css 已有变量，不造新色值；字号/字重
- * 走 --type-* token（web/CONVENTIONS.md §主题 + §54.1 第 10 项）。骨架对齐回收站/设置页。
+ * 走 --type-* token（web/CONVENTIONS.md §主题 + 原 §54.1 第 10 项，该节 v2.0.0 退役）。骨架对齐回收站/设置页。
  */
 
 .recaps-page {

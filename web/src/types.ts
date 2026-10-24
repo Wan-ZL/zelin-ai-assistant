@@ -248,7 +248,7 @@ export interface RecapSettings {
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/display（§54.1 第 12 项）：server/display.py snapshot 的 wire 形逐字镜像；
+/** GET/PUT /api/settings/display（§68.1 v2.0.0 修订（原 §54.1 第 12 项，该节退役））：server/display.py snapshot 的 wire 形逐字镜像；
  *  三个词表由 server 给（segmented control 从这里渲染，client 不存第二份） */
 export interface DisplaySettings {
   text_size: "s" | "m" | "l" | "xl" | string;
