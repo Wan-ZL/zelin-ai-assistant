@@ -1,60 +1,41 @@
-"""server/settings.py — the web Settings page's server side (CONTRACT §59, D22).
+"""server/settings.py — the web Settings page's model knobs + the shared overrides helpers (CONTRACT §59 / §15).
 
-Two things, both stdlib (+ optional PyYAML for reading config.yaml):
-
-1. **The model knobs** ``models.dispatch`` / ``models.pipeline`` (D22) and
-   the third one, ``models.fallback`` (D53, 2026-09-07: the ``--fallback-model``
-   every headless launch carries; ``off`` = no flag; default
+1. **The model knobs** ``models.pipeline`` (every headless ``claude -p`` the app
+   runs — the meeting recap) and ``models.fallback`` (D53: the
+   ``--fallback-model`` every launch carries; ``off`` = no flag; default
    ``claude-opus-5[1m]``). ``GET /api/settings/models`` reports the *effective*
-   value of each knob (settings_overrides.json flat key ``models_<mode>`` →
-   config.yaml ``models.<mode>`` → default) plus the canonical id list the UI
+   value of each knob (settings_overrides.json flat key ``models_<knob>`` →
+   config.yaml ``models.<knob>`` → default) plus the canonical id list the UI
    renders as its dropdown (rule 10: the catalog is server-owned, the web
    mirrors wire keys verbatim). ``PUT /api/settings/models`` validates and
-   **diff-writes** ``state/settings_overrides.json`` exactly the way the Mac
-   app did (§15 v0.14 保存语义): a value equal to the config.yaml/default
-   effective value DELETES the override key, a different one writes it; every
-   other key in the file is preserved byte-for-byte as JSON. The pipeline
-   (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same three keys.
+   **diff-writes** ``state/settings_overrides.json`` (§15 v0.14 保存语义): a
+   value equal to the config.yaml/default effective value DELETES the override
+   key, a different one writes it; every other key in the file is preserved.
+   The pipeline (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same keys.
 
-3. **The daily self-improvement loop's knobs** (CONTRACT §70, D10) —
-   ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
-   / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``
-   / ``review_stale_days`` (D74, §70.2 追记),
-   same layered read (override ``daily_loop_<field>`` → config.yaml
-   ``daily_loop.<field>`` → default) and the same diff-write; the pipeline's
-   ``config._OVERRIDE_FIELDS`` reads the identical flat keys and actd picks a
-   change up on its next pass (no restart).
+2. **Shared helpers** the per-section settings modules use (recaps, display,
+   settings_catalog): :func:`read_overrides`, :func:`atomic_write_json`,
+   :func:`config_yaml_doc`, :func:`coerce_bool`, :func:`coerce_clock_time`.
 
-2. **The Claude Code global default** — ``~/.claude/settings.json`` ``model``,
-   what every ``follow`` call inherits. ``GET /api/claude-code/default-model``
-   reads it; ``POST`` edits **only the ``model`` key** after copying the file
-   to ``settings.json.bak-<UTC ts>`` in the same directory, preserving every
-   other key and the file mode; an unparsable file is refused (409
-   ``CONFLICT``) — never overwritten. Nothing rewrites that file on launch
-   (D22 (d)): the owner clicks 「设为 …」 explicitly.
+v2.0.0 (Act pipeline retired; full text in tag ``full``): the
+``models.dispatch`` knob and the "follow the Claude Code global default" mode
+are gone — under §78 the headless claude runs with its own config dir, so there
+is no global default to follow; a stored ``"follow"`` reads as the product
+default. Retired with them: the writer of the owner's Claude Code settings file
+(``GET/POST /api/claude-code/default-model``), the §67 skill store
+(``GET/POST /api/skills``) and the §70 daily-loop knobs
+(``/api/settings/daily-loop``). This module reads and writes nothing outside
+``<home>``.
 
-3. **The skill store** (CONTRACT §67) — ``GET /api/skills`` lists the
-   ``skills/index.yaml`` manifest with each skill's state on this machine
-   (enabled symlink / disabled / store-owned copy / owner's custom copy /
-   foreign) and ``POST /api/skills {name, action: enable|disable}`` flips one.
-   This section does NOT mirror: ``act/lib/skills.py`` is the single writer
-   of ``~/.claude/skills`` links and ``state/skills.json`` (a mirrored writer
-   would be a second writer), and the deps gate (§58.3 rule 3) allows
-   server → act.lib. Refusals surface as 409 ``CONFLICT`` with the store's
-   reason verbatim; an unknown name is 404.
-
-For sections 1–2 server/ does not import act (§49): the follow sentinel, mode
-names, canonical list and id shape are **mirrored** from act/lib/config.py and
-pinned by tests/test_server_paths_mirror.py — the two sides must agree on what
-a valid knob value is or the web would write something the daemon ignores.
+server/ mirrors the knob vocabulary from act/lib/config.py (pinned by
+tests/test_server_paths_mirror.py) — the two sides must agree on what a valid
+knob value is or the web would write something the pipeline ignores.
 """
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -63,51 +44,36 @@ try:
 except ImportError:  # pragma: no cover - PyYAML absent: config.yaml layer is skipped
     yaml = None  # type: ignore[assignment]
 
-# §67 skill store: the single writer of ~/.claude/skills links; absent
-# (partial install shape) → the two skills endpoints answer 501, nothing else
-# in the settings face degrades.
-try:
-    from act.lib import skills as skill_store
-except Exception:  # pragma: no cover - 降级路径
-    skill_store = None  # type: ignore[assignment]
-
 from server import paths
-from server.errors import (ConflictError, InvalidFieldError, NotFoundError,
-                           NotImplementedError501, UnknownFieldError)
+from server.errors import ConflictError, InvalidFieldError, UnknownFieldError
 
 # ---- mirrors of act/lib/config.py (drift-pinned) --------------------------- #
-MODEL_FOLLOW = "follow"
-MODEL_MODES = ("dispatch", "pipeline")
+MODEL_PIPELINE = "pipeline"
+LEGACY_MODEL_FOLLOW = "follow"
 CANONICAL_MODELS = (
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
     "claude-haiku-4-5-20251001",
 )
+DEFAULT_MODEL_PIPELINE = "claude-opus-5"
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
-# D53 third knob (mirror of config.MODEL_FALLBACK_OFF / DEFAULT_MODEL_FALLBACK):
-# not a MODEL_MODES member — its sentinel is "off", its default an explicit id.
+# D53 (mirror of config.MODEL_FALLBACK_OFF / DEFAULT_MODEL_FALLBACK)
 MODEL_FALLBACK = "fallback"
 MODEL_FALLBACK_OFF = "off"
 DEFAULT_MODEL_FALLBACK = "claude-opus-5[1m]"
-# every knob PUT /api/settings/models accepts (the two modes + the fallback)
-MODEL_KNOBS = MODEL_MODES + (MODEL_FALLBACK,)
+# every knob PUT /api/settings/models accepts
+MODEL_KNOBS = (MODEL_PIPELINE, MODEL_FALLBACK)
 
 # settings_overrides.json flat keys the pipeline reads (config._OVERRIDE_FIELDS)
 OVERRIDE_KEY = "models_%s"
 
-# ---- §70 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
-DAILY_LOOP_FIELDS = ("enabled", "time", "max_proposals_per_day", "stale_days",
-                     "trash_retention_days", "review_stale_days")   # D74: 6th knob
-DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 2,   # D33: 5 → 2
-                       "stale_days": 45, "trash_retention_days": 90,
-                       "review_stale_days": 14}
-DAILY_LOOP_KEY = "daily_loop_%s"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _BOOL_WORDS = {"true": True, "yes": True, "on": True, "1": True,
                "false": False, "no": False, "off": False, "0": False}
 
-BACKUP_SUFFIX = ".bak-%s"   # settings.json.bak-20260901T120000Z
+_MODEL_SHAPE_MSG = ("模型 id 只能含字母数字和 . _ - [ ]，≤64 字符，不能有空格 / "
+                    "a model id is letters, digits and . _ - [ ] only, ≤64 chars, no spaces")
 
 
 # --------------------------------------------------------------------------- #
@@ -118,36 +84,46 @@ def settings_overrides_path(home: Path) -> Path:
     return home / "state" / "settings_overrides.json"
 
 
-def claude_code_settings_path() -> Path:
-    # mirrors act/llm.claude_code_settings_path (Path.home() follows $HOME)
-    return Path.home() / ".claude" / "settings.json"
+# --------------------------------------------------------------------------- #
+# shared coercions (mirror of config.coerce_bool / coerce_clock_time)
+# --------------------------------------------------------------------------- #
+def coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    key = str(value).strip().lower() if isinstance(value, (int, str)) else ""
+    if key in _BOOL_WORDS:
+        return _BOOL_WORDS[key]
+    raise ValueError("必须是 true/false / must be true or false")
+
+
+def coerce_clock_time(value) -> str:
+    m = CLOCK_TIME_RE.match(value.strip()) if isinstance(value, str) else None
+    if m is None:
+        raise ValueError("时间必须是 HH:MM（本地时间，如 22:00）/ time must be HH:MM local, e.g. 22:00")
+    return "%02d:%s" % (int(m.group(1)), m.group(2))
 
 
 # --------------------------------------------------------------------------- #
-# model id validation (mirror of config.coerce_model)
+# model id validation (mirror of config.coerce_model / coerce_fallback_model)
 # --------------------------------------------------------------------------- #
 def coerce_model(value) -> str:
-    """None / blank / "follow" (any case) → "follow"; a well-formed id stays as
-    typed; anything else raises ValueError with a plain-language reason."""
+    """None / blank / the legacy "follow" (any case) → the product default; a
+    well-formed id stays as typed; anything else raises ValueError."""
     if value is None:
-        return MODEL_FOLLOW
+        return DEFAULT_MODEL_PIPELINE
     if not isinstance(value, str):
         raise ValueError("模型必须是字符串 / model must be a string")
     s = value.strip()
-    if not s or s.lower() == MODEL_FOLLOW:
-        return MODEL_FOLLOW
+    if not s or s.lower() == LEGACY_MODEL_FOLLOW:
+        return DEFAULT_MODEL_PIPELINE
     if not MODEL_ID_RE.match(s):
-        raise ValueError(
-            "模型 id 只能含字母数字和 . _ - [ ]，≤64 字符，不能有空格 / "
-            "a model id is letters, digits and . _ - [ ] only, ≤64 chars, no spaces")
+        raise ValueError(_MODEL_SHAPE_MSG)
     return s
 
 
 def coerce_fallback_model(value) -> str:
-    """Mirror of config.coerce_fallback_model (D53): None / blank → the default
-    id; "off" (any case) or a boolean False → "off" (YAML 1.1 reads a bare
-    ``off`` as False); a well-formed id stays as typed; anything else raises
-    ValueError with a plain-language reason."""
+    """None / blank → the default id; "off" (any case) or boolean False → "off"
+    (YAML 1.1 reads a bare ``off`` as False); a well-formed id stays as typed."""
     if value is None:
         return DEFAULT_MODEL_FALLBACK
     if value is False:
@@ -164,39 +140,31 @@ def _coerce_fallback_str(s: str) -> str:
     if s.lower() == MODEL_FALLBACK_OFF:
         return MODEL_FALLBACK_OFF
     if not MODEL_ID_RE.match(s):
-        raise ValueError(
-            "模型 id 只能含字母数字和 . _ - [ ]，≤64 字符，不能有空格；off = 关闭回退 / "
-            "a model id is letters, digits and . _ - [ ] only, ≤64 chars, no spaces; off = no fallback")
+        raise ValueError(_MODEL_SHAPE_MSG + "；off = 关闭回退 / off = no fallback")
     return s
 
 
 def coerce_knob(knob: str, value) -> str:
-    """One entry point for every knob PUT accepts: modes → coerce_model,
-    fallback → coerce_fallback_model."""
-    if knob == MODEL_FALLBACK:
-        return coerce_fallback_model(value)
-    return coerce_model(value)
+    return coerce_fallback_model(value) if knob == MODEL_FALLBACK else coerce_model(value)
 
 
 def is_canonical(value: str) -> bool:
-    return value == MODEL_FOLLOW or value in CANONICAL_MODELS
+    return value in CANONICAL_MODELS
 
 
-def noncanonical_warning(mode: str, value: str) -> Optional[str]:
-    """The free-text warning (D22 (e)); None for follow / canonical ids."""
+def noncanonical_warning(knob: str, value: str) -> Optional[str]:
+    """The free-text warning (D22 (e)); None for canonical ids."""
     if is_canonical(value):
         return None
     return ("%s 用了非 canonical 的模型 id「%s」——别名/后缀（[1m]、-eap…）随时可能下线，"
-            "下线那天这些调用会静默全败 / %s uses the non-canonical model id \"%s\" - "
-            "aliases/suffixes ([1m], -eap...) can disappear any day and every call "
-            "would then fail silently" % (mode, value, mode, value))
+            "下线那天会议纪要会静默全败 / %s uses the non-canonical model id \"%s\" - "
+            "aliases/suffixes ([1m], -eap...) can disappear any day and every recap "
+            "would then fail silently" % (knob, value, knob, value))
 
 
 def fallback_warning(value: str) -> Optional[str]:
-    """D53: the fallback knob's warning. None for off, the product default
-    (``claude-opus-5[1m]`` is the D53 decision — warning about it would be
-    noise) and canonical ids; a free-text alias gets a sentence that says what
-    actually breaks: only the fallback path, not every call."""
+    """D53: None for off, the product default and canonical ids (same rule as
+    ``act/llm.fallback_is_canonical``)."""
     if value in (MODEL_FALLBACK_OFF, DEFAULT_MODEL_FALLBACK) or value in CANONICAL_MODELS:
         return None
     return ("fallback 用了非 canonical 的模型 id「%s」——别名/后缀下线那天，主模型不可用时的"
@@ -206,160 +174,7 @@ def fallback_warning(value: str) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
-# §70 daily loop knob validation (mirror of config._coerce_bool / coerce_clock_time
-# / _nonneg_int — the strict, overrides-path shapes)
-# --------------------------------------------------------------------------- #
-def coerce_bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    key = str(value).strip().lower() if isinstance(value, (int, str)) else ""
-    if key in _BOOL_WORDS:
-        return _BOOL_WORDS[key]
-    raise ValueError("enabled 必须是 true/false / enabled must be true or false")
-
-
-def coerce_clock_time(value) -> str:
-    m = CLOCK_TIME_RE.match(value.strip()) if isinstance(value, str) else None
-    if m is None:
-        raise ValueError("time 必须是 HH:MM（本地时间，如 03:30）/ time must be HH:MM local, e.g. 03:30")
-    return "%02d:%s" % (int(m.group(1)), m.group(2))
-
-
-def _int_or_none(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def coerce_count(value) -> int:
-    n = _int_or_none(value)
-    if n is None or n < 0:
-        raise ValueError("必须是非负整数 / must be a non-negative integer")
-    return n
-
-
-_DAILY_LOOP_COERCE = {"enabled": coerce_bool, "time": coerce_clock_time,
-                      "max_proposals_per_day": coerce_count, "stale_days": coerce_count,
-                      "trash_retention_days": coerce_count, "review_stale_days": coerce_count}
-
-
-def coerce_daily_loop(field: str, value):
-    """Strict (overrides-path) coercion for one knob; ValueError with a plain reason."""
-    return _DAILY_LOOP_COERCE[field](value)
-
-
-def _lenient_daily_loop(field: str, value, default):
-    """config.yaml-path coercion (mirror of config._apply_daily_loop_block):
-    bad value → default; counts clamp at 0 (a negative day count means off)."""
-    if field in ("enabled", "time"):
-        try:
-            return coerce_daily_loop(field, value)
-        except (TypeError, ValueError):
-            return default
-    n = _int_or_none(value)
-    return max(0, default if n is None else n)
-
-
-def _config_daily_loop(home: Path) -> "tuple[dict, dict]":
-    """(values, present) from config.yaml ``daily_loop:``; absent/bad = defaults."""
-    values, present = dict(DAILY_LOOP_DEFAULTS), {f: False for f in DAILY_LOOP_FIELDS}
-    blk = _config_block(home, "daily_loop")
-    for field in DAILY_LOOP_FIELDS:
-        if field in blk:
-            present[field] = True
-            values[field] = _lenient_daily_loop(field, blk.get(field), values[field])
-    return values, present
-
-
-def _config_block(home: Path, name: str) -> dict:
-    if yaml is None:
-        return {}
-    try:
-        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return {}
-    blk = doc.get(name) if isinstance(doc, dict) else None
-    return blk if isinstance(blk, dict) else {}
-
-
-def daily_loop_snapshot(home: Path) -> dict:
-    """Wire shape (web/src/types.ts ``DailyLoopSettings`` mirrors verbatim)::
-
-        {"enabled": bool, "time": "HH:MM", "max_proposals_per_day": int,
-         "stale_days": int, "trash_retention_days": int, "review_stale_days": int,
-         "source": {"<field>": "override|config|default", ...}}
-    """
-    overrides = read_overrides(home)
-    values, present = _config_daily_loop(home)
-    out: dict = {"source": {}}
-    for field in DAILY_LOOP_FIELDS:
-        value, source = values[field], ("config" if present[field] else "default")
-        raw = overrides.get(DAILY_LOOP_KEY % field)
-        if raw is not None:
-            try:
-                value, source = coerce_daily_loop(field, raw), "override"
-            except ValueError:
-                pass  # the pipeline skips the bad entry too
-        out[field] = value
-        out["source"][field] = source
-    return out
-
-
-def _validated(payload: dict, fields: tuple, coerce, empty_msg: str) -> dict:
-    """Field whitelist (400 UNKNOWN_FIELD) + per-field coercion (400
-    INVALID_FIELD with the plain reason) → {field: value} for the given ones."""
-    _check_shape(payload, fields, empty_msg)
-    wanted: dict = {}
-    for field in (f for f in fields if f in payload):
-        try:
-            wanted[field] = coerce(field, payload[field])
-        except ValueError as exc:
-            raise InvalidFieldError(str(exc), {"field": field})
-    return wanted
-
-
-def _check_shape(payload: dict, fields: tuple, empty_msg: str) -> None:
-    unknown = set(payload) - set(fields)
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    if not payload:
-        raise InvalidFieldError(empty_msg)
-
-
-def _apply_diff(overrides: dict, wanted: dict, base: dict,
-                key_fmt: str = OVERRIDE_KEY) -> None:
-    """diff-write (§15 v0.14 保存语义), in memory: equal to the config/default
-    effective value → DELETE the override key; different → write it."""
-    for field, value in wanted.items():
-        key = key_fmt % field
-        if value == base[field]:
-            overrides.pop(key, None)
-        else:
-            overrides[key] = value
-
-
-def _diff_write(home: Path, wanted: dict, base: dict, key_fmt: str) -> None:
-    """Read overrides → _apply_diff → atomic write; other keys untouched."""
-    overrides = read_overrides(home)
-    _apply_diff(overrides, wanted, base, key_fmt)
-    atomic_write_json(settings_overrides_path(home), overrides)
-
-
-def update_daily_loop(home: Path, payload: dict) -> dict:
-    """Validate a partial ``{field: value}`` and diff-write the flat override
-    keys (equal to the config.yaml/default effective value → key deleted)."""
-    wanted = _validated(payload, DAILY_LOOP_FIELDS, coerce_daily_loop,
-                        "nothing to save: give at least one daily_loop field")
-    base, _present = _config_daily_loop(home)
-    _diff_write(home, wanted, base, DAILY_LOOP_KEY)
-    return daily_loop_snapshot(home)
-
-
-# --------------------------------------------------------------------------- #
-# layered read: overrides → config.yaml → default
+# overrides / config.yaml IO (shared)
 # --------------------------------------------------------------------------- #
 def _parse_overrides(text: str, p: Path) -> dict:
     """Overrides text → object; empty file = {}; not JSON / not an object →
@@ -386,55 +201,21 @@ def read_overrides(home: Path) -> dict:
     except FileNotFoundError:
         return {}
     except (OSError, UnicodeDecodeError) as exc:
-        # byte-corrupted (non-UTF-8) is as unparsable as bad JSON: 409, never a 500
         raise ConflictError("settings_overrides.json is unreadable",
                             {"path": str(p), "error": str(exc)})
     return _parse_overrides(text, p)
 
 
-def _models_block(home: Path) -> Optional[dict]:
-    """config.yaml ``models:`` block, or None (PyYAML absent / file absent /
-    bad yaml / wrong shape — the pipeline degrades the same way)."""
-    if yaml is None:
-        return None
-    try:
-        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return None
-    blk = doc.get("models") if isinstance(doc, dict) else None
-    return blk if isinstance(blk, dict) else None
-
-
-def _coerce_or_follow(value) -> str:
-    """coerce_model with a bad shape reading as follow (config-file leniency)."""
-    try:
-        return coerce_model(value)
-    except ValueError:
-        return MODEL_FOLLOW
-
-
-def _coerce_or_default_fallback(value) -> str:
-    """coerce_fallback_model with a bad shape reading as the default id
-    (mirror of config._fallback_or: a typo must not resurrect the CLI's own
-    fallback)."""
-    try:
-        return coerce_fallback_model(value)
-    except ValueError:
-        return DEFAULT_MODEL_FALLBACK
-
-
-def _knob_default(knob: str) -> str:
-    return DEFAULT_MODEL_FALLBACK if knob == MODEL_FALLBACK else MODEL_FOLLOW
-
-
-def _lenient_knob(knob: str, value) -> str:
-    return (_coerce_or_default_fallback(value) if knob == MODEL_FALLBACK
-            else _coerce_or_follow(value))
+def atomic_write_json(p: Path, doc: dict) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, p)
 
 
 def config_yaml_doc(home: Path) -> dict:
-    """config.yaml as a dict; {} when PyYAML / the file / the shape is absent
-    (shared by the per-section settings modules: recaps, display)."""
+    """config.yaml as a dict; {} when PyYAML / the file / the shape is absent."""
     if yaml is None:
         return {}
     try:
@@ -444,12 +225,26 @@ def config_yaml_doc(home: Path) -> dict:
     return doc if isinstance(doc, dict) else {}
 
 
+# --------------------------------------------------------------------------- #
+# layered read: overrides → config.yaml → default
+# --------------------------------------------------------------------------- #
+def _knob_default(knob: str) -> str:
+    return DEFAULT_MODEL_FALLBACK if knob == MODEL_FALLBACK else DEFAULT_MODEL_PIPELINE
+
+
+def _lenient_knob(knob: str, value) -> str:
+    """config-file leniency: a bad shape reads as the knob's default."""
+    try:
+        return coerce_knob(knob, value)
+    except ValueError:
+        return _knob_default(knob)
+
+
 def _config_models(home: Path) -> "tuple[dict, dict]":
-    """(values, present): config.yaml ``models:`` block coerced per knob (bad
-    shape → follow, or the default id for ``fallback``) + which knobs the file
-    actually spells (``source`` label). PyYAML absent / file absent / bad yaml
-    → all defaults, none present (the pipeline degrades the same way)."""
-    blk = _models_block(home) or {}
+    """(values, present): config.yaml ``models:`` coerced per knob + which knobs
+    the file actually spells (``source`` label)."""
+    blk = config_yaml_doc(home).get("models")
+    blk = blk if isinstance(blk, dict) else {}
     values = {knob: _knob_default(knob) for knob in MODEL_KNOBS}
     present = {knob: knob in blk for knob in MODEL_KNOBS}
     for knob in MODEL_KNOBS:
@@ -458,20 +253,29 @@ def _config_models(home: Path) -> "tuple[dict, dict]":
     return values, present
 
 
+def _effective_knob(knob: str, base: dict, present: dict, overrides: dict) -> "tuple[str, str]":
+    """(value, source): a well-formed override wins; a malformed one is skipped."""
+    raw = overrides.get(OVERRIDE_KEY % knob)
+    if raw is not None:
+        try:
+            return coerce_knob(knob, raw), "override"
+        except ValueError:
+            pass
+    return base[knob], ("config" if present[knob] else "default")
+
+
 def models_snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``ModelsSettings`` mirrors verbatim)::
 
-        {"dispatch": "<id>|follow", "pipeline": "<id>|follow",
-         "fallback": "<id>|off",                       # D53, add-only
-         "follow": "follow", "off": "off",
-         "fallback_default": "claude-opus-5[1m]",     # D53, add-only
+        {"pipeline": "<id>", "fallback": "<id>|off", "off": "off",
+         "pipeline_default": "claude-opus-5", "fallback_default": "claude-opus-5[1m]",
          "canonical": [...],
-         "source": {"dispatch": "override|config|default", "pipeline": ..., "fallback": ...},
+         "source": {"pipeline": "override|config|default", "fallback": ...},
          "warnings": ["...plain sentence per non-canonical knob..."]}
     """
     overrides = read_overrides(home)
     base, present = _config_models(home)
-    out: dict = {"follow": MODEL_FOLLOW, "off": MODEL_FALLBACK_OFF,
+    out: dict = {"off": MODEL_FALLBACK_OFF, "pipeline_default": DEFAULT_MODEL_PIPELINE,
                  "fallback_default": DEFAULT_MODEL_FALLBACK,
                  "canonical": list(CANONICAL_MODELS), "source": {}, "warnings": []}
     for knob in MODEL_KNOBS:
@@ -485,216 +289,37 @@ def models_snapshot(home: Path) -> dict:
     return out
 
 
-def _effective_knob(knob: str, base: dict, present: dict, overrides: dict) -> "tuple[str, str]":
-    """(value, source) for one knob: a well-formed override wins; a malformed
-    override is skipped (the pipeline skips it too); else config.yaml / default."""
-    raw = overrides.get(OVERRIDE_KEY % knob)
-    if raw is not None:
-        try:
-            return coerce_knob(knob, raw), "override"
-        except ValueError:
-            pass
-    return base[knob], ("config" if present[knob] else "default")
-
-
 # --------------------------------------------------------------------------- #
 # write: PUT /api/settings/models
 # --------------------------------------------------------------------------- #
-def atomic_write_json(p: Path, doc: dict) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, p)
+def _validated(payload: dict) -> dict:
+    """Field whitelist (400 UNKNOWN_FIELD) + per-knob coercion (400 INVALID_FIELD)."""
+    unknown = set(payload) - set(MODEL_KNOBS)
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if not payload:
+        raise InvalidFieldError("nothing to save: give pipeline and/or fallback")
+    wanted: dict = {}
+    for knob in (k for k in MODEL_KNOBS if k in payload):
+        try:
+            wanted[knob] = coerce_knob(knob, payload[knob])
+        except ValueError as exc:
+            raise InvalidFieldError(str(exc), {"field": knob})
+    return wanted
 
 
 def update_models(home: Path, payload: dict) -> dict:
-    """Validate ``{"dispatch"?: str, "pipeline"?: str, "fallback"?: str}`` and
-    diff-write the override keys. Unknown keys → 400 UNKNOWN_FIELD; a
-    malformed id → 400 INVALID_FIELD with the plain-language reason (the web
-    toasts it). Returns the fresh :func:`models_snapshot`."""
-    wanted = _wanted_models(payload)
+    """Validate ``{"pipeline"?: str, "fallback"?: str}`` and diff-write the
+    override keys (equal to the config.yaml/default effective value → key
+    deleted). Returns the fresh :func:`models_snapshot`."""
+    wanted = _validated(payload)
     base, _present = _config_models(home)
-    _diff_write(home, wanted, base, OVERRIDE_KEY)
+    overrides = read_overrides(home)
+    for knob, value in wanted.items():
+        key = OVERRIDE_KEY % knob
+        if value == base[knob]:
+            overrides.pop(key, None)
+        else:
+            overrides[key] = value
+    atomic_write_json(settings_overrides_path(home), overrides)
     return models_snapshot(home)
-
-
-def _wanted_models(payload: dict) -> dict:
-    """{knob: coerced value} for the knobs the payload names; a malformed id →
-    400 INVALID_FIELD carrying the plain-language reason."""
-    return _validated(payload, MODEL_KNOBS, coerce_knob,
-                      "nothing to save: give dispatch, pipeline and/or fallback")
-
-
-# --------------------------------------------------------------------------- #
-# Claude Code global default — ~/.claude/settings.json `model`
-# --------------------------------------------------------------------------- #
-def _load_claude_settings(p: Path):
-    """(doc|None, text|None): None doc = missing; raises ConflictError when the
-    file exists but is not a JSON object (never touched)."""
-    try:
-        text = p.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None, None
-    except OSError as exc:
-        raise ConflictError("~/.claude/settings.json is unreadable",
-                            {"path": str(p), "error": str(exc)})
-    try:
-        doc = json.loads(text)
-    except ValueError:
-        raise ConflictError(
-            "~/.claude/settings.json is not valid JSON - refusing to touch it; "
-            "fix it by hand (Claude Code reads it too)", {"path": str(p)})
-    if not isinstance(doc, dict):
-        raise ConflictError("~/.claude/settings.json must be a JSON object",
-                            {"path": str(p)})
-    return doc, text
-
-
-def claude_code_default(path: Optional[Path] = None) -> dict:
-    """Wire shape (``ClaudeCodeDefault`` in web/src/types.ts)::
-
-        {"model": "<id>"|null, "path": "~/.claude/settings.json",
-         "exists": bool, "parseable": bool, "canonical": bool}
-    Never raises — an unparsable file reads as parseable:false, model:null."""
-    p = path or claude_code_settings_path()
-    out = {"model": None, "path": str(p), "exists": p.exists(),
-           "parseable": False, "canonical": True}
-    try:
-        doc, _ = _load_claude_settings(p)
-    except ConflictError:
-        return out
-    if doc is None:
-        return out
-    out["parseable"] = True
-    model = doc.get("model")
-    if isinstance(model, str) and model.strip():
-        out["model"] = model.strip()
-        out["canonical"] = model.strip() in CANONICAL_MODELS
-    return out
-
-
-def set_claude_code_default(model, path: Optional[Path] = None) -> dict:
-    """Edit only ``model``; back the file up first. ``follow`` / blank is not a
-    model here (400). Returns ``{"model", "previous", "backup", "path"}``."""
-    value = _explicit_model(model)
-    p = path or claude_code_settings_path()
-    doc, _text = _load_claude_settings(p)
-    backup: Optional[str] = None
-    previous = None
-    if doc is None:
-        doc = {}
-        p.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        previous = _previous_model(doc)
-        backup = str(_backup_file(p))
-    doc["model"] = value
-    _replace_settings(p, doc, keep_mode=backup is not None)
-    return {"model": value, "previous": previous, "backup": backup, "path": str(p)}
-
-
-def _explicit_model(model) -> str:
-    """A real id for the global default: malformed → 400; follow / blank → 400
-    (the default cannot follow itself)."""
-    try:
-        value = coerce_model(model)
-    except ValueError as exc:
-        raise InvalidFieldError(str(exc), {"field": "model"})
-    if value == MODEL_FOLLOW:
-        raise InvalidFieldError("give a model id - the Claude Code default cannot follow itself",
-                                {"field": "model"})
-    return value
-
-
-def _previous_model(doc: dict) -> Optional[str]:
-    prev = doc.get("model")
-    return prev.strip() if isinstance(prev, str) and prev.strip() else None
-
-
-def _backup_file(p: Path) -> Path:
-    """Copy ``p`` to ``settings.json.bak-<UTC ts>[-n]`` (never clobber: two
-    clicks in one second get distinct names) and return the backup path."""
-    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    bak = p.with_name(p.name + BACKUP_SUFFIX % stamp)
-    n = 0
-    while bak.exists():
-        n += 1
-        bak = p.with_name(p.name + BACKUP_SUFFIX % ("%s-%d" % (stamp, n)))
-    shutil.copy2(p, bak)
-    return bak
-
-
-def _replace_settings(p: Path, doc: dict, *, keep_mode: bool) -> None:
-    """Atomic rewrite (tmp + replace); ``keep_mode`` copies the owner's file
-    mode from the existing file first (best effort)."""
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
-    if keep_mode:
-        try:
-            shutil.copymode(p, tmp)
-        except OSError:
-            pass
-    os.replace(tmp, p)
-
-
-# --------------------------------------------------------------------------- #
-# skill store — GET/POST /api/skills (CONTRACT §67)
-# --------------------------------------------------------------------------- #
-SKILL_ACTIONS = ("enable", "disable")
-
-
-def _store(home: Path):
-    if skill_store is None:
-        raise NotImplementedError501("the skill store (act/lib/skills.py) is not importable here")
-    return skill_store.Store(repo_root=home, state_dir=home / "state")
-
-
-def skills_snapshot(home: Path) -> dict:
-    """Wire shape (web ``SkillsSnapshot`` mirrors verbatim)::
-
-        {"skills": [<row>…], "skills_dir": "~/.claude/skills",
-         "repo_skills_dir": "<repo>/skills", "state_path": "<repo>/state/skills.json"}
-
-    Row fields = act/lib/skills.Store.inspect (add-only). A broken manifest is
-    the repo's fault, not the client's → 409 with the manifest error verbatim."""
-    store = _store(home)
-    try:
-        return store.snapshot()
-    except skill_store.ManifestError as exc:  # type: ignore[union-attr]
-        raise ConflictError("skills/index.yaml is unusable: %s" % exc)
-
-
-def _skill_payload(payload: dict) -> tuple:
-    """Validated ``(name, action)`` of a POST /api/skills body."""
-    unknown = set(payload) - {"name", "action"}
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    name, action = payload.get("name"), payload.get("action")
-    if not isinstance(name, str) or not name.strip():
-        raise InvalidFieldError("name must be a non-empty string", {"field": "name"})
-    if action not in SKILL_ACTIONS:
-        raise InvalidFieldError("action must be enable or disable", {"field": "action"})
-    return name.strip(), action
-
-
-def update_skill(home: Path, payload: dict) -> dict:
-    """``{"name": str, "action": "enable"|"disable"}`` → fresh snapshot.
-    Unknown keys 400 UNKNOWN_FIELD; bad shapes 400 INVALID_FIELD; unknown skill
-    404; custom/foreign copies refused 409 CONFLICT (details.code = the store's
-    SKILL_* token, so the web can render the exact refusal)."""
-    name, action = _skill_payload(payload)
-    store = _store(home)
-    try:
-        getattr(store, action)(name)
-    except skill_store.SkillError as exc:  # type: ignore[union-attr]
-        _raise_skill_error(exc, name)
-    except skill_store.ManifestError as exc:  # type: ignore[union-attr]
-        raise ConflictError("skills/index.yaml is unusable: %s" % exc)
-    return store.snapshot()
-
-
-def _raise_skill_error(exc, name: str) -> None:
-    if exc.code == "SKILL_UNKNOWN":
-        raise NotFoundError("no such skill", {"name": name})
-    raise ConflictError(str(exc), {"name": name, "code": exc.code})

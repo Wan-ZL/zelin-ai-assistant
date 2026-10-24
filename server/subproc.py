@@ -1,7 +1,7 @@
 """server/subproc.py — server 起 ``python -m act.<entrypoint>`` 子进程的唯一出口（§49 / §58.3）。
 
 server 不准 import act 的 entrypoint 层（依赖方向门：server 只到 act.lib），所以
-doctor / update_check / radar_claude_sessions 这类一次性命令一律以子进程运行：
+doctor / update_check 这类一次性命令一律以子进程运行：
 解释器 = ``sys.executable``（server 自己跑在 §55 验过的守护解释器上，它有的
 授权子进程原样继承）、cwd = repo 根（``act`` 包可 import）、env 带
 ``AIASSISTANT_HOME``。``runner`` 是注入缝——测试绝不真起子进程（仓规）。

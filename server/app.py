@@ -1,80 +1,51 @@
-"""HTTP server 主体：路由 / error envelope / body 上限 / 静态资源。
+"""HTTP server 主体：路由 / error envelope / body 上限 / 静态资源（CONTRACT §49）。
 
 - ThreadingHTTPServer，**硬编码 bind 127.0.0.1**（宪法：本地优先，新增网络面
   仅 localhost）；端口 env ``ZAI_PORT`` 默认 47820。
 - 日志噪音闸（§54.2 追记，issue #314）：`_Server.handle_error` 只吞三个连接类
   异常（客户端关 tab / 刷新时的 reset，抛在 Handler 之前）、其余照打全栈；
-  `log_message` 行首带本地 ISO 时间戳；`log_request` 把 `/api/board` 与
-  `/api/health` 按 `(path, 状态码)` 分桶、5 分钟窗口采样（状态码一变立刻写，
-  被吃掉的条数随下一行报出来，`ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不
-  删（§55 审计 L3）。
+  `log_message` 行首带本地 ISO 时间戳；`log_request` 把轮询路径按 `(path, 状态码)`
+  分桶、5 分钟窗口采样（状态码一变立刻写，被吃掉的条数随下一行报出来，
+  `ZAI_LOG_POLLS=1` 关采样）。日志只减噪、永不删（§55 审计 L3）。
 - error envelope 统一 ``{"error":{"code","message","details"}}``（errors.py）。
-- POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
-  本层校验，actions 的字段闸门归 inbox_writer/G1）。
-- 鉴权四闸（原 PR3 TODO，v0.48.1 落地；机制与差异见 server/security.py）：
-  Host 回环白名单（每请求，anti-rebind）→ Origin 白名单（写请求，present 才
-  查，anti-CSRF）→ Content-Type: application/json（写请求，杀 simple-request
-  向量）→ per-install instance token（写请求一律必带 X-Zai-Token；token 由
-  server 注入被服务的 index.html）。写请求 = POST 与 PUT（§59 设置面加的
-  第二个写动词，四闸逐字同款）。GET 保持 token-light（同源纪律 + 永不
-  发 CORS 头，跨源页面读不到任何响应）。
-- 设置面（§59）：GET/PUT /api/settings/models、GET/POST
-  /api/claude-code/default-model，校验与落盘在 server/settings.py。
-- 看板 parity 面（§54）：GET /api/lanes（列说明文案的 server-owned 目录，
-  server/lanes.py）、GET /api/notifications（系统通知目录：壳直发的通知句 +
-  §28 kind 词表，server/notify_catalog.py）、POST /api/ai-fix（「让 AI 修」=
-  起 act.ai_fix 的 Terminal 修复会话，server/ai_fix_launch.py）。
-- 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
-  POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
-- 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
-  /api/recaps/mark（「复制」/「标记已发送」本地标记）、GET /api/recaps/history?key=
-  （§63.9 存着的每一版 + 正文；只读，缺席 / 坏文件 = 200 空层），server/recaps.py。
-- 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
-  GET /api/settings（目录）+ GET/PUT /api/settings/{section}（server/settings_catalog.py）、
-  GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify
-  （server/secrets_store.py，值 write-only 永不回显）、GET /api/permissions、
-  GET /api/doctor、GET /api/diagnostics、GET /api/logs/{name}、GET /api/setup +
-  GET /api/setup/engine + GET /api/setup/vaults（Obsidian 已登记的库，§68.5 追记 D51）+
-  POST /api/setup/{config-from-example,complete,reset,seed-dashboard}、GET /api/about +
-  POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
-  POST /api/terminal（在终端接管会话：入队 state/terminal_queue 给壳，§68.7）、POST /api/repair/actd（横幅一键修复）。
-- 语气档案区（§68.1 追记）：GET /api/voice（当前生效行）+ GET /api/voice/generate-status（「从我的消息生成/更新档案」
-  的回执：inbox 特形 voice_generate 由 actd 分离起 act.voice_gen --job，server 只读 state/voice_gen/job.json；D47），
-  server/voice_profile.py。
-- Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
-  关于页 POST /api/uninstall/terminal（入队「在终端跑 uninstall.sh」给壳，server/uninstall_launch.py）；
-  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）；
-  开发者区 GET /api/worktrees[?refresh=1] + POST /api/worktrees/cleanup {dry_run?}（§75.4：
-  `.claude/worktrees/` 清点与一键回收，判决在 act/lib/worktrees.py，server/worktree_inventory.py）。
-  精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
-  `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
-- 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
-  diff-write 语义），server/settings.py。
-- 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
-  三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
-- 后台雷达行（§48.7）：GET /api/radars（launchd 已加载 / 模板间隔）、POST
-  /api/radars/reinstall {source}（= bash install.sh --reinstall-agent <label>），
-  server/radars.py；目录字段的 POST /api/folders/{open,create} {key}（路径由
-  server 从设置目录读，§68.1），server/folders.py。
-- telemetry（§15 / §16，D48 / D49）：POST /api/telemetry/consent-shown {}（consent 门
-  标记 write-once，server/telemetry_consent.py）、POST /api/analytics {event[, fields]}
-  （server 白名单内的两个 web 事件经 act.lib.analytics 落同一份 events.jsonl，
-  server/analytics_ingest.py）。
-- 贴图上传（§10bis web 路径，D41）：POST /api/attachments，body = 原始 PNG 字节
-  （唯一的**二进制体**路由：Content-Type 闸认 image/png、自带 8MiB 上限，
-  ``_POST_RAW_ROUTES``），落 state/attachments/<uuid>-1.png 回绝对路径，
-  server/attachments.py；其余四闸逐字同款。
-- 会话内容搜索层（§37.2 第三条，D45）：GET /api/search-index = actd 维护的
-  state/search_index.json 的只读投影 {entries: {card_id: text}, truncated}，
-  ETag/304（If-None-Match，本面唯一的条件 GET——JSON 表路由发不了 304，所以与
-  /api/board 一样是 _route_api_get 里的显式分支）、size cap、缺席 = 200 空表
-  （层缺席不是错误，宪法第 11 条），server/search_index_source.py。
+- POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（各 handler 的模块自己
+  做字段白名单）。
+- 鉴权四闸（机制见 server/security.py）：Host 回环白名单（每请求，anti-rebind）→
+  Origin 白名单（写请求，present 才查，anti-CSRF）→ Content-Type: application/json
+  （写请求，杀 simple-request 向量）→ per-install instance token（写请求一律必带
+  X-Zai-Token；token 由 server 注入被服务的 index.html）。写请求 = POST 与 PUT。
+  GET 保持 token-light（同源纪律 + 永不发 CORS 头，跨源页面读不到任何响应）。
 
-契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§10bis（贴图 images 字段与上传面）、§37.2（会话内容搜索层）、§59（设置面）、
-§62（素材库）、§63（会议 recap）、§67（skill 商店：GET/POST /api/skills，写者是
-act/lib/skills.py）、§68（parity 面）、§70（每日整理设置面）、§54.2（server 生命
-周期与本进程的访问日志纪律）。
+v2.0.0 路由集（§49 修订；server 是唯一的 HTTP 面，读 recap_store / settings / update /
+permissions，可派生 ``act.recap``）：
+
+- 会议纪要（§63，server/recaps.py）：GET /api/recaps（列表 + 三栏计数）、
+  POST /api/recaps/generate、POST /api/recaps/revert（分离派生 ``python -m act.recap``）、
+  POST /api/recaps/mark、GET /api/recaps/history?key=、GET/PUT /api/settings/recap。
+- 设置（§59 / §68.1 / §54.1）：GET /api/settings（目录）+ GET/PUT /api/settings/{section}
+  （server/settings_catalog.py）、GET/PUT /api/settings/models（server/settings.py）、
+  GET/PUT /api/settings/display（server/display.py）。
+- 凭证（§68.3）：GET /api/secrets + PUT /api/secrets/{name} + POST /api/secrets/{name}/verify。
+- 关于 / 更新（§26 / §79）：GET /api/about、POST /api/update/check、POST /api/update/install。
+- 权限 / 体检 / 诊断（§68.3 / §68.4）：GET /api/permissions、GET /api/doctor、GET /api/diagnostics、
+  GET /api/logs/{name}。
+- 向导（§68.5）：GET /api/setup、GET /api/setup/engine、GET /api/setup/vaults、
+  POST /api/setup/{config-from-example,complete,reset}。
+- 录制与导入（§15.2 / §72.1）：POST /api/ingest/export、POST /api/ingest/run、
+  GET /api/ingest/jobs/{id}、GET /api/screenpipe/disk。
+- 目录（§25 / §28）：GET /api/failures、GET /api/notifications。
+- 目录字段 / 定位（§68.1）：POST /api/folders/{open,create}、POST /api/reveal {target, mode?}。
+- 活性与推送：GET /api/health、GET /api/events（SSE；``state/recap/`` 变 → ``recaps.updated``）。
+
+退役（tombstone，全文见 tag full）：/api/board、/api/cards/*、/api/actions、/api/attachments、
+/api/worktrees*、/api/skills、/api/mcp、/api/claude-sessions、/api/claude-code/default-model、
+/api/terminal、/api/maintainer/*、/api/uninstall/terminal、/api/repair/actd、
+/api/setup/seed-dashboard、/api/slack/*、/api/sync*、/api/voice*、/api/radars*、/api/analytics、
+/api/telemetry/*、/api/lanes、/api/search-index、/api/ai-fix、/api/materials/*、
+/api/settings/daily-loop、/api/self-improve/*、/files/deliverables/*；SSE ``board.updated``。
+
+契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/localhost 例外的法源）、
+§54.2（server 生命周期与本进程的访问日志纪律）。
 """
 from __future__ import annotations
 
@@ -92,24 +63,16 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, analytics_ingest, attachments,
-                    board_source, claude_sessions, diagnostics, display,
-                    doctor_run, failure_catalog, files, folders, health,
-                    inbox_writer, ingest_run, lanes, maintainer_launch,
-                    material_box, mcp_servers, notify_catalog, paths,
-                    permissions, radars, recaps, repair, screenpipe_disk,
-                    search_index_source, secrets_store, security,
-                    self_improve_lane, settings, settings_catalog, setup,
-                    slack_directory, slack_manifest, sync_pairing,
-                    telemetry_consent,
-                    terminal_launch, uninstall_launch, voice_profile,
-                    worktree_inventory)
+from server import (about, diagnostics, display, doctor_run, failure_catalog,
+                    folders, health, ingest_run, notify_catalog, paths,
+                    permissions, recaps, screenpipe_disk, secrets_store,
+                    security, settings, settings_catalog, setup)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
-                           UnauthorizedError, UnknownFieldError)
+                           UnauthorizedError)
 from server.sse import (CONNECTED_FRAME, HEARTBEAT_FRAME, HEARTBEAT_SECONDS,
                         EventHub)
-from server.watcher import BoardWatcher
+from server.watcher import RecapWatcher
 
 BIND_HOST = "127.0.0.1"   # 硬编码——绝不做成可配置（隐私宪法）
 DEFAULT_PORT = 47820
@@ -123,15 +86,15 @@ _PLACEHOLDER_HTML = (b"<!doctype html><meta charset='utf-8'>"
                      b"<title>zai server</title>"
                      b"<p>server is up. <code>web/dist</code> not built yet "
                      b"&mdash; run <code>cd web && npm run build</code>.</p>"
-                     b"<p><a href='/api/board'>/api/board</a></p>")
+                     b"<p><a href='/api/recaps'>/api/recaps</a></p>")
 
 # 访问日志的噪音闸（§54.2 追记 2026-09-14）：日志只减噪、永不删（§55 审计 L3）。
 # 客户端关 tab / 刷新时 keep-alive 连接被 reset——异常发生在 handle_one_request
 # 读请求行时，在 Handler 之前，_dispatch 的 except 够不着它。
 _QUIET_CONN_ERRORS = (BrokenPipeError, ConnectionResetError,
                       ConnectionAbortedError)
-# 看板每 5s 轮询这两条；按 (path, 状态码) 分桶采样，其余路径一律照写
-_POLL_PATHS = ("/api/board", "/api/health")
+# 页面轮询这两条；按 (path, 状态码) 分桶采样，其余路径一律照写
+_POLL_PATHS = ("/api/recaps", "/api/health")
 _POLL_WINDOW_SECONDS = 300.0
 _LOG_POLLS_ENV = "ZAI_LOG_POLLS"  # =1 → 关掉采样（逐条写，排障用的 debug 档）
 
@@ -276,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
         except ApiError as err:
             self._send_api_error(err)
         except NotImplementedError:
-            # 防御性兜底（inbox_writer 已落地，正常路径不再走到这）——诚实 501，不装成功
+            # 防御性兜底（正常路径不会走到这）——诚实 501，不装成功
             self._send_api_error(NotImplementedError501(
                 "this endpoint is not wired up yet"))
         except (BrokenPipeError, ConnectionResetError):
@@ -342,42 +305,20 @@ class Handler(BaseHTTPRequestHandler):
         ctx = self.server.ctx  # type: ignore[attr-defined]
         if path.startswith("/api/"):
             self._route_api_get(ctx, path)
-        elif path.startswith("/files/deliverables/"):
-            self._send_deliverable(ctx, path)
         elif path.startswith("/files/"):
-            raise NotFoundError("not found", {"path": path})
+            raise NotFoundError("not found", {"path": path})   # v1 交付物面已退役
         else:
             self._serve_static(ctx.static_dir, path)
 
     def _route_api_get(self, ctx, path: str) -> None:
-        if path == "/api/board":
-            body = board_source.board_bytes(ctx.home)
-            self._send_bytes(200, body, "application/json; charset=utf-8",
-                             {"Cache-Control": "no-store"})
-        elif path == "/api/events":
+        if path == "/api/events":
             self._serve_events(ctx.hub)
-        elif path == "/api/search-index":
-            # §37.2 会话内容层（D45）：条件 GET——304 走不了 _send_json 的表路由；query 一律忽略
-            status, body, extra = search_index_source.response(
-                ctx.home, self.headers.get("If-None-Match"))
-            if status == 304:
-                self._send_not_modified(extra)
-            else:
-                self._send_bytes(status, body, search_index_source.CONTENT_TYPE, extra)
         else:
             # 纯 JSON 读面（health / 设置面 / 目录 / 诊断…）——表驱动：精确表先，前缀表后
             handler = _lookup(_GET_JSON_ROUTES, _GET_PREFIX_ROUTES, path)
             if handler is None:
                 raise NotFoundError("not found", {"path": path})
             self._send_json(200, handler(ctx, self._query()))
-
-    def _send_deliverable(self, ctx, path: str) -> None:
-        rest = path[len("/files/deliverables/"):].split("/")
-        if len(rest) != 2:
-            raise NotFoundError("not found", {"path": path})
-        body, ctype, extra = files.serve_deliverable(ctx.home, rest[0], rest[1])
-        extra["Cache-Control"] = "no-store"
-        self._send_bytes(200, body, ctype, extra, frameable=True)
 
     # ------------------------------------------------------------------ #
     # POST 路由
@@ -623,51 +564,6 @@ def _static_cache(target: Path) -> str:
 # _route_get/_route_post 里堆 elif（§58 复杂度门）。写面四闸在 _check_auth，
 # 与表无关；每个 handler 自己做字段白名单（UNKNOWN_FIELD 零容忍）。
 # --------------------------------------------------------------------------- #
-def _post_actions(ctx, payload: dict) -> dict:
-    # 字段级白名单 + 动词闸门在 inbox_writer（G1）——单一职责，
-    # 校验规则只写一处（module docstring 已冻结）
-    result = inbox_writer.write_action(payload, home=ctx.home)
-    # steer 标注（M6，add-only 响应键；inbox 文件形状零改动）：
-    # executing 卡上的 **owner** comment 会被 actd 按 steer 类经
-    # §44.3 briefing 机制转投递——这里只诚实报「queued」（落盘即排
-    # 队），delivered/dropped 状态由投影回流（vnext-amendments.md
-    # §M6.1）。agent ingress（via:"agent"，T-28）的 comment 只记录
-    # 不 steer——标注必须反映实际裁决：steer:false、无 steer_status。
-    if result.get("action") == "comment" and board_source.is_executing(
-            ctx.home, str(payload.get("id") or "")):
-        owner = result.get("via") == "web"
-        result["steer"] = owner
-        if owner:
-            result["steer_status"] = "queued"
-    return result
-
-
-def _post_reveal(ctx, payload: dict) -> dict:
-    # add-only ``mode``（reveal | open，缺省 reveal）：open 只对 voice_profile 放行（files.resolve_mode 裁）
-    unknown = set(payload) - {"card_id", "target", "name", "mode"}
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    if "target" in payload and "card_id" not in payload:
-        # §68.4 doctor 行「显示文件」（config_invalid）/ §67.5 Skills「在 Finder 显示」/ §68.9 MCP 作用域 /
-        # §68.1 「打开档案」：词表项（+ skill 名），不是路径
-        target = payload.get("target")
-        if not isinstance(target, str):
-            raise InvalidFieldError("target must be a string")
-        return files.reveal_target(ctx.home, target, payload.get("name"), payload.get("mode"))
-    card_id = payload.get("card_id")
-    if not isinstance(card_id, str):
-        raise InvalidFieldError("card_id must be a string")
-    return files.reveal(ctx.home, card_id, payload.get("mode"))
-
-
-def _post_claude_code_default(ctx, payload: dict) -> dict:
-    # §59 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
-    unknown = set(payload) - {"model"}
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    return settings.set_claude_code_default(payload.get("model"))
-
-
 def _lookup(exact: dict, prefixes: dict, path: str):
     """精确表命中优先；否则前缀表（``/api/logs/<name>`` 命中 ``/api/logs/``，尾段非空才算），
     前缀 handler 形状 (ctx, rest, arg) 在此归一成精确表的 (ctx, arg)。"""
@@ -708,81 +604,44 @@ def _post_secret_verify(ctx, rest: str, payload: dict) -> dict:
 
 # GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
 _GET_JSON_ROUTES = {
-    # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳年龄 +
-    # 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此诚实报「后台
-    # 服务卡住/停了」——退役中的 Mac app 横幅的替身。
+    # 活性（token-light GET）：server 在答话 + cron 链新鲜度 + 上次 recap 一轮（server/health.py）
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
-    # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
-    "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
-    # §70 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
-    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
-    # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
-    "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
-    # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
-    "/api/lanes": lambda ctx, query: lanes.catalog(),
-    # §28 / §66.2 系统通知目录：壳直发的通知句（双语）+ 队列 kind 词表（server-owned）
-    "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
-    # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
-    "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
-    # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
-    "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
-    # §63.9 上一版（issue #300）：单份纪要存着的每一版 + 正文（?key=…；正文只走这条路，
-    # 不进 10 s 一轮的看板投影）。只读——回退走 inbox recap_revert（act 独写 recaps/，§63.6）
+    # §63 会议纪要列表（v2.0.0：取代 dashboard.json 的 recaps[] / recap_counts）
+    "/api/recaps": lambda ctx, query: recaps.list_recaps(ctx.home, query),
+    # §63.9 上一版：单份纪要存着的每一版 + 正文（?key=…）。只读
     "/api/recaps/history": lambda ctx, query: recaps.history(ctx.home, query),
-    # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
-    # custom / foreign）；token-light GET，写面在 POST /api/skills
-    "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
-    # 语气档案「当前生效」状态行（docs/VOICE.md；§68.1 追记）
-    "/api/voice": lambda ctx, query: voice_profile.snapshot(ctx.home),
-    # §68.1 追记（D47）「从我的消息生成/更新档案」回执：只读 actd / act.voice_gen --job 写的 state/voice_gen/job.json
-    # （按钮本身 = POST /api/actions {action:"voice_generate"}；server 不起子进程——§44 单写者精神）
-    "/api/voice/generate-status": lambda ctx, query: voice_profile.generate_status(ctx.home),
-    # 同步 / 配对（§68.15）：state/sync.json 的开关 + syncd 落下的配对二维码
-    "/api/sync": lambda ctx, query: sync_pairing.snapshot(ctx.home),
-    # §68 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
+    # §63 会议 recap 两把旋钮（enabled / default_language）+ 只读 default_shape
+    "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §59 模型旋钮（pipeline + fallback）的 effective 值 + canonical 下拉全集（server-owned）
+    "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §54.1 第 12 项 显示偏好三把旋钮
+    "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
+    # §68.1 设置目录全集（通用 section 的 field 描述 + effective 值；文案 server-owned）
     "/api/settings": lambda ctx, query: settings_catalog.snapshot(ctx.home),
-    # §68 凭证状态（present / verifiable；值永不回显）
+    # §68.3 凭证状态（present / verifiable；值永不回显）
     "/api/secrets": lambda ctx, query: secrets_store.snapshot(ctx.home),
     # §68.3 权限体检（FDA 清单 + TCC 相关 doctor 行）
     "/api/permissions": lambda ctx, query: permissions.snapshot(ctx.home, refresh=_flag(query, "refresh")),
-    # §68.4 诊断页（doctor + health + deploy_state + install_report + 日志清单 + ai_fix_enabled；?lang= 透传 doctor）
+    # §68.4 诊断页（doctor + health + install_report + 日志清单；?lang= 透传 doctor）
     "/api/diagnostics": _get_diagnostics,
     "/api/doctor": _get_doctor,
-    # §68.5 首次运行向导（engine = 原生 EngineDetector：claude CLI + 认证梯子）
+    # §68.5 首次运行向导
     "/api/setup": lambda ctx, query: setup.snapshot(ctx.home),
     "/api/setup/engine": lambda ctx, query: setup.engine_snapshot(ctx.home),
-    # §68.5 追记 D51：Obsidian 自己登记过的库（~/Library/Application Support/obsidian/obsidian.json；
-    # 只读、只回仍存在的目录；缺席 / 坏文件 → 空列表，永不 500）
     "/api/setup/vaults": lambda ctx, query: setup.vaults_snapshot(),
-    # §68.6 关于 + 更新
+    # §26 / §68.6 关于 + 更新（缓存过期时在后台起一次 24h 自闸的检查）
     "/api/about": lambda ctx, query: about.snapshot(ctx.home),
-    # §68.9 MCP servers 只读列表（Skills 商店 = §67，上面的 /api/skills）
-    "/api/mcp": lambda ctx, query: mcp_servers.mcp(ctx.home),
-    # §68.10 导入 Claude Code 工作：扫描预览
-    "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
-    # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
-    "/api/slack/manifest": lambda ctx, query: slack_manifest.manifest(ctx.home),
-    # §68.1 追记：Slack 频道 / 成员目录（子进程 act.lib.slack_setup --directory，1 h 缓存；?refresh=1 绕过；
-    # ?lang=zh|en → 子进程 AIASSISTANT_UI_LANG，错误句随 web 当前语言——原生 SettingsSlack.fetchDirectory 同款）
-    "/api/slack/directory": lambda ctx, query: slack_directory.directory(
-        ctx.home, refresh=_flag(query, "refresh"), lang=doctor_run.parse_lang(query.get("lang"))),
-    # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
-    "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
-    # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
-    "/api/radars": lambda ctx, query: radars.snapshot(ctx.home),
-    # §25 / §68.4 失败目录（原生 FailureCatalog.message 的 server-owned 投影；防腐 #10）
+    # §28 系统通知目录：壳直发的通知句（双语）+ 队列 kind 词表（server-owned）
+    "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
+    # §25 失败目录（server-owned 投影；防腐 #10）
     "/api/failures": lambda ctx, query: failure_catalog.catalog(),
-    # §72.1 录制数据磁盘占用：缓存快照立刻回（首次 computing），扫目录 / 问 sqlite 在后台线程；?refresh=1 强制重算
+    # §72.1 录制数据磁盘占用：缓存快照立刻回，扫目录在后台线程；?refresh=1 强制重算
     "/api/screenpipe/disk": lambda ctx, query: screenpipe_disk.snapshot(ctx.home, refresh=_flag(query, "refresh")),
-    # §75.4 开发者区 worktree 清点：同一套「立刻回缓存、后台线程重算」形制（du 可能要几十秒）
-    "/api/worktrees": lambda ctx, query: worktree_inventory.snapshot(ctx.home, refresh=_flag(query, "refresh")),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
 _GET_PREFIX_ROUTES = {
-    # 投影 + registry 详情增补（§49；主键或工作编号 §60.3）
-    "/api/cards/": lambda ctx, rest, query: board_source.card_detail(ctx.home, rest),
-    # §68.1 单 section（/api/settings/models、/recap 走上面的精确表）
+    # §68.1 单 section（/api/settings/models、/recap、/display 走上面的精确表）
     "/api/settings/": lambda ctx, rest, query: settings_catalog.section_snapshot(ctx.home, rest),
     # §68.4 日志尾巴（白名单 + size-cap）
     "/api/logs/": lambda ctx, rest, query: diagnostics.tail(ctx.home, rest, query.get("lines")),
@@ -791,56 +650,28 @@ _GET_PREFIX_ROUTES = {
 }
 
 _POST_JSON_ROUTES = {
-    "/api/actions": _post_actions,
-    "/api/reveal": _post_reveal,
-    "/api/claude-code/default-model": _post_claude_code_default,
-    # §54 让 AI 修：字段白名单 + 上下文推导 + 子进程都在 ai_fix_launch
-    "/api/ai-fix": lambda ctx, payload: ai_fix_launch.launch(ctx.home, payload),
-    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/material_box.py
-    "/api/materials/add": lambda ctx, payload: material_box.add(ctx.home, payload),
-    "/api/materials/dismiss": lambda ctx, payload: material_box.dismiss(ctx.home, payload),
-    # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
+    # §63 「重新生成 / 现在生成」→ 分离派生 python -m act.recap --generate（+ §63.8 请求台账）
+    "/api/recaps/generate": lambda ctx, payload: recaps.generate(ctx.home, payload),
+    # §63.9 「回退到这一版」→ 分离派生 python -m act.recap --revert
+    "/api/recaps/revert": lambda ctx, payload: recaps.revert(ctx.home, payload),
+    # §63 「复制」/「标记已发送」/「忽略」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
-    # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
-    "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
-    # §67 启用/停用一个 skill（= ~/.claude/skills 软链接的建/删；自定义副本拒改 409）
-    "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
-    # §68.7 在终端接管会话（命令由 server 从投影推导）
-    "/api/terminal": lambda ctx, payload: terminal_launch.launch(ctx.home, payload),
-    # §68.8 横幅一键修复：actd 已加载 → kickstart；未加载 → install.sh --reinstall-agent
-    # （退出 4 / 缺 install.sh → 409 带 details.command，D50 追记）
-    "/api/repair/actd": lambda ctx, payload: repair.kickstart_actd(payload),
+    # §68.4 / §68.1 词表 reveal：config.yaml 或语气档案（路径由 server 推导）
+    "/api/reveal": lambda ctx, payload: folders.reveal(ctx.home, payload),
     # §68.5 向导三步
     "/api/setup/config-from-example": lambda ctx, payload: setup.config_from_example(ctx.home, payload),
     "/api/setup/complete": lambda ctx, payload: setup.complete(ctx.home, payload),
     "/api/setup/reset": lambda ctx, payload: setup.reset(ctx.home, payload),
-    # §68.5 末步「首次数据 · 立即生成一次」= python -m act.lib.dashboard 一次
-    "/api/setup/seed-dashboard": lambda ctx, payload: setup.seed_dashboard(ctx.home, payload),
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
-    # §68.6 关于页「在 Terminal 中卸载…」：入队给壳（§68.7 队列），server 自己不删任何东西
-    "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
-    # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
-    "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
-    # §75.4 开发者区「清理 worktree」：判决与执行都在 act.lib.worktrees（{"dry_run": true} = 只报会删谁）
-    "/api/worktrees/cleanup": lambda ctx, payload: worktree_inventory.cleanup(ctx.home, payload),
-    # §48.7 「重新安装」后台雷达：install.sh 自己的渲染器 + launchctl（server 不写 plist）
-    "/api/radars/reinstall": lambda ctx, payload: radars.reinstall(ctx.home, payload),
+    # §79 关于页「立即升级」：分离起 scripts/upgrade.sh（新大版本 409 manual_upgrade；升级器未落地 501）
+    "/api/update/install": lambda ctx, payload: about.install_now(payload, home=ctx.home),
     # §68.1 目录字段「打开」/「创建」：路径 = 已保存的 effective 值，客户端只传 key
     "/api/folders/open": lambda ctx, payload: folders.open_folder(ctx.home, payload),
     "/api/folders/create": lambda ctx, payload: folders.create_folder(ctx.home, payload),
-    # §15.2 录制页「手动触发」：同一条 ingest/ 脚本、同一套退出码（server 只起子进程；回 job id，GET /api/ingest/jobs/ 轮询）
+    # §15.2 录制页「手动触发」：同一条 ingest/ 脚本（server 只起子进程；回 job id）
     "/api/ingest/export": lambda ctx, payload: ingest_run.export_now(ctx.home, payload),
     "/api/ingest/run": lambda ctx, payload: ingest_run.ingest_now(ctx.home, payload),
-    # §68.6 关于页「一键更新」：提前 kickstart §56 自动部署 agent（未加载 409 → 页面退回 release 页）
-    "/api/update/install": lambda ctx, payload: about.install_now(payload),
-    # §68.15 同步 / 配对：起 act.syncd --pair --json / --disable（syncd 是 state/sync 的唯一写者）
-    "/api/sync/pair": lambda ctx, payload: sync_pairing.pair(ctx.home, payload),
-    "/api/sync/disable": lambda ctx, payload: sync_pairing.disable(ctx.home, payload),
-    # §15 consent 门标记（D49）：向导「完成」/ 披露块保存后 write-once 落 state/telemetry_consent_shown(+_v2)
-    "/api/telemetry/consent-shown": lambda ctx, payload: telemetry_consent.mark_shown(ctx.home, payload),
-    # §16 web 极简 analytics（D48）：server 白名单 {wizard_complete, pipeline_repair_result} → act.lib.analytics.log_event
-    "/api/analytics": lambda ctx, payload: analytics_ingest.ingest(payload),
 }
 
 _POST_PREFIX_ROUTES = {
@@ -848,28 +679,21 @@ _POST_PREFIX_ROUTES = {
     "/api/secrets/": _post_secret_verify,
 }
 
-# 二进制体路由：path → (media type, body 上限, handler(ctx, bytes) → dict)。
-# 四闸里的 Content-Type 闸按这张表取 media type（_write_media_type），其余三闸
-# 与 JSON 面逐字同款；只许登记非 CORS-safelisted 的类型（security.content_type_is）。
-_POST_RAW_ROUTES = {
-    # §10bis 贴图上传：原始 PNG 字节 → state/attachments/<uuid>-1.png（D41）
-    attachments.ROUTE: (attachments.CONTENT_TYPE, attachments.MAX_BYTES,
-                        lambda ctx, data: attachments.save(ctx.home, data)),
-}
+# 二进制体路由：path → (media type, body 上限, handler(ctx, bytes) → dict)。四闸里的 Content-Type 闸按
+# 这张表取 media type（_write_media_type）。v2.0.0：§10bis 贴图上传随卡片退役，表为空（机制保留）。
+_POST_RAW_ROUTES: dict = {}
 
 _PUT_JSON_ROUTES = {
-    # §59 两把模型旋钮（diff-write overrides）
+    # §59 模型旋钮（diff-write overrides）
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
-    # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
-    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
-    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
+    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义）
     "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }
 
 _PUT_PREFIX_ROUTES = {
-    # §68.1 通用 section 的 diff-write（models / recap 走精确表）
+    # §68.1 通用 section 的 diff-write（models / recap / display 走精确表）
     "/api/settings/": lambda ctx, rest, payload: settings_catalog.update_section(ctx.home, rest, payload),
     # §68.3 凭证写入（0600；空值 = 删）
     "/api/secrets/": lambda ctx, rest, payload: secrets_store.write_value(ctx.home, rest, payload),
@@ -922,7 +746,7 @@ def make_server(port: Optional[int] = None,
                          token, security.allowed_origins(bound_port))
     httpd.watcher = None  # type: ignore[attr-defined]
     if start_watcher:
-        watcher = BoardWatcher(resolved_home, hub)
+        watcher = RecapWatcher(resolved_home, hub)
         watcher.start()
         httpd.watcher = watcher  # type: ignore[attr-defined]
     return httpd

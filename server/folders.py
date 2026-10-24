@@ -1,13 +1,13 @@
-"""server/folders.py — 设置页目录字段的「打开」/「创建」（CONTRACT §68.1 目录字段；§54.4）：
-``POST /api/folders/open {key}`` · ``POST /api/folders/create {key}``。
+"""server/folders.py — 设置页目录字段的「打开」/「创建」与词表 reveal（CONTRACT §68.1 目录字段；§49）：
+``POST /api/folders/open {key}`` · ``POST /api/folders/create {key}`` · ``POST /api/reveal {target, mode?}``。
 
-原生 Settings.swift 的 obsidianGroup（选择… / 打开 / 创建）与 approvalGroup（选择… / 创建文件夹）
-的 server 落点。「选择…」是文件对话框——壳里走 §61.1 桥的 ``chooseFolder``（NSOpenPanel），
+原生 Settings.swift 的 obsidianGroup（选择… / 打开 / 创建）的 server 落点。「选择…」是文件对话框——壳里走 §61.1 桥的 ``chooseFolder``（NSOpenPanel），
 浏览器里退化成路径文本框，server 不参与；「打开」与「创建」作用在**已保存的 effective 值**上：
 路径由 server 从设置目录读（``settings_catalog.effective``），**绝不接受客户端原始路径**
 （reveal / ai-fix / terminal 同一纪律）——web 在草稿未保存时禁用这两颗按钮并提示先保存。
 
-- ``key`` ∈ :data:`FOLDER_FIELDS`（``obsidian_raw`` / ``default_target_repo``；未知 400）。
+- ``key`` ∈ :data:`FOLDER_FIELDS`（``obsidian_raw``；未知 400。v2.0.0：``default_target_repo`` 随
+  executor 退役）。
 - open：值为空 400；darwin → ``/usr/bin/open <dir>``（访达），其它 501。
   ``obsidian_raw`` 开的是 **vault 根**（= raw 目录的父目录；原生 Settings.swift:768 ``openInFinder(vaultRoot)``，
   §68.1 追记「vault 根」——web 框里显示的就是根，打开落到同一处）；create 仍 ``mkdir -p`` raw 目录本身（含根）。
@@ -15,9 +15,14 @@
   （§68.4 追记；原生 Pages.swift ``.reveal``：``fileExists ? p : deletingLastPathComponent``——用户至少能看见它
   本该在哪、顺手建出来）；**相对路径**（字段没有绝对路径校验、config.yaml 也能存）没有可开的祖先
   （``parents`` 尽头是 ``.`` = server 的 cwd，不是用户的树）→ 仍 404，绝不 ``open .``。
-- create：``mkdir -p``（已在 = ``created:false`` 幂等）；``default_target_repo`` 另 ``git init -q``
-  （原生 createTargetRepoDir 同款，best-effort：失败只回执 ``git_init:"failed"``）；mkdir 失败 →
+- create：``mkdir -p``（已在 = ``created:false`` 幂等）；登记了 git init 的键另 ``git init -q``
+  （best-effort：失败只回执 ``git_init:"failed"``；今日没有这样的键）；mkdir 失败 →
   500 ``could not create the folder: <why>``（web 前缀原生句「创建目录失败：」）。
+- reveal（v2.0.0 从退役的 server/files.py 搬来，只留词表半边）：``target`` ∈ :data:`REVEAL_TARGETS`
+  ——``config``（``config.yaml``，缺席则模板；doctor ``config_invalid`` 行的「显示文件」）与
+  ``voice_profile``（recap 读的语气档案：``state/voice-profile.md``，否则 ``config/voice-profile.default.md``；
+  ``mode:"open"`` = 默认编辑器打开）。路径永远由 server 推导，客户端只点名词表项；非 darwin 501。
+  交付物 reveal（``card_id``）随卡片退役。
 目录字段的 ``path_exists`` 投影在 settings_catalog（web 据此渲染「目录不存在」警告 + 创建键）。
 ``opener`` / ``runner`` 注入缝：测试绝不真 open / 真 git。
 """
@@ -35,7 +40,6 @@ from server.errors import (ApiError, InvalidFieldError, NotFoundError,
 # key → (section id, git init on create)
 FOLDER_FIELDS = {
     "obsidian_raw": ("obsidian", False),
-    "default_target_repo": ("approval", True),
 }
 # 「打开」落到 vault 根而不是存值本身的那一把键（web `vaultPaths.VAULT_RAW_KEY` 同名）
 VAULT_RAW_KEY = "obsidian_raw"
@@ -144,3 +148,77 @@ def create_folder(home: Path, payload: dict, runner: Optional[Runner] = None) ->
             raise ApiError("could not create the folder: %s" % exc, {"key": key, "path": str(path)})
     git_init = _git_init(path, runner or _default_runner) if FOLDER_FIELDS[key][1] else None
     return {"ok": True, "key": key, "path": str(path), "created": not existed, "git_init": git_init}
+
+
+# --------------------------------------------------------------------------- #
+# POST /api/reveal {target, mode?} — vocabulary items only, path derived here
+# --------------------------------------------------------------------------- #
+REVEAL_TARGETS = ("config", "voice_profile")
+REVEAL_MODES = ("reveal", "open")
+_OPENABLE_TARGETS = frozenset({"voice_profile"})
+
+
+def _config_file(home: Path) -> Path:
+    for path in (home / "config.yaml", home / "config.example.yaml"):
+        if path.is_file():
+            return path
+    raise NotFoundError("neither config.yaml nor config.example.yaml exists", {"target": "config"})
+
+
+def _voice_profile_file(home: Path) -> Path:
+    # mirrors act/recap.voice_profile_text's two-level fallback (docs/VOICE.md)
+    for path in (home / "state" / "voice-profile.md", home / "config" / "voice-profile.default.md"):
+        if path.is_file():
+            return path
+    raise NotFoundError("no voice profile exists yet (state/voice-profile.md or "
+                        "config/voice-profile.default.md)", {"target": "voice_profile"})
+
+
+_REVEAL_PATHS = {"config": _config_file, "voice_profile": _voice_profile_file}
+
+
+def _reveal_mode(mode, target: str) -> str:
+    if mode is None:
+        return "reveal"
+    if not isinstance(mode, str) or mode not in REVEAL_MODES:
+        raise InvalidFieldError("unknown reveal mode", {"field": "mode", "choices": list(REVEAL_MODES)})
+    if mode == "open" and target not in _OPENABLE_TARGETS:
+        raise InvalidFieldError('mode "open" is only honoured for target voice_profile',
+                                {"field": "mode", "target": target})
+    return mode
+
+
+def _reveal_request(payload: dict) -> "tuple[str, str]":
+    """Validated ``(target, mode)`` of a POST /api/reveal body."""
+    unknown = set(payload) - {"target", "mode"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    target = payload.get("target")
+    if target not in REVEAL_TARGETS:
+        raise InvalidFieldError("unknown reveal target",
+                                {"field": "target", "choices": list(REVEAL_TARGETS)})
+    return target, _reveal_mode(payload.get("mode"), target)
+
+
+def _default_revealer(argv: list) -> None:
+    subprocess.run(argv, check=False, timeout=10)
+
+
+def reveal(home: Path, payload: dict, revealer: Optional[Callable[[list], None]] = None,
+           platform: Optional[str] = None) -> dict:
+    """``POST /api/reveal {target, mode?}`` → ``{"ok": true, "revealed"|"opened": "<path>"}``."""
+    target, mode = _reveal_request(payload)
+    if (platform or sys.platform) != "darwin":
+        raise NotImplementedError501("reveal is only available on macOS")
+    path = _REVEAL_PATHS[target](home)
+    _run_reveal(revealer or _default_revealer, mode, path, target)
+    return {"ok": True, ("opened" if mode == "open" else "revealed"): str(path)}
+
+
+def _run_reveal(run: Callable[[list], None], mode: str, path: Path, target: str) -> None:
+    """``open -R <path>`` (Finder) or ``open <path>`` (default editor); failure → 404."""
+    argv = ["open", str(path)] if mode == "open" else ["open", "-R", str(path)]
+    try:
+        run(argv)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise NotFoundError("could not " + mode, {"target": target, "reason": str(exc)})

@@ -1,8 +1,10 @@
-"""路径推导——镜像 act/lib/config.py 的布局常量，但绝不 import act。
+"""路径推导（CONTRACT §49 / §19）——镜像 act/lib/config.py 的布局常量，但绝不 import act.lib.config。
 
-act.lib.config 在 import 时读 env 并携带写路径（ensure_state_dirs 等）；
-server 侧只需要几个只读路径，自己算，零依赖（registry 单写者原则 §44）。
-镜像 drift-pin：tests/test_server_paths_mirror.py。
+act.lib.config 在 import 时读 env 并携带写路径（ensure_state_dirs 等）；server 侧
+从自己的 home 算路径（测试注入 home 不失真）。镜像 drift-pin：tests/test_server_paths_mirror.py。
+v2.0.0：dashboard / registry / store2 / inbox / attachments / heartbeat / loop_health /
+self_improve / telemetry / terminal_queue / shell heartbeat / radar_health / actd.log /
+voice_gen 这些路径随 Act 管线退役（全文见 tag full）。
 """
 from __future__ import annotations
 
@@ -21,93 +23,12 @@ def home_dir(explicit: "str | Path | None" = None) -> Path:
 
 def config_path(home: Path) -> Path:
     # 镜像 act/lib/config.py CONFIG_PATH（HOME / "config.yaml"）——server 只读
-    # 一个键：`registry.backend` 回滚开关（§53.6，board_source 真源判定用）
     return home / "config.yaml"
-
-
-def dashboard_path(home: Path) -> Path:
-    return home / "state" / "dashboard.json"
-
-
-def search_index_path(home: Path) -> Path:
-    # §37.2 会话内容层：act/lib/search_index.INDEX_PATH（STATE_DIR / search_index.json；actd 写、
-    # server/search_index_source.py 只读投影给 GET /api/search-index，D45）
-    return home / "state" / "search_index.json"
-
-
-def registry_dir(home: Path) -> Path:
-    return home / "act" / "registry"
-
-
-def archive_dir(home: Path) -> Path:
-    # v0.20.0 §4：归档卡 RELOCATE 到 archive/ 子目录（registry.py ARCHIVE_DIR）
-    return registry_dir(home) / "archive"
-
-
-def store2_db_path(home: Path) -> Path:
-    # §53：store2 SQLite 真源（registry.store2_db_path 镜像）
-    return home / "state" / "store2.db"
-
-
-def store2_truth_path(home: Path) -> Path:
-    # §53：激活标记——在 = SQLite 是真源，YAML 目录只是冻结工件/导出镜像
-    return home / "state" / "store2_truth.json"
-
-
-def inbox_dir(home: Path) -> Path:
-    return home / "state" / "inbox"
-
-
-def attachments_dir(home: Path) -> Path:
-    # §10bis：capture 贴图的 PNG 目录（原生 PastedImages.savePNGs 与 actd
-    # housekeeping.sweep_attachment_dirs 的 `STATE_DIR / "attachments"` 同一处；
-    # server/attachments.py 是它的 web 侧写者，GC 仍归 actd）
-    return home / "state" / "attachments"
-
-
-def heartbeat_path(home: Path) -> Path:
-    # §47.4：act/lib/heartbeat.HEARTBEAT_PATH（actd 每阶段 touch；mtime 为真源）
-    return home / "state" / "actd.heartbeat"
-
-
-def loop_health_path(home: Path) -> Path:
-    # §47.3：act/actd.LOOP_HEALTH_NAME（连续 pass 崩溃计数）
-    return home / "state" / "loop_health.json"
-
-
-def self_improve_lane_path(home: Path) -> Path:
-    # §65：act/lib/self_improve.lane_state_path()——自动草稿 PR 通道的暂停状态；
-    # server 只在 owner 点「恢复通道」时写 paused:false（server/self_improve_lane.py）
-    return home / "state" / "self_improve" / "lane.json"
 
 
 def settings_overrides_path(home: Path) -> Path:
     # §15.3：act/lib/config.SETTINGS_OVERRIDES_PATH（STATE_DIR / settings_overrides.json）
     return home / "state" / "settings_overrides.json"
-
-
-def telemetry_consent_marker_path(home: Path) -> Path:
-    # §15 consent 门标记：act/lib/telemetry_upload.CONSENT_MARKER_PATH（STATE_DIR / telemetry_consent_shown）——
-    # 上传端只看它在不在；web 宿主经 POST /api/telemetry/consent-shown 落笔（server/telemetry_consent.py，D49）
-    return home / "state" / "telemetry_consent_shown"
-
-
-def telemetry_consent_v2_path(home: Path) -> Path:
-    # §15 v2 披露记录：act/lib/analytics.CONSENT_V2_PATH（STATE_DIR / telemetry_consent_shown_v2）——只是「披露展示过」
-    # 的记录，不开内容门（v0.48 起内容同意只认显式 capture_input 键）
-    return home / "state" / "telemetry_consent_shown_v2"
-
-
-def terminal_queue_dir(home: Path) -> Path:
-    # §68.7（2026-09-05，issue #216）：终端接管的 launch 请求队列——server 唯一写者、壳
-    # （shell/Sources/TerminalRelay.swift）唯一消费者；形制照 §28 state/notify_queue
-    return home / "state" / "terminal_queue"
-
-
-def shell_heartbeat_path(home: Path) -> Path:
-    # §68.7 / §68.13：壳每 5 s tick touch 一次、退出时删除——server 据 mtime 判「壳在跑」
-    # （队列有没有消费者），新鲜阈值 truth = server/terminal_launch.HEARTBEAT_FRESH_S
-    return home / "state" / "shell.heartbeat"
 
 
 def secrets_dir(home: Path) -> Path:
@@ -116,13 +37,8 @@ def secrets_dir(home: Path) -> Path:
 
 
 def runtime_json_path(home: Path) -> Path:
-    # §19 / §55：install.sh 钉住的守护解释器指针 config/runtime.json {"python": "<abs>"}
+    # §19 / §55：install.sh 钉住的 server 解释器指针 config/runtime.json {"python": "<abs>"}
     return home / "config" / "runtime.json"
-
-
-def radar_health_path(home: Path) -> Path:
-    # §48：act/lib/health.HEALTH_PATH（radar 写、看板/诊断读）
-    return home / "state" / "radar_health.json"
 
 
 def install_report_path(home: Path) -> Path:
@@ -140,8 +56,13 @@ def update_check_path(home: Path) -> Path:
     return home / "state" / "update_check.json"
 
 
+def recap_log_path(home: Path) -> Path:
+    # §63：act/lib/recap_store.log_path（cron 与 server 派生的 act.recap 运行都 append 到这里）
+    return home / "state" / "recap.log"
+
+
 def user_log_dir() -> Path:
-    # §55：launchd 模板的 StandardOut/ErrorPath 目录（server/actd/radars 的 *.launchd.log）
+    # §55：launchd 模板的 StandardOut/ErrorPath 目录（server 的 *.launchd.log）
     return Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
 
 
@@ -149,11 +70,6 @@ def screenpipe_dir() -> Path:
     # §15.2：录制引擎的数据目录（db.sqlite 的 mtime = 「最近写入」；engine.log = 引擎日志，
     # 与 shell/Sources/Recording.swift engineLogPath 同一路径）
     return Path.home() / ".screenpipe"
-
-
-def actd_log_path(home: Path) -> Path:
-    # §15.2 / 原生 AppPaths.actdLogPath：录制与数据接入页「state/actd.log 更新于」读的文件
-    return home / "state" / "actd.log"
 
 
 def ingest_log_path() -> Path:
@@ -166,12 +82,6 @@ def ingest_log_path() -> Path:
 def cron_probe_path(home: Path) -> Path:
     # §25：act/lib/checks/cron.CRON_PROBE_PATH（cron 链每轮写的 FDA 探针；依赖检查页「定时任务磁盘权限」行）
     return home / "state" / "cron_probe.json"
-
-
-def voice_gen_job_path(home: Path) -> Path:
-    # §68.1 追记（D47）：act/lib/voice_job.JOB_PATH——actd 起 act.voice_gen --job 前写 running、子进程写 done / failed；
-    # server 只读（GET /api/voice/generate-status）
-    return home / "state" / "voice_gen" / "job.json"
 
 
 def vault_sync_mode_path(home: Path) -> Path:
