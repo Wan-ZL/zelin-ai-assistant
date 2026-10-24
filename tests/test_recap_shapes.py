@@ -6,7 +6,7 @@ issue #303 / #332），所以出稿多了第二种形状 `sections`：分节 + �
 **整条路**——模板与解析、确定性校验（节表 / 语气表 / 上限 / 自编号 / 两语言对齐）、
 渲染（标题 + 连续编号 + 略掉空节）、记录字段（add-only shape / sections_* / copy_*）、
 形状怎么选出来（按钮 > 记录上一版 > 配置）、以及**每一处「有正文吗」的判决**：
-history 入库、通知、Slack 草稿正文、下一场会的「较上次变化」锚、投影句柄与回退。
+history 入库、通知、下一场会的「较上次变化」锚、投影句柄与回退（§63.4 Slack 草稿 v2.0.0 退役）。
 无发送路径不因新形状松一寸（argv 仍是 NO_EGRESS_ARGV，记录仍无 recipient/channel）。
 """
 import json
@@ -19,9 +19,8 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests import recap_fixture as fx
 
-from act import recap
+from act import llm, recap
 from act.lib import config, notify
-from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as rt
 
@@ -235,8 +234,9 @@ class RecordTestCase(unittest.TestCase):
         for banned in ('"recipient"', '"channel"', '"tier"', '"status": "approved"'):
             self.assertNotIn(banned, blob)
         self.assertEqual(self.calls[0][0][3:], ["--output-format", "text",
+                                                "--model", config.DEFAULT_MODEL_PIPELINE,
                                                 "--fallback-model", config.DEFAULT_MODEL_FALLBACK,
-                                                *rt.NO_EGRESS_ARGV])
+                                                *llm.ISOLATION_ARGV, *rt.NO_EGRESS_ARGV])
 
     def test_the_shape_is_sticky_and_the_button_overrides_it(self):
         self.cfg.raw["recap"] = {}                       # 出厂默认 = 五行
@@ -257,7 +257,7 @@ class RecordTestCase(unittest.TestCase):
                        runner=self._runner, cfg=self.cfg)
         self.assertEqual(store.load_recap(KEY)["shape"], "sections")
 
-    def test_history_the_slack_draft_body_and_the_priors_all_see_the_text(self):
+    def test_history_and_the_priors_both_see_the_text(self):
         self.closed_round()
         first = store.load_recap(KEY)["copy_en"]
         recap.generate(KEY, now=fx.T0 + 40 * MIN, conn=self.conn, runner=self._runner, cfg=self.cfg)
@@ -268,17 +268,7 @@ class RecordTestCase(unittest.TestCase):
         self.assertEqual((entry["version"], entry["shape"]), (1, "sections"))
         self.assertEqual(entry["copy_en"], first)
         self.assertEqual([h["version"] for h in store.history_versions(rec)], [1])
-        # 2) Slack 草稿正文 = 粘出去的那一份，不是空
-        st = dict(store.settings(self.cfg), slack_draft_enabled=True)
-        with mock.patch.object(slack_draft, "build_prompt",
-                               side_effect=lambda channel, body: self.calls.append(("draft", body)) or "P"):
-            with mock.patch.object(slack_draft, "parse_result",
-                                   return_value={"status": "posted", "channel_link": None}):
-                receipt = recap.post_slack_draft(rec, "C0123456789", st, self._runner, self.cfg,
-                                                 fx.T0 + 60 * MIN)
-        self.assertEqual(receipt["status"], "posted")
-        self.assertIn(("draft", rec["copy_zh"]), self.calls)
-        # 3) 下一场会的「较上次变化」拿得到它（旧 priors_for 只看 en = 静默消失）
+        # 2) 下一场会的「较上次变化」拿得到它（旧 priors_for 只看 en = 静默消失）
         priors = store.priors_for(fx.T0 + 86400, "America/Los_Angeles")
         self.assertEqual(len(priors), 1)
         self.assertIn("D1. Ann owns the data mix from Monday", "\n".join(priors[0]["en"]))
@@ -336,15 +326,15 @@ class RecordTestCase(unittest.TestCase):
         self.assertEqual(recap.record_shape({}, {"default_shape": None}, "garbage"),
                          rt.DEFAULT_SHAPE)
 
-    def test_the_inbox_form_only_accepts_the_two_literals(self):
+    def test_the_request_form_only_accepts_the_two_literals(self):
         base = {"action": "recap_generate", "meeting_key": KEY}
-        self.assertEqual(store.inbox_argv(dict(base, shape="sections")),
+        self.assertEqual(store.request_argv(dict(base, shape="sections")),
                          ["--generate", KEY, "--shape", "sections"])
-        self.assertEqual(store.inbox_argv(dict(base, shape="lines", partial=True)),
+        self.assertEqual(store.request_argv(dict(base, shape="lines", partial=True)),
                          ["--generate", KEY, "--partial", "--shape", "lines"])
-        self.assertEqual(store.inbox_argv(base), ["--generate", KEY])
+        self.assertEqual(store.request_argv(base), ["--generate", KEY])
         for bad in ("Sections", "", True, 1, ["sections"]):
-            self.assertIsNone(store.inbox_argv(dict(base, shape=bad)), bad)
+            self.assertIsNone(store.request_argv(dict(base, shape=bad)), bad)
 
 
 if __name__ == "__main__":

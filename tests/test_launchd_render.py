@@ -218,7 +218,7 @@ class InstallShRealRenderTestCase(unittest.TestCase):
             'RUNTIME_PY="$2"\n'
             'CLAUDE_LOGIN_BIN=/fake/claude-home/claude\n'
             'render_launchd_plist "$REPO/act/launchd/'
-            'com.zelin.aiassistant.actd.plist" "$OUT"\n'
+            'com.zelin.aiassistant.server.plist" "$OUT"\n'
         )
         proc = subprocess.run(
             ["bash", "-c", script, "bash", repo_root, py],

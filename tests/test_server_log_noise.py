@@ -1,7 +1,7 @@
 """server.launchd.log 的噪音闸（CONTRACT §54.2 追记 2026-09-14，issue #314）。
 
 三条法条各自的判例：(1) `_Server.handle_error` 只吞三个连接类异常、其余照打
-全栈；(2) 访问日志行首带本地 ISO 时间戳；(3) `/api/board` / `/api/health` 按
+全栈；(2) 访问日志行首带本地 ISO 时间戳；(3) `/api/recaps`（v2.0.0 取代 `/api/board`）/ `/api/health` 按
 `(path, 状态码)` 分桶采样——状态一变立刻写，同码重复才被掐且条数随下一行报
 出来，`ZAI_LOG_POLLS=1` 关采样。
 
@@ -92,10 +92,10 @@ class AccessLineTestCase(unittest.TestCase):
     """访问日志行首的本地 ISO 时间戳（原来只有 `127.0.0.1 - …`）。"""
 
     def test_line_starts_with_iso_stamp(self):
-        line = app._access_line("127.0.0.1", '"GET /api/board HTTP/1.1" 200 12')
+        line = app._access_line("127.0.0.1", '"GET /api/recaps HTTP/1.1" 200 12')
         self.assertRegex(line, ISO_STAMP)
         self.assertTrue(line.endswith(
-            '127.0.0.1 - "GET /api/board HTTP/1.1" 200 12\n'))
+            '127.0.0.1 - "GET /api/recaps HTTP/1.1" 200 12\n'))
 
     def test_stamp_follows_the_injected_clock(self):
         line = app._access_line("127.0.0.1", "x", now=1757865245.0)
@@ -107,35 +107,35 @@ class PollSamplerTestCase(unittest.TestCase):
 
     def test_window_and_suppressed_count(self):
         sampler = app._PollSampler(window=300.0)
-        self.assertEqual(sampler.decide("/api/board", 200, 1000.0), (True, 0))
-        self.assertEqual(sampler.decide("/api/board", 200, 1100.0), (False, 0))
-        self.assertEqual(sampler.decide("/api/board", 200, 1200.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1000.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1100.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1200.0), (False, 0))
         # 窗口一到，下一条写出去并把吃掉的两条报出来
-        self.assertEqual(sampler.decide("/api/board", 200, 1301.0), (True, 2))
-        self.assertEqual(sampler.decide("/api/board", 200, 1302.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1301.0), (True, 2))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1302.0), (False, 0))
 
     def test_paths_are_independent(self):
         sampler = app._PollSampler(window=300.0)
-        self.assertEqual(sampler.decide("/api/board", 200, 0.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 0.0), (True, 0))
         self.assertEqual(sampler.decide("/api/health", 200, 0.0), (True, 0))
-        self.assertEqual(sampler.decide("/api/board", 200, 1.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 1.0), (False, 0))
 
     def test_codes_are_independent_buckets(self):
         # 状态一变立刻写（新桶），同码的重复才计数——「同一路径反复同一个错误」
-        # 也是洪水（owner 日志里 1549 行 /api/board 404）
+        # 也是洪水（owner 日志里 1549 行 /api/recaps 404）
         sampler = app._PollSampler(window=300.0)
-        self.assertEqual(sampler.decide("/api/board", 200, 0.0), (True, 0))
-        self.assertEqual(sampler.decide("/api/board", 404, 1.0), (True, 0))
-        self.assertEqual(sampler.decide("/api/board", 404, 2.0), (False, 0))
-        self.assertEqual(sampler.decide("/api/board", 404, 3.0), (False, 0))
-        self.assertEqual(sampler.decide("/api/board", 500, 4.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 200, 0.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 404, 1.0), (True, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 404, 2.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 404, 3.0), (False, 0))
+        self.assertEqual(sampler.decide("/api/recaps", 500, 4.0), (True, 0))
         # 窗口后的第一条 404 把吃掉的两条报出来（错误不会被藏起来）
-        self.assertEqual(sampler.decide("/api/board", 404, 400.0), (True, 2))
+        self.assertEqual(sampler.decide("/api/recaps", 404, 400.0), (True, 2))
 
     def test_default_window_is_five_minutes(self):
         self.assertEqual(app._POLL_WINDOW_SECONDS, 300.0)
         self.assertEqual(app._POLL_SAMPLER.window, 300.0)
-        self.assertEqual(app._POLL_PATHS, ("/api/board", "/api/health"))
+        self.assertEqual(app._POLL_PATHS, ("/api/recaps", "/api/health"))
 
 
 class QuietCandidateTestCase(unittest.TestCase):
@@ -143,15 +143,15 @@ class QuietCandidateTestCase(unittest.TestCase):
 
     def test_truth_table(self):
         cases = [
-            ("/api/board", 200, True),
+            ("/api/recaps", 200, True),
             ("/api/health", 304, True),
-            ("/api/board", http.HTTPStatus.OK, True),
+            ("/api/recaps", http.HTTPStatus.OK, True),
             # 非 2xx 也进闸：分桶键含状态码，掐的是同码重复而不是错误本身
-            ("/api/board", 500, True),
-            ("/api/board", 404, True),
+            ("/api/recaps", 500, True),
+            ("/api/recaps", 404, True),
             ("/api/health", http.HTTPStatus.NOT_FOUND, True),
-            ("/api/board", "-", False),      # 形状不明 → 逐条写
-            ("/api/board", None, False),
+            ("/api/recaps", "-", False),      # 形状不明 → 逐条写
+            ("/api/recaps", None, False),
             ("/api/cards/R-1", 200, False),  # 非轮询路径永远写
             ("/api/cards/R-1", 404, False),
             ("/", 200, False),
@@ -182,26 +182,26 @@ class LogRequestTestCase(unittest.TestCase):
         os.environ.pop(app._LOG_POLLS_ENV, None)
 
     def test_first_poll_logs_then_repeats_are_dropped(self):
-        handler, lines = _handler("/api/board")
+        handler, lines = _handler("/api/recaps")
         with mock.patch.object(app.time, "time", side_effect=[10.0, 11.0, 12.0]):
             for _ in range(3):
                 handler.log_request(200, 4096)
-        self.assertEqual(lines, ['"GET /api/board HTTP/1.1" 200 4096'])
+        self.assertEqual(lines, ['"GET /api/recaps HTTP/1.1" 200 4096'])
 
     def test_suppressed_count_rides_the_next_line(self):
-        handler, lines = _handler("/api/board")
+        handler, lines = _handler("/api/recaps")
         with mock.patch.object(app.time, "time",
                                side_effect=[10.0, 11.0, 12.0, 400.0]):
             for _ in range(4):
                 handler.log_request(200, 1)
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[1],
-                         '"GET /api/board HTTP/1.1" 200 1'
+                         '"GET /api/recaps HTTP/1.1" 200 1'
                          ' (+2 suppressed in the last 300s)')
 
     def test_query_string_does_not_dodge_the_sampler(self):
-        handler, lines = _handler("/api/board?since=7",
-                                  requestline="GET /api/board?since=7 HTTP/1.1")
+        handler, lines = _handler("/api/recaps?since=7",
+                                  requestline="GET /api/recaps?since=7 HTTP/1.1")
         with mock.patch.object(app.time, "time", side_effect=[10.0, 11.0]):
             handler.log_request(200, 1)
             handler.log_request(200, 1)
@@ -209,27 +209,27 @@ class LogRequestTestCase(unittest.TestCase):
 
     def test_status_change_logs_immediately(self):
         # 200 → 404 → 500：每次状态变化都是新桶，立刻写（信号不进闸）
-        handler, lines = _handler("/api/board")
+        handler, lines = _handler("/api/recaps")
         with mock.patch.object(app.time, "time",
                                side_effect=[10.0, 11.0, 12.0]):
             handler.log_request(200, 4096)
             handler.log_request(404, "-")
             handler.log_request(500, "-")
-        self.assertEqual(lines, ['"GET /api/board HTTP/1.1" 200 4096',
-                                 '"GET /api/board HTTP/1.1" 404 -',
-                                 '"GET /api/board HTTP/1.1" 500 -'])
+        self.assertEqual(lines, ['"GET /api/recaps HTTP/1.1" 200 4096',
+                                 '"GET /api/recaps HTTP/1.1" 404 -',
+                                 '"GET /api/recaps HTTP/1.1" 500 -'])
 
     def test_repeated_same_error_is_sampled_with_a_count(self):
-        # owner 日志里 1549 行一模一样的 /api/board 404 = 洪水，同样要掐，
+        # owner 日志里 1549 行一模一样的 /api/recaps 404 = 洪水，同样要掐，
         # 但每窗口仍有一行、且带被吃掉的条数（错误不会被藏起来）
-        handler, lines = _handler("/api/board")
+        handler, lines = _handler("/api/recaps")
         with mock.patch.object(app.time, "time",
                                side_effect=[10.0, 11.0, 12.0, 400.0]):
             for _ in range(4):
                 handler.log_request(404, "-")
         self.assertEqual(lines, [
-            '"GET /api/board HTTP/1.1" 404 -',
-            '"GET /api/board HTTP/1.1" 404 -'
+            '"GET /api/recaps HTTP/1.1" 404 -',
+            '"GET /api/recaps HTTP/1.1" 404 -'
             ' (+2 suppressed in the last 300s)'])
 
     def test_non_poll_path_always_logs(self):

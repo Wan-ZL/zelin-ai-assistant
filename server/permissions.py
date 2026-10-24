@@ -1,6 +1,6 @@
 """server/permissions.py — 「权限体检」页的 server 半边（§15 v0.13 / §55 / §68.3）。
 
-macOS TCC 按**可执行文件**记账（§55 三幕 + D20）：launchd 会话里的守护 python、
+macOS TCC 按**可执行文件**记账（§55 三幕 + D20）：launchd 会话里的 server python、
 claude CLI、构建 UI 的 node 各自都要一次「完全磁盘访问」才能读外置卷上的 repo；
 cron（§25 ingest 链读 ~/Documents 下的 vault）是第四个——原生 CronFDA 引导授权的那条路径；
 壳（GUI）另有屏幕录制 / 麦克风 / 通知三项。原生 Permissions.swift 只探 GUI 那三项
@@ -17,7 +17,7 @@ cron（§25 ingest 链读 ~/Documents 下的 vault）是第四个——原生 Cr
 
 路径全部是**可复制的绝对路径**（系统设置里点 + → ⌘⇧G → 粘贴）。doctor 行来自
 server/doctor_run（``--fast``；缓存 15 s），只挑 TCC 相关的：``launchd claude`` /
-``launchd volume access`` / ``cron write access`` / ``cron ingest chain`` /
+``cron write access`` / ``cron ingest chain`` /
 ``cron disk access`` / ``board ui build`` / ``launchd paths``（以及任何 failure_id 属 TCC
 词表的行）。``vault`` = 原生 PermissionsModel 的**被动**笔记库（Documents）探针：只看
 ``state/vault_sync_mode`` 是否为 ``mirror``（ingest 链经壳身份 courier 拉成功过 = 授权确实
@@ -50,12 +50,14 @@ PANES = {
 _DEFAULT_OBSIDIAN_RAW = "~/Documents/Obsidian Vault/2 - raw"
 
 # §25 里凡是「TCC 挡住了」的失败 id
+# v2.0.0：deploy_blind_tcc 随自动部署退役（tombstone id）；claude_blind / interpreter_blind 仍由
+# server agent 的 `launchd claude` / `stable claude` / `launchd python` 行产出
 TCC_FAILURE_IDS = frozenset({
-    "claude_blind", "deploy_blind_tcc", "cron_tcc_blocked", "cron_fda_blocked",
-    "ui_build_tcc_blocked", "interpreter_blind", "screen_tcc_lost",
+    "claude_blind", "cron_tcc_blocked", "cron_fda_blocked", "ui_build_tcc_blocked",
+    "interpreter_blind", "screen_tcc_lost",
 })
 TCC_ROW_NAMES = frozenset({
-    "launchd claude", "launchd volume access", "cron write access",
+    "launchd claude", "cron write access",
     "cron ingest chain", "cron disk access", "board ui build", "launchd paths",
 })
 
@@ -101,8 +103,8 @@ def _claude_note(path: Optional[str]) -> tuple:
     if path and path == str(stable_claude_bin()):
         return ("claude CLI 的稳定副本（install.sh 在此路径原地刷新，授权一次即可，claude 更新不再失效——CONTRACT §55 第五幕）",
                 "Stable daemon copy of claude (install.sh refreshes it in place, so this grant survives Claude Code updates — CONTRACT §55)")
-    return ("claude CLI（派工 agent 与管线判断；这是按版本换路径的二进制——跑一次 bash install.sh 生成稳定副本后授权只需做一次）",
-            "claude CLI (dispatch agents + pipeline judgment; this path moves with every update — run bash install.sh once to create the stable copy so the grant is one-time)")
+    return ("claude CLI（会议纪要与笔记整理；这是按版本换路径的二进制——跑一次 bash install.sh 生成稳定副本后授权只需做一次）",
+            "claude CLI (meeting recaps + note processing; this path moves with every update — run bash install.sh once to create the stable copy so the grant is one-time)")
 
 
 def _entry(role: str, path: Optional[str], zh: str, en: str) -> dict:
@@ -117,12 +119,12 @@ def executables(home: Path) -> list:
     claude = claude_bin(home)
     return [
         _entry("daemon_python", _daemon_python(home),
-               "守护进程解释器（actd / 雷达 / server / 自动部署都用它；launchd 会话里没有终端的授权可借）",
-               "Daemon interpreter (actd / radars / server / auto-deploy all run on it; a launchd session borrows no terminal grant)"),
+               "server 解释器（唯一的 LaunchAgent 跑在它上面；launchd 会话里没有终端的授权可借）",
+               "Server interpreter (the one LaunchAgent runs on it; a launchd session borrows no terminal grant)"),
         _entry("claude", claude, *_claude_note(claude)),
         _entry("node", shutil.which("node"),
-               "node（自动部署构建看板 UI；缺授权时 install.sh 的 ui 步记 skipped_tcc）",
-               "node (auto-deploy builds the board UI; without the grant install.sh records ui=skipped_tcc)"),
+               "node（install.sh 构建 web UI；缺授权时 ui 步记 skipped_tcc）",
+               "node (install.sh builds the web UI; without the grant the ui step records skipped_tcc)"),
         # §25：cron 链读 ~/Documents 下的 vault——#1 静默失败的那把授权（doctor `cron disk access` 行 / 依赖检查
         # 「定时任务磁盘权限」行的「去授权」把这条路径放进剪贴板，原生 CronFDA.beginGrant 同款）
         _entry("cron", CRON_BINARY,

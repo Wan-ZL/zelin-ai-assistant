@@ -1,13 +1,13 @@
-"""§28 追记（issue #29）通知偏好的设置面：通知区的六把新旋钮 + `clock_time` 形状校验。
+"""§28 追记（issue #29）通知偏好的设置面：通知区的安静时段三把旋钮 + `clock_time` 形状校验。
 
 写方半边（抑制逻辑）住 tests/test_notify_preferences.py；这里只钉 wire：
-  - 通知区的 field 顺序与键（完成三档在前，分类三把，安静时段三把）；
+  - 通知区的 field 顺序与键（v2.0.0：只剩安静时段三把；完成三档与分类开关随 Act 退役）；
   - 每把的 default 与 act.lib.config.Config 逐字一致（server/ 不 import act，
     目录是镜像——默认值走样 = 设置页显示的「出厂值」是假的）；
   - 安静时段两端带 `check: clock_time`：坏值 400 INVALID_FIELD 且 overrides 不落，
     好值归一后 diff-write（`9:30` → `09:30`——落盘拼法必须与 act/lib/config 读到的
     逐字一致；等于出厂值就删键）；
-  - 三把分类开关与失败类的文案说明（issue #29 验收第 3 条：文案得解释每一类是什么）。
+  - 文案说明（issue #29 验收第 3 条）：失败类不受安静时段管。
 """
 import json
 import tempfile
@@ -52,39 +52,34 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
     def test_section_lists_every_knob_in_order(self):
         _s, section = get_json(self.port, SECTION)
         self.assertEqual([f["key"] for f in section["fields"]],
-                         ["review_notify", "notify_proposals", "notify_needs_input",
-                          "notify_failures", "quiet_hours_enabled",
-                          "quiet_hours_start", "quiet_hours_end",
-                          "fold_receipt_notices"])
+                         ["quiet_hours_enabled", "quiet_hours_start", "quiet_hours_end"])
 
     def test_defaults_mirror_the_config_dataclass(self):
         """出厂值单源 = act/lib/config.Config；目录只是它的 server 侧镜像。"""
         cfg = act_config.Config()
         _s, section = get_json(self.port, SECTION)
-        for key in ("notify_proposals", "notify_needs_input", "notify_failures",
-                    "quiet_hours_enabled", "quiet_hours_start", "quiet_hours_end"):
+        for key in ("quiet_hours_enabled", "quiet_hours_start", "quiet_hours_end"):
             with self.subTest(key=key):
                 field = self._field(section, key)
                 self.assertEqual(field["default"], getattr(cfg, key))
                 self.assertEqual(field["effective"], getattr(cfg, key))
                 self.assertEqual(field["source"], "default")
 
-    def test_the_three_category_switches_default_on(self):
-        """issue #29 验收②：失败通知默认开（三把都是，关掉是显式动作）。"""
+    def test_every_knob_help_explains_what_it_is(self):
+        """issue #29 验收③：每一把的文案都得说清它管什么（双语，非空）。"""
         _s, section = get_json(self.port, SECTION)
-        for key in ("notify_proposals", "notify_needs_input", "notify_failures"):
-            with self.subTest(key=key):
-                self.assertIs(self._field(section, key)["default"], True)
-
-    def test_every_category_help_explains_what_it_is(self):
-        """issue #29 验收③：每一类的文案都得说清它涵盖什么（双语，非空）。"""
-        _s, section = get_json(self.port, SECTION)
-        for key in ("notify_proposals", "notify_needs_input", "notify_failures",
-                    "quiet_hours_enabled"):
+        for key in ("quiet_hours_enabled", "quiet_hours_start", "quiet_hours_end"):
             with self.subTest(key=key):
                 help_text = self._field(section, key)["help"]
                 self.assertTrue(help_text["zh"].strip(), key)
                 self.assertTrue(help_text["en"].strip(), key)
+
+    def test_quiet_hours_help_says_failures_still_post(self):
+        """失败类穿透安静时段（act/lib/notify.QUIET_HOURS_EXEMPT）——文案必须说出来。"""
+        _s, section = get_json(self.port, SECTION)
+        help_text = self._field(section, "quiet_hours_enabled")["help"]
+        self.assertIn("照常弹", help_text["zh"])
+        self.assertIn("still post", help_text["en"])
 
     def test_quiet_hours_help_is_honest_about_the_staleness_rule(self):
         """§28 的 10 分钟 stale 清扫让「压到早上」不可能——文案必须说丢弃，不许说攒着。"""
@@ -93,24 +88,6 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
         self.assertIn("10 分钟", help_text["zh"])
         self.assertIn("10 minutes", help_text["en"])
         self.assertIn("dropped, not held until morning", help_text["en"])
-
-    def test_quiet_hours_help_names_the_daily_loop_collision(self):
-        """§70 的出厂 03:30 正落在出厂窗（22:00 → 08:00）里——最大的一处交互，文案必须点名。"""
-        _s, section = get_json(self.port, SECTION)
-        help_text = self._field(section, "quiet_hours_enabled")["help"]
-        loop_time = act_config.DEFAULT_DAILY_LOOP_TIME     # 单源：写死的字面量会跟着它走样
-        self.assertIn(loop_time, help_text["zh"])
-        self.assertIn(loop_time, help_text["en"])
-        for lang in ("zh", "en"):
-            with self.subTest(lang=lang):
-                self.assertIn(self._field(section, "quiet_hours_start")["default"], help_text[lang])
-                self.assertIn(self._field(section, "quiet_hours_end")["default"], help_text[lang])
-
-    def test_failure_help_says_quiet_hours_do_not_silence_it(self):
-        _s, section = get_json(self.port, SECTION)
-        help_text = self._field(section, "notify_failures")["help"]
-        self.assertIn("不受安静时段", help_text["zh"])
-        self.assertIn("quiet hours do not silence it", help_text["en"])
 
     def test_clock_check_is_projected_on_both_endpoints(self):
         _s, section = get_json(self.port, SECTION)
@@ -163,12 +140,11 @@ class NotificationPreferencesSettingsTestCase(unittest.TestCase):
         self.assertEqual(self._overrides(), {})
 
     def test_switches_round_trip_through_overrides(self):
-        status, obj = put_json(self.port, SECTION,
-                               {"notify_proposals": False, "quiet_hours_enabled": True})
+        status, obj = put_json(self.port, SECTION, {"quiet_hours_enabled": True})
         self.assertEqual(status, 200)
-        self.assertIs(self._field(obj, "notify_proposals")["effective"], False)
-        # 落盘形 = 写方读的那两把扁键（act/lib/config._OVERRIDE_FIELDS）
-        self.assertEqual(self._overrides(), {"notify_proposals": False, "quiet_hours_enabled": True})
+        self.assertIs(self._field(obj, "quiet_hours_enabled")["effective"], True)
+        # 落盘形 = 写方读的那把扁键（act/lib/config._OVERRIDE_FIELDS）
+        self.assertEqual(self._overrides(), {"quiet_hours_enabled": True})
         for key in self._overrides():
             self.assertIn(key, act_config._OVERRIDE_FIELDS, key)
 

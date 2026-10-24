@@ -54,13 +54,11 @@ from tests import recap_fixture as fx
 from act import recap
 from act.lib import config, notify
 from act.lib import recap_sessions as rs
-from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as text
 
 KEY = fx.KEY
 MIN = 60.0
-CHANNEL = "C0123456789"
 # 10 个英文词 × 30 行 = 恰好 MIN_TRANSCRIPT_WORDS 个词
 TEN_WORDS = "we agreed the training run moves to new data Monday"
 
@@ -203,7 +201,7 @@ class LockTestCase(RecapCase):
 @unittest.skipIf(recap.fcntl is None, "no flock on this platform")
 class LockedEntryPointTestCase(RecapCase):
     def test_a_button_run_waits_for_the_lock_while_a_cron_round_never_does(self):
-        """按钮入口（`--generate` / `--slack-draft` / `--revert`）愿意等——用户刚按下的
+        """按钮入口（`--generate` / `--revert`）愿意等——用户刚按下的
         那一下不该被一轮定时任务吃掉；cron 轮次一秒都不等，下一轮再来。两种情形都退 0：
         「有人在跑」不是失败（非零会让 cron 链报警）。"""
         clock = FakeClock()
@@ -399,46 +397,6 @@ class ShapeAndTagTestCase(RecapCase):
         self.assertEqual(rec["quality"], store.QUALITY_FAILED)
         self.assertIsNone(rec["sections_en"])
         self.assertEqual(rec["tag_seq"], {"D": 1})      # 台账不回头
-
-
-# --------------------------------------------------------------------------- #
-# §63.4 Slack 草稿（唯一一条会出门的路）
-# --------------------------------------------------------------------------- #
-class SlackDraftTestCase(RecapCase):
-    def setUp(self):
-        super().setUp()
-        self.cfg.recap_slack_draft_enabled = True
-        self.runner = FakeRunner(json.dumps({"status": slack_draft.STATUS_POSTED,
-                                             "channel_link": ""}))
-
-    def _record(self, **kw) -> dict:
-        rec = {"key": KEY, "app": "zoom", "en": list(EN_WITH_PRIOR), "zh": None,
-               "shape": text.SHAPE_LINES, "sections_en": None, "sections_zh": None,
-               "copy_en": text.render(EN_WITH_PRIOR), "copy_zh": None}
-        rec.update(kw)
-        return rec
-
-    def test_a_chinese_default_falls_back_to_the_english_body(self):
-        """那一版缺这门语言时退到另一门——空草稿比一份英文草稿差得多（§63.10）。"""
-        self.cfg.recap_default_language = "zh"
-        receipt = recap.post_slack_draft(self._record(), CHANNEL, self.settings(),
-                                         self.runner, self.cfg, fx.T0)
-        self.assertEqual(receipt["status"], slack_draft.STATUS_POSTED)
-        self.assertIn(EN_WITH_PRIOR[0], self.runner.prompts[0])
-
-    def test_a_recap_without_text_is_never_drafted_even_with_a_stale_copy(self):
-        """「有正文吗」的两道判据同源：`has_text` 说没有的那一份，哪怕记录上还留着
-        一段旧的 `copy_en`，也宁可诚实地 failed——绝不把一份过期正文放进人的草稿箱。"""
-        rec = self._record(en=None, copy_en="stale text from another version")
-        receipt = recap.post_slack_draft(rec, CHANNEL, self.settings(),
-                                         self.runner, self.cfg, fx.T0)
-        self.assertEqual(receipt["status"], slack_draft.STATUS_FAILED)
-        self.assertEqual(self.runner.calls, [])
-
-    def test_the_draft_call_carries_the_draft_timeout(self):
-        recap.post_slack_draft(self._record(), CHANNEL, self.settings(),
-                               self.runner, self.cfg, fx.T0)
-        self.assertEqual(self.runner.calls[0][1]["timeout"], 180)
 
 
 # --------------------------------------------------------------------------- #

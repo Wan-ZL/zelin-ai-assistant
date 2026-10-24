@@ -1,14 +1,15 @@
 """doctor 探针家族：工具链 / 配置 / 凭证 / 目录（CONTRACT §25；§19 凭证顺序；
-§18 cron 之外的 macOS 录制依赖；§71.1 电源探针可读性）。
+§18 cron 之外的 macOS 录制依赖）。
 
 行：``AIASSISTANT_HOME`` / ``version`` / ``claude CLI`` / ``stable claude`` +
-``daemon claude``（§55 第五幕；判决逻辑在 act/lib/claude_bin.py）/ ``daemon python`` /
-``config.yaml`` / ``anthropic key`` / ``state dirs`` / ``obsidian vault`` /
-``screenpipe db`` / ``node/npx`` / ``gh CLI`` / ``claude auth``（唯一花钱的
-活探针，非 --fast）。默认探针实现 ``installed_actd_path_env`` /
-``login_shell_claude`` 也住这里（Probes 的缺省值）。``power probe``（§71.1）
-是同一张表上的一行：派发闸读的那三个探针在这台机器上到底答不答得出来——
-探不出来时闸是 fail-open 的 no-op，那件事必须有人说出来。
+``daemon claude``（§55 第五幕；判决逻辑在 act/lib/claude_bin.py；daemon = 唯一的
+server LaunchAgent）/ ``daemon python`` / ``config.yaml`` / ``anthropic key``（§78：
+``--bare`` 只认 API key，缺 key = FAIL）/ ``state dirs`` / ``obsidian vault`` /
+``screenpipe db`` / ``node/npx``。默认探针实现 ``installed_daemon_path_env`` /
+``login_shell_claude`` 也住这里（Probes 的缺省值）。
+
+v2.0.0：``power probe``（§71.1）与 ``gh CLI`` 行随 Act 管线退役；花钱的 ``claude auth``
+活探针搬进 act/doctor.py（它要走 act/llm.py 的隔离 argv / env，lib 层不可达）。
 """
 from __future__ import annotations
 
@@ -20,10 +21,10 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import claude_bin, config, failures, platform, power, secrets
+from act.lib import claude_bin, config, platform, secrets
 from act.lib import version as version_lib
-from act.lib.checks.core import (ACTD_LABEL, ACTD_UNIT, FAIL, OK, PROBE_TIMEOUT,
-                                 WARN, CheckResult, installer, pick, row_from, run)
+from act.lib.checks.core import (FAIL, OK, SERVER_LABEL, WARN, CheckResult,
+                                 installer, pick, row_from, run)
 
 MIN_PYTHON = (3, 9)
 # the export cron fires every 30 min while recording; 2h with no db write
@@ -36,9 +37,13 @@ _PLIST_PATH_RE = re.compile(r"<key>PATH</key>\s*<string>([^<]+)</string>")
 # --------------------------------------------------------------------------- #
 # Default probe implementations (Probes.daemon_path_env / login_shell_claude)
 # --------------------------------------------------------------------------- #
-def _plist_path_env() -> Optional[str]:
-    """darwin: ~/Library/LaunchAgents/<actd label>.plist ``<key>PATH</key>``。"""
-    plist = Path.home() / "Library" / "LaunchAgents" / (ACTD_LABEL + ".plist")
+def installed_daemon_path_env() -> Optional[str]:
+    """The PATH the resident server agent actually runs with — read from the
+    INSTALLED plist (~/Library/LaunchAgents/<server label>.plist ``<key>PATH</key>``),
+    not the repo template: what the installer rendered is what launchd exports."""
+    if not platform.is_darwin():
+        return None
+    plist = Path.home() / "Library" / "LaunchAgents" / (SERVER_LABEL + ".plist")
     try:
         text = plist.read_text(encoding="utf-8")
     except OSError:
@@ -47,37 +52,7 @@ def _plist_path_env() -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _unit_path_env() -> Optional[str]:
-    """linux: ~/.config/systemd/user/zelin-actd.service ``Environment=PATH=``
-    （last one wins, mirroring systemd's own override order）。"""
-    unit = Path.home() / ".config" / "systemd" / "user" / ACTD_UNIT
-    try:
-        text = unit.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    found = None
-    for line in text.splitlines():
-        s = line.strip()
-        if s.startswith("Environment=PATH="):
-            found = s[len("Environment=PATH="):].strip()
-    return found
-
-
-def installed_actd_path_env() -> Optional[str]:
-    """The PATH the resident daemon actually runs with — read from the
-    INSTALLED unit, not the repo template: what the installer rendered is what
-    the service manager exports.
-
-    darwin: ~/Library/LaunchAgents/<label>.plist (<key>PATH</key>).
-    linux:  ~/.config/systemd/user/zelin-actd.service (Environment=PATH=).
-    windows: None — the task's PATH is embedded in a `powershell -Command`
-    action, not a readable env stanza; the daemon-claude check degrades to a
-    plain PATH probe there (the login-shell comparison is macOS/Linux-only)."""
-    if platform.is_windows():
-        return None
-    if platform.is_darwin():
-        return _plist_path_env()
-    return _unit_path_env()
+installed_actd_path_env = installed_daemon_path_env   # v1 name
 
 
 def login_shell_claude(runner: Callable = run) -> Optional[str]:
@@ -130,7 +105,7 @@ def check_claude(probes):
     if not path:
         return CheckResult(
             "claude CLI", FAIL,
-            "not on PATH - nothing can extract, expand or execute cards",
+            "not on PATH - meeting recaps and note processing cannot run",
             "install Claude Code (https://claude.com/claude-code), then re-run this check",
         ).with_failure("claude_cli_missing")
     rc, out = probes.run([path, "--version"], timeout=15)
@@ -175,8 +150,8 @@ def _pinned_python_row() -> "tuple[str, Optional[CheckResult]]":
     if not rj.exists():
         return "", CheckResult(
             "daemon python", WARN,
-            pick("config/runtime.json 缺失——launchd 服务和 App 只能靠猜解释器",
-                 "config/runtime.json missing - launchd agents and the app guess at an interpreter"),
+            pick("config/runtime.json 缺失——server agent 和 App 只能靠猜解释器",
+                 "config/runtime.json missing - the server agent and the app guess at an interpreter"),
             pick("bash install.sh（重新探测并固定解释器）",
                  "bash install.sh (re-detects and pins the interpreter)"))
     py = _runtime_pin(rj)
@@ -216,8 +191,8 @@ def check_runtime_python(probes):
     if rc != 0:
         return CheckResult(
             "daemon python", FAIL,
-            pick("%s 无法 `import yaml`——actd/radar 在 launchd 下会立即退出",
-                 "%s cannot `import yaml` - actd/radar exit immediately under launchd") % py,
+            pick("%s 无法 `import yaml`——server 在 launchd 下会立即退出",
+                 "%s cannot `import yaml` - the server exits immediately under launchd") % py,
             "%s -m pip install --user pyyaml   (PEP 668 python: add --break-system-packages)" % py)
     ver = out.strip().splitlines()[-1] if out.strip() else ""
     if _too_old(ver):
@@ -235,8 +210,8 @@ def check_config(probes):
     if not config.CONFIG_PATH.exists():
         return CheckResult(
             "config.yaml", WARN,
-            pick("缺失——正在用 config.example.yaml 的默认值运行（没有 vault、没有 watch 名单）",
-                 "missing - running on config.example.yaml defaults (no vault, no watched people)"),
+            pick("缺失——正在用 config.example.yaml 的默认值运行（默认 vault 路径）",
+                 "missing - running on config.example.yaml defaults (default vault path)"),
             "cp config.example.yaml config.yaml && edit sources.*")
     if config.yaml is None:
         return CheckResult(
@@ -258,12 +233,6 @@ def check_config(probes):
 
 def _secrets_key_row(sec: Path) -> CheckResult:
     """The key lives in config/secrets/: OK unless other users can read it."""
-    # NTFS has no POSIX mode bits — chmod 600 is a no-op there, so the
-    # world-readable check would false-WARN on Windows. Skip it and note
-    # that access control is via NTFS ACLs instead (docs/WINDOWS.md).
-    if platform.is_windows():
-        return CheckResult("anthropic key", OK,
-                           "config/secrets/anthropic-api-key.txt (NTFS ACL; no POSIX 0600)")
     mode = stat.S_IMODE(sec.stat().st_mode)
     if mode & 0o077:
         return CheckResult(
@@ -281,30 +250,29 @@ def check_anthropic_key(probes):
     if key and source.startswith("config/secrets"):
         return _secrets_key_row(sec)
     if key:
-        return CheckResult(
-            "anthropic key", OK,
-            "legacy %s (§19 fallback still honored)" % source,
-            "consider migrating: paste the key in the app's Settings window")
+        return CheckResult("anthropic key", OK, "%s (§19 second tier)" % source)
     return CheckResult(
-        "anthropic key", WARN,
-        pick("没有 key 文件——headless claude（cron/launchd）会退回 CLI 凭据"
-             "（subscription-auth 模式），daemon 会话通常读不到它",
-             "no key file - headless claude (cron/launchd) falls back to CLI credentials "
-             "(subscription-auth mode), which daemon sessions usually cannot read"),
-        pick("在 App 的设置（Settings）页粘贴你的 API key（写入 config/secrets/anthropic-api-key.txt）",
-             "paste your API key in the app's Settings window (writes config/secrets/anthropic-api-key.txt)"))
+        "anthropic key", FAIL,
+        pick("没有 Anthropic API key——隔离运行的 headless claude（§78，--bare）只认 API key，"
+             "不读 Claude Code 登录或钥匙串，所以会议纪要和笔记整理都会认证失败",
+             "no Anthropic API key - the isolated headless claude (§78, --bare) accepts an API "
+             "key only, never the Claude Code login or the keychain, so recaps and note "
+             "processing will fail to authenticate"),
+        pick("在设置页「凭证」粘贴你的 API key（写入 config/secrets/anthropic-api-key.txt）",
+             "paste your API key in Settings > Credentials (writes config/secrets/anthropic-api-key.txt)"),
+    ).with_failure("claude_auth_failed")
 
 
 def check_state_dirs(probes):
-    dirs = (config.STATE_DIR, config.INBOX_DIR, config.LOG_DIR)
+    dirs = (config.STATE_DIR, config.LOG_DIR)
     missing = [d for d in dirs if not d.is_dir()]
     if missing:
         return CheckResult(
             "state dirs", FAIL,
-            pick("缺失：%s——actd/capture 无法持久化任何东西",
-                 "missing: %s - actd/capture cannot persist anything") % ", ".join(map(str, missing)),
-            pick("bash install.sh（创建 state/ + state/inbox/）",
-                 "bash install.sh (creates state/ + state/inbox/)"))
+            pick("缺失：%s——recap / 设置无法持久化任何东西",
+                 "missing: %s - recaps / settings cannot persist anything") % ", ".join(map(str, missing)),
+            pick("bash install.sh（创建 state/）",
+                 "bash install.sh (creates state/)"))
     blocked = [d for d in dirs if not os.access(d, os.W_OK)]
     if blocked:
         return CheckResult(
@@ -321,16 +289,16 @@ def check_obsidian(probes):
     if not (raw and str(raw).strip()):
         return CheckResult(
             "obsidian vault", WARN,
-            pick("sources.obsidian_raw 未配置——obsidian 雷达空转（快速捕获不受影响）",
-                 "sources.obsidian_raw not set - the obsidian radar idles (quick capture still works)"),
+            pick("sources.obsidian_raw 未配置——正在用默认 vault 路径",
+                 "sources.obsidian_raw not set - the default vault path is in use"),
             pick("在 config.yaml 的 sources.obsidian_raw 填上 vault 的 raw 笔记目录",
                  "set sources.obsidian_raw in config.yaml to your vault's raw-notes folder"))
     raw_path = Path(str(raw)).expanduser()
     if not raw_path.is_dir():
         return CheckResult(
             "obsidian vault", WARN,
-            pick("sources.obsidian_raw 不存在（%s）——雷达什么都扫不到，而且是静默的",
-                 "sources.obsidian_raw does not exist (%s) - radar scans nothing, silently") % raw_path,
+            pick("sources.obsidian_raw 不存在（%s）——ingest 的笔记没有落脚点，而且是静默的",
+                 "sources.obsidian_raw does not exist (%s) - ingested notes have nowhere to land, silently") % raw_path,
             pick("创建该目录，或改 config.yaml 里的路径",
                  "create the folder or fix the path in config.yaml"))
     unprocessed = Path(str(cfg.obsidian_unprocessed)).expanduser()
@@ -350,45 +318,17 @@ def check_screenpipe(probes):
             "screenpipe db", WARN,
             pick("%s 缺失——录制从未运行过（如果你本来就不开录制，这是正常的）",
                  "%s missing - recording has never run (fine if you keep recording off)") % db,
-            pick("菜单栏 App -> 打开录制（引擎经 npx 运行）",
-                 "menu-bar app -> enable recording (the engine runs via npx)"))
+            pick("App -> 打开录制（引擎经 npx 运行）",
+                 "the app -> enable recording (the engine runs via npx)"))
     age = probes.now() - db.stat().st_mtime
     if age > SCREENPIPE_STALE_SECONDS:
         return CheckResult(
             "screenpipe db", WARN,
             "last write %dh ago - the capture engine looks stopped" % int(age // 3600),
-            "menu-bar app -> recording toggle (needs node/npx)",
+            "the app -> recording toggle (needs node/npx)",
         ).with_failure("engine_dead")
     return CheckResult("screenpipe db", OK,
                        "recording data fresh (last write %d min ago)" % int(age // 60))
-
-
-def check_power(probes):
-    """§71.1 电源探针行：`awake` / `asleep` = 闸读得到；读不到 = WARN 说清楚。
-
-    派发闸对 `unknown` 是 fail-open 的（宁可多派一张也不饿死自动派发），所以
-    一个永远解析不出的探针会让整条 §71.1 变成**没人看得见的 no-op**——doctor
-    这一行就是那个「看得见」（宪法第 3 条：诚实的健康报告）。行本身不写盘、
-    不看 actd 的进程内 memo，问的是「这台机器现在答不答得出来」。
-    """
-    answer = power.verdict(probes.power_reading())
-    if answer == power.UNKNOWN:
-        return CheckResult(
-            "power probe", WARN,
-            pick("读不出本机电源状态（pmset / ioreg 都没答案）——派发闸按 §71.1 "
-                 "fail-open 照常派发，等于没有闸",
-                 "cannot read this machine's power state (no answer from pmset / "
-                 "ioreg) - the dispatch gate fails open (§71.1), i.e. no gate"),
-            pick("手工看一眼 `pmset -g powerstate IOPMrootDomain` 与 "
-                 "`ioreg -n IOPMrootDomain -r -d 1`；确认这台机器就是探不出来，"
-                 "就把 config.yaml 的 autodispatch.require_awake 设成 false",
-                 "run `pmset -g powerstate IOPMrootDomain` and `ioreg -n "
-                 "IOPMrootDomain -r -d 1` by hand; if this machine truly cannot "
-                 "answer, set autodispatch.require_awake: false in config.yaml"))
-    return CheckResult("power probe", OK,
-                       pick("本机现在是 %s（派发闸 §71.1 读的就是这个判决）",
-                            "machine reads as %s (the §71.1 dispatch gate's verdict)")
-                       % answer)
 
 
 def check_npx(probes):
@@ -400,68 +340,3 @@ def check_npx(probes):
             "brew install node",
         ).with_failure("node_missing")
     return CheckResult("node/npx", OK, path)
-
-
-def check_gh(probes):
-    path = probes.which("gh")
-    if not path:
-        return CheckResult(
-            "gh CLI", WARN,
-            pick("缺失——repo 模式的卡片只能交付成本地分支（可选依赖）",
-                 "missing - repo-mode cards deliver as local branches only (optional)"),
-            "brew install gh && gh auth login")
-    rc, _ = probes.run([path, "auth", "status"], timeout=15)
-    if rc != 0:
-        return CheckResult(
-            "gh CLI", WARN,
-            pick("%s 存在但未登录——draft-PR 交付会失败",
-                 "%s present but not authenticated - draft-PR delivery will fail") % path,
-            "gh auth login")
-    return CheckResult("gh CLI", OK, "%s (authenticated)" % path)
-
-
-# -- live auth probe (spends tokens; not under --fast) ------------------------ #
-def _auth_env(probes) -> "tuple[dict, str, Optional[str]]":
-    """(env for the probe, human 'via' label, key or None) — the SAME credential
-    resolution headless runs use."""
-    key, source = resolve_key(probes)
-    env = dict(os.environ)
-    if key:
-        env["ANTHROPIC_API_KEY"] = key
-        return env, "API key from %s" % source, key
-    env.pop("ANTHROPIC_API_KEY", None)
-    return env, "claude CLI stored credentials (subscription auth)", None
-
-
-def _auth_ok_row(via: str, key: Optional[str]) -> CheckResult:
-    detail = "live call ok (%s)" % via
-    if not key:
-        # worked here (GUI session) but cron/launchd may still fail: the
-        # daemon session cannot read the Keychain this probe just used.
-        detail += " - note: headless cron/launchd may still need a key file"
-    return CheckResult("claude auth", OK, detail)
-
-
-def _auth_failed_row(via: str, key: Optional[str], rc: int, out: str) -> CheckResult:
-    tail = " ".join(out.strip().split())[-120:] if out.strip() else "no output"
-    fix = ("check the key (active? billing?) or re-paste it in the app's Settings window"
-           if key else
-           "paste an API key in the app's Settings window (headless-safe), or log in: claude")
-    return CheckResult(
-        "claude auth", FAIL,
-        "live call failed via %s (exit %s: %s)" % (via, rc, tail), fix,
-    ).with_failure(failures.classify(out) or "claude_auth_failed")
-
-
-def check_claude_auth(probes):
-    """One cheap live call, with the SAME credential resolution headless runs use."""
-    path = probes.which("claude")
-    if not path:
-        return CheckResult("claude auth", WARN,
-                           pick("跳过（未找到 claude CLI）", "skipped (claude CLI not found)"))
-    env, via, key = _auth_env(probes)
-    rc, out = probes.run([path, "-p", "Reply with exactly: ok", "--max-turns", "1"],
-                         env=env, timeout=PROBE_TIMEOUT)
-    if rc == 0:
-        return _auth_ok_row(via, key)
-    return _auth_failed_row(via, key, rc, out)

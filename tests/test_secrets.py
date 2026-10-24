@@ -1,30 +1,50 @@
-"""act/lib/secrets.py — CONTRACT §19 resolution order + file modes.
+"""act/lib/secrets.py — CONTRACT §19 resolution order + file modes (v2.0.0:
+the Anthropic key is the only credential; §78 never falls back to the owner's
+Claude Code login or the keychain).
 
 Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
-no real key file (~/Desktop/Keys, ~/.config) is ever read or written.
+no real key file (~/Desktop/Keys, ~/.config) is ever read or written. On top
+of that, every test points ``secrets.SECRETS_DIR`` at its own fresh temp dir
+(:func:`_scratch_secrets_dir`, the PR #480 pattern): a run whose ``config.HOME``
+resolved to the real checkout once left ``config/secrets/multi-w.txt`` behind
+there — and an old setUp that emptied ``SECRETS_DIR`` before every test would
+have deleted the real token files in the same run.
 """
 import contextlib
 import io
 import os
+import shutil
 import stat
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME
 
-from act.lib import analytics, config, secrets
-from act import radar_gmail, radar_slack
+from act.lib import config, secrets
+
+_MODULE_SECRETS_DIR = secrets.SECRETS_DIR   # the import-time value, before any patch
+
+
+def _scratch_secrets_dir(case: unittest.TestCase) -> Path:
+    """A fresh, empty ``SECRETS_DIR`` for one test, removed afterwards."""
+    root = Path(tempfile.mkdtemp(prefix="zai-test-secrets-"))
+    case.addCleanup(shutil.rmtree, root, ignore_errors=True)
+    scratch = root / "config" / "secrets"
+    patcher = mock.patch.object(secrets, "SECRETS_DIR", scratch)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+    return scratch
 
 
 class SecretsTestCase(unittest.TestCase):
     def setUp(self):
         self.home = Path(TMP_HOME)
         # scratch files standing in for explicit-config + legacy paths
-        self.keys = self.home / "fake-keys"
-        self.keys.mkdir(parents=True, exist_ok=True)
-        if secrets.SECRETS_DIR.exists():
-            for p in secrets.SECRETS_DIR.iterdir():
-                p.unlink()
+        self.keys = Path(tempfile.mkdtemp(prefix="zai-test-keys-"))
+        self.addCleanup(shutil.rmtree, self.keys, ignore_errors=True)
+        self.scratch = _scratch_secrets_dir(self)
 
     def _path(self, name: str, content: str) -> Path:
         p = self.keys / name
@@ -34,16 +54,26 @@ class SecretsTestCase(unittest.TestCase):
     # -- sandbox sanity ------------------------------------------------------ #
     def test_paths_are_sandboxed(self):
         self.assertEqual(config.HOME, self.home)
-        self.assertEqual(secrets.SECRETS_DIR, self.home / "config" / "secrets")
+        self.assertEqual(_MODULE_SECRETS_DIR, self.home / "config" / "secrets")
+        # …and the tests themselves write into a per-test scratch dir, never there
+        self.assertEqual(secrets.SECRETS_DIR, self.scratch)
+        self.assertFalse(str(self.scratch).startswith(str(self.home)))
+
+    def test_the_only_credential_is_the_anthropic_key(self):
+        self.assertEqual(secrets.ANTHROPIC_API_KEY_FILE, "anthropic-api-key.txt")
+        self.assertEqual(secrets.LEGACY_ANTHROPIC_KEY_PATH, "~/.config/anthropic-key.txt")
+        for gone in ("SLACK_TOKEN_FILE", "GMAIL_APP_PASSWORD_FILE", "SUPABASE_KEY_FILE"):
+            self.assertFalse(hasattr(secrets, gone), gone)
 
     # -- write/read ---------------------------------------------------------- #
     def test_write_secret_enforces_modes_and_read_roundtrip(self):
-        path = secrets.write_secret(secrets.SLACK_TOKEN_FILE, "  xoxp-123  \n")
-        self.assertEqual(path.read_text(encoding="utf-8"), "xoxp-123\n")
+        path = secrets.write_secret(secrets.ANTHROPIC_API_KEY_FILE, "  sk-ant-123  \n")
+        self.assertEqual(path.read_text(encoding="utf-8"), "sk-ant-123\n")
+        self.assertEqual(path.parent, self.scratch)
         if os.name != "nt":  # NTFS has no POSIX mode bits; chmod is a no-op there
             self.assertEqual(stat.S_IMODE(os.stat(secrets.SECRETS_DIR).st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        self.assertEqual(secrets.read_secret(secrets.SLACK_TOKEN_FILE), "xoxp-123")
+        self.assertEqual(secrets.read_secret(secrets.ANTHROPIC_API_KEY_FILE), "sk-ant-123")
 
     def test_read_secret_missing_or_empty_is_none(self):
         self.assertIsNone(secrets.read_secret("no-such-file.txt"))
@@ -60,7 +90,7 @@ class SecretsTestCase(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             val = secrets.read_secret("multi.txt")
-        self.assertEqual(val, "abcd efgh")   # 首行原样（app password 可带空格）
+        self.assertEqual(val, "abcd efgh")
         self.assertNotIn("\n", val)
         self.assertIn("multi.txt", buf.getvalue())          # 有一条 log…
         self.assertNotIn("abcd efgh", buf.getvalue())       # …但绝不带凭证值
@@ -68,13 +98,12 @@ class SecretsTestCase(unittest.TestCase):
 
     def test_multiline_warning_fires_once_per_file(self):
         secrets.SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-        (secrets.SECRETS_DIR / "multi2.txt").write_text(
-            "tok\nrest\n", encoding="utf-8")
+        (secrets.SECRETS_DIR / "multi2.txt").write_text("tok\nrest\n", encoding="utf-8")
         secrets._warned_multiline.clear()
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             secrets.read_secret("multi2.txt")
-            secrets.read_secret("multi2.txt")   # radar 轮询第二次
+            secrets.read_secret("multi2.txt")
         self.assertEqual(buf.getvalue().count("multi2.txt"), 1)
 
     def test_resolve_credential_multiline_explicit_path(self):
@@ -89,131 +118,42 @@ class SecretsTestCase(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             path = secrets.write_secret("multi-w.txt", "tok-456\nrest of paste\n")
         self.assertEqual(path.read_text(encoding="utf-8"), "tok-456\n")
+        # the PR #480 regression: never a byte next to the real checkout's secrets
+        self.assertFalse((_MODULE_SECRETS_DIR / "multi-w.txt").exists())
 
     # -- resolution order (§19): secrets -> explicit -> legacy --------------- #
     def test_resolution_order(self):
-        name = secrets.SLACK_TOKEN_FILE
+        name = secrets.ANTHROPIC_API_KEY_FILE
         legacy = self._path("legacy.txt", "legacy-tok\n")
         explicit = self._path("explicit.txt", "explicit-tok\n")
-
-        # legacy only
-        self.assertEqual(
-            secrets.resolve_credential(name, None, legacy), "legacy-tok")
-        # explicit beats legacy
-        self.assertEqual(
-            secrets.resolve_credential(name, explicit, legacy), "explicit-tok")
-        # secrets beats both
+        self.assertEqual(secrets.resolve_credential(name, None, legacy), "legacy-tok")
+        self.assertEqual(secrets.resolve_credential(name, explicit, legacy), "explicit-tok")
         secrets.write_secret(name, "secret-tok")
-        self.assertEqual(
-            secrets.resolve_credential(name, explicit, legacy), "secret-tok")
+        self.assertEqual(secrets.resolve_credential(name, explicit, legacy), "secret-tok")
         # EMPTY secrets file counts as absent -> falls through to explicit
         (secrets.SECRETS_DIR / name).write_text("", encoding="utf-8")
-        self.assertEqual(
-            secrets.resolve_credential(name, explicit, legacy), "explicit-tok")
-        # missing explicit path falls through to legacy
+        self.assertEqual(secrets.resolve_credential(name, explicit, legacy), "explicit-tok")
         (secrets.SECRETS_DIR / name).unlink()
-        self.assertEqual(
-            secrets.resolve_credential(name, self.keys / "nope.txt", legacy),
-            "legacy-tok")
-        # nothing anywhere -> None
-        self.assertIsNone(
-            secrets.resolve_credential(name, self.keys / "nope.txt",
-                                       self.keys / "nope2.txt"))
+        self.assertEqual(secrets.resolve_credential(name, self.keys / "nope.txt", legacy),
+                         "legacy-tok")
+        self.assertIsNone(secrets.resolve_credential(name, self.keys / "nope.txt",
+                                                     self.keys / "nope2.txt"))
 
-    # -- callers are wired through secrets ----------------------------------- #
-    def test_slack_get_token_prefers_secrets_over_config_path(self):
-        explicit = self._path("slack-explicit.txt", "xoxp-from-explicit\n")
-        cfg = config.Config()
-        cfg.slack_token_path = str(explicit)
-        secrets.write_secret(secrets.SLACK_TOKEN_FILE, "xoxp-from-secrets")
-        self.assertEqual(radar_slack.get_token(cfg), "xoxp-from-secrets")
-        (secrets.SECRETS_DIR / secrets.SLACK_TOKEN_FILE).unlink()
-        self.assertEqual(radar_slack.get_token(cfg), "xoxp-from-explicit")
+    # -- the one caller: llm.runner_env via resolve_anthropic_key ---------- #
+    def test_resolve_anthropic_key_order(self):
+        legacy = self._path("anthropic-key.txt", "sk-ant-legacy\n")
+        with mock.patch.object(secrets, "LEGACY_ANTHROPIC_KEY_PATH", str(legacy)):
+            self.assertEqual(secrets.resolve_anthropic_key(), "sk-ant-legacy")
+            secrets.write_secret(secrets.ANTHROPIC_API_KEY_FILE, "sk-ant-file")
+            self.assertEqual(secrets.resolve_anthropic_key(), "sk-ant-file")
+        with mock.patch.object(secrets, "LEGACY_ANTHROPIC_KEY_PATH", str(self.keys / "absent")):
+            (secrets.SECRETS_DIR / secrets.ANTHROPIC_API_KEY_FILE).unlink()
+            self.assertIsNone(secrets.resolve_anthropic_key())
 
-    def test_gmail_get_app_password_prefers_secrets_over_config_path(self):
-        explicit = self._path("gmail-explicit.txt", "abcdefghijklmnop\n")
-        cfg = config.Config()
-        cfg.gmail_app_password_path = str(explicit)
-        secrets.write_secret(secrets.GMAIL_APP_PASSWORD_FILE, "ponmlkjihgfedcba")
-        self.assertEqual(radar_gmail.get_app_password(cfg), "ponmlkjihgfedcba")
-        (secrets.SECRETS_DIR / secrets.GMAIL_APP_PASSWORD_FILE).unlink()
-        self.assertEqual(radar_gmail.get_app_password(cfg), "abcdefghijklmnop")
-
-
-class LegacyDeprecationWarnTestCase(unittest.TestCase):
-    """§19 legacy tier is warn-only deprecated: one stderr line + one analytics
-    event per credential per process; the credential VALUE never appears in
-    either; resolution behavior is unchanged and never raises."""
-
-    def setUp(self):
-        self.home = Path(TMP_HOME)
-        self.keys = self.home / "fake-keys"
-        self.keys.mkdir(parents=True, exist_ok=True)
-        if secrets.SECRETS_DIR.exists():
-            for p in secrets.SECRETS_DIR.iterdir():
-                p.unlink()
-        secrets._warned_legacy.clear()
-        self.addCleanup(secrets._warned_legacy.clear)
-
-    def _resolve_capturing_stderr(self, *args):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            val = secrets.resolve_credential(*args)
-        return val, err.getvalue()
-
-    def test_legacy_hit_warns_once_without_leaking_the_value(self):
-        legacy = self.keys / "legacy.txt"
-        legacy.write_text("legacy-tok\n", encoding="utf-8")
-        name = secrets.SLACK_TOKEN_FILE
-
-        val, err = self._resolve_capturing_stderr(name, None, legacy)
-        self.assertEqual(val, "legacy-tok")     # resolution unchanged
-        self.assertEqual(err.count("\n"), 1)    # exactly one line
-        self.assertIn("DEPRECATED", err)
-        self.assertIn(name, err)
-        self.assertNotIn("legacy-tok", err)     # §19: value never logged
-
-        # second resolution of the SAME name is silent (radars poll in a loop)
-        val, err = self._resolve_capturing_stderr(name, None, legacy)
-        self.assertEqual(val, "legacy-tok")
-        self.assertEqual(err, "")
-
-    @staticmethod
-    def _legacy_event_lines():
-        try:
-            text = analytics.EVENTS_PATH.read_text(encoding="utf-8")
-        except OSError:
-            return []
-        return [ln for ln in text.splitlines() if "legacy_secret_path" in ln]
-
-    def test_legacy_hit_logs_analytics_event_without_the_value(self):
-        legacy = self.keys / "legacy-gmail.txt"
-        legacy.write_text("hunter2secret\n", encoding="utf-8")
-
-        before = self._legacy_event_lines()
-        self._resolve_capturing_stderr(secrets.GMAIL_APP_PASSWORD_FILE, None, legacy)
-        new = self._legacy_event_lines()[len(before):]
-
-        self.assertEqual(len(new), 1)
-        self.assertIn(secrets.GMAIL_APP_PASSWORD_FILE, new[0])
-        self.assertNotIn("hunter2secret",
-                         analytics.EVENTS_PATH.read_text(encoding="utf-8"))
-
-    def test_secrets_and_explicit_tiers_do_not_warn(self):
-        name = secrets.SLACK_TOKEN_FILE
-        legacy = self.keys / "legacy.txt"
-        legacy.write_text("legacy-tok\n", encoding="utf-8")
-        explicit = self.keys / "explicit.txt"
-        explicit.write_text("explicit-tok\n", encoding="utf-8")
-
-        val, err = self._resolve_capturing_stderr(name, explicit, legacy)
-        self.assertEqual(val, "explicit-tok")
-        self.assertEqual(err, "")
-
-        secrets.write_secret(name, "secret-tok")
-        val, err = self._resolve_capturing_stderr(name, explicit, legacy)
-        self.assertEqual(val, "secret-tok")
-        self.assertEqual(err, "")
+    def test_never_reads_the_owners_claude_code_login(self):
+        src = Path(secrets.__file__).read_text(encoding="utf-8")
+        for banned in (".claude/.credentials", "security find-generic-password", "keychain("):
+            self.assertNotIn(banned, src)
 
 
 if __name__ == "__main__":

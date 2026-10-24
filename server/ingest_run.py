@@ -6,8 +6,8 @@
 脚本的 90 s 半截写入守卫），完成后按退出码给一句：0 = 完成 ✓；ingest 的 3 = 另一个 ingest 持锁
 （通常是 cron 那轮）→ 「已有 ingest 在运行，本次跳过」；其它 = 失败 (exit N) + 输出尾巴。web 版跑
 **同一条脚本、同一套退出码**：server 只起子进程并把 ``{ok, rc, skipped, tail, seconds}`` 交回，
-判词在页面（与原生一样按 rc 判）。server 不改写脚本、不碰 registry——脚本写的是 vault / inbox，
-与 cron 那轮同一条路（宪法第 1 条不动）。
+判词在页面（与原生一样按 rc 判）。server 不改写脚本——脚本写的是 vault，与 cron 那轮同一条路
+（宪法第 1 条不动）。
 
 **异步 + 轮询**（ingest 含一次 headless claude，可能跑十几分钟；壳里的 WKWebView 对一个 fetch 只等
 60 s，同步等会把成功的一轮报成超时）：POST 立刻回 ``{"ok", "job", "state": "running"}`` 并在后台线程

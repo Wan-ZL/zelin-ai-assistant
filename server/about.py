@@ -1,55 +1,57 @@
-"""server/about.py — 「关于」与更新检查的 server 半边（§26 / §56.1 / §68.6）。
+"""server/about.py — 「关于」与更新的 server 半边（§26 / §56.1 / §68.6 / §79）。
 
-- ``GET /api/about`` → ``{"version", "home", "repo", "update_available", "update_check", "check_enabled"}``：
-  版本真源 = ``act.__version__``（§56.1：act/_version.py 盖章 → git describe →
-  回落值）；``update_available`` 原样透传 dashboard.json 的同名顶层键（§26，
-  actd 每 pass 投影；缺席 = 没有已知新版）；``update_check`` = ``state/update_check.json``
-  的公开子集（checked_at / latest / url；ETag 不外发）；``check_enabled``（2026-09-05
-  add-only，§68.6 追记）= ``updates.check_enabled`` 的 effective 值（override → config.yaml
-  → 默认 true，与设置页「自动检查新版本」同一把旋钮 ``settings_catalog`` general /
-  ``updates_check_enabled``）——原生 AboutView 一进页就读它：关着 → 「自动检查新版本已关闭」
-  + 「立即检查」灰掉，不必等第一次点击的回执。overrides 文件坏了 → 与原生 ``readOverrides``
-  同款当作空（落到 config → true），关于页不因它 409。
-- ``POST /api/update/check`` → ``python -m act.lib.update_check --force``（§26 手动
-  「立即检查」CLI；``updates.check_enabled: false`` 时它自己拒发网络请求），stdout
-  那一行 JSON 原样透出；子进程失败 → ``{"ok": false, "error": ...}``。
-  自动部署（§56，D17）让 owner 机器不再需要 Sparkle——合并即上岗；这里只负责
-  「有没有新版」的诚实告知与 release 页链接（原生关于页同款：绝不自动下载执行）。
-- ``POST /api/update/install {}``（2026-09-03，add-only）→ 原生「新版本 v… 可用 — 一键更新」
-  在新架构里的诚实落点：**不是 Sparkle**，是把 §56 自动部署 agent
-  ``com.zelin.aiassistant.autodeploy`` 提前 ``launchctl kickstart`` 一轮（它会 fetch → 只装
-  CI 绿的 sha → install.sh → doctor 闸门 → 红了自动回滚——与每 10 分钟的那一轮**同一条路**，
-  server 不重造部署逻辑）。不带 ``-k``：正在部署的那轮不许被打断。agent 未加载（.pkg 装法 /
-  features.auto_deploy 关着 / 不是 git checkout）→ 409，页面退回原生非 Sparkle 的兜底：打开
-  release 页手动装；非 darwin 501。``runner`` 注入缝。
-- **§68.6 追记（2026-09-14，issue #309）——诚实的拒绝**：生产机的 checkout 常驻 `release`
-  分支，`scripts/auto-deploy.sh` 从 2026-09-05 起每 10 分钟拒一次（`refused_branch`，539 次），
-  而「一键更新」照样 kickstart 完就回 ``{"ok": true}``、页面照样说「已触发自动部署——几分钟后
-  版本会变」。自本条起：``snapshot()`` add-only 带上 ``deploy_state``（**请求时现读文件**，
-  不是看板投影——actd 死了 / TCC 拦着的时候投影本身就是陈的），``install_now`` 先读后动：
-  状态在 ``deploy_state.BLOCKING``（`refused_branch` / `refused_dirty` / `blocked_tcc`——
-  提前一轮也清不掉，下一轮会以同样的理由再拒）→ **不 kickstart**，409 ``deploy_refused``
-  带 ``deploy_status`` / ``deploy_detail`` / ``fix``（``deploy_state.auto_deploy_fix``，与
-  doctor 行同一句）；其余状态照旧 kickstart，回执 add-only 带上一轮的 ``deploy_status`` /
-  ``deploy_detail`` / ``deploy_failed_sha``，页面据此把「已触发」换成诚实的一句（`deferred`
-  会再次延后；``deploy_state.POISONED`` 整族都不再承诺版本会变——``scripts/auto-deploy.sh`` 的
-  五个 `status=failed` 写点里只有两个记得下 `failed_sha`，ff-only 失败的分叉 checkout 恰恰是
-  没有 sha 的那一路，而分叉是永久态）。``state_reader`` 参数注入缝（防腐 #3：绝不 module-global）。
+- ``GET /api/about`` → ``{"version", "home", "repo", "update_available", "update_check",
+  "check_enabled"}``：版本真源 = ``act.__version__``（§56.1）；``update_check`` =
+  ``state/update_check.json`` 的公开子集（checked_at / latest / url；ETag 不外发）；
+  ``update_available`` 由**本模块现算**（v2.0.0：dashboard.json 投影随 actd 退役）——缓存的
+  latest 严格新于运行版本且 ``updates.check_enabled`` 开着时才是 dict
+  ``{current, latest, url, pkg_asset_url, manual_upgrade}``（v1 的 act 侧同名投影已随
+  dashboard.json 退役，这里是唯一一份），否则 None；``check_enabled`` =
+  ``updates.check_enabled`` 的 effective 值（override → config.yaml → 默认 true；坏的 overrides
+  文件当空，关于页不因它 409）。**周期检查的触发者**（§26 v2.0.0 修订）：缓存缺席或超过 24h 且
+  检查开着时，GET 在后台线程里起一次 ``python -m act.lib.update_check``（它自己仍按 24h 预算
+  自闸），响应永远立刻回缓存——GET 不等网络。环境变量 ``AIASSISTANT_UPDATE_AUTOCHECK=0`` 关掉
+  这个后台触发（测试套件设它：判例绝不出网；手动「立即检查」不受影响）。
+- ``POST /api/update/check`` → ``python -m act.lib.update_check --force``（§26 手动「立即检查」；
+  ``updates.check_enabled: false`` 时它自己拒发网络请求），stdout 那一行 JSON 原样透出。
+- ``POST /api/update/install {}`` → §79 升级器：先过两道 409，再分离起 ``scripts/upgrade.sh``
+  （ff-only 到 origin/main 上的 v* tag + ``bash install.sh --non-interactive --from-upgrade``；
+  永不碰录制引擎）。
+
+  1. **跨大版本只许手动**（§26 追记 2026-10-23 桥接版本；1.x 的 §56.3 已退役，PR-0 语义保留）：缓存的 latest
+     的 major 大于运行版本（``update_check.needs_manual_upgrade``）→ 409 ``manual_upgrade``，
+     details 带 ``manual_upgrade`` / ``current`` / ``latest`` / ``fix``（``git fetch --tags origin &&
+     git checkout v<latest> && bash install.sh``）。缓存读不出 = 不拒（宪法第 11 条）。
+  2. **升级器还没落地** → 501：``scripts/upgrade.sh`` 随 PR-D 进 repo（lite 2.0 的切片顺序）；
+     在那之前本端点诚实地说「这个 checkout 还没有升级器」，details 带同一条手动命令。
+
+  v2.0.0 退役（全文见 tag full）：§56 自动部署 agent 的 kickstart、``deploy_state`` 的现读与
+  ``deploy_refused`` 409、``repair`` 模块——2.0 没有自动部署 agent，升级只走 §79。
+  ``spawner`` / ``update_reader`` 注入缝（防腐 #3：绝不 module-global）。
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
-import sys
+import os
+import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import deploy_state          # 依赖方向：server → act.lib（§58.3 规则 3）
-from server import paths, repair, settings_catalog, subproc
-from server.errors import ApiError, ConflictError, NotImplementedError501, UnknownFieldError
+from act.lib import update_check   # 依赖方向：server → act.lib（§58.3 规则 3）
+from server import background_jobs, paths, settings_catalog, subproc
+from server.errors import ConflictError, NotImplementedError501, UnknownFieldError
 
 _UPDATE_TIMEOUT_S = 40
-AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"   # mirrors act/lib/checks/launchd.AUTODEPLOY_LABEL
-CHECK_ENABLED_FIELD = ("general", "updates_check_enabled")   # settings_catalog 里那把旋钮（§68.1）
+CHECK_ENABLED_FIELD = ("updates", "updates_check_enabled")   # settings_catalog 里那把旋钮（§68.1）
+UPGRADE_SCRIPT = "scripts/upgrade.sh"                           # §79（PR-D 落地）
+UPGRADE_LOG = "upgrade.log"
+CHECK_INTERVAL_S = update_check.CHECK_INTERVAL_SECONDS
+
+_JOBS = background_jobs.Threads("update-check")
+
+UpdateReader = Callable[[], Optional[dict]]
+Spawner = Callable[[list, Path, Path], None]
 
 
 def version() -> str:
@@ -76,9 +78,7 @@ def update_check_public(home: Path) -> Optional[dict]:
 
 
 def check_enabled(home: Path) -> bool:
-    """``updates.check_enabled`` 的 effective 值（override → config.yaml → 默认 true）——原生
-    ``UpdateCheckModel.reload`` 同一读法：overrides 坏文件当空（原生 ``readOverrides`` 回 ``[:]``），
-    落到 config.yaml；关于页永不因 overrides 坏了而 409（那是设置页写入时才该说的话）。"""
+    """``updates.check_enabled`` 的 effective 值；overrides 坏文件当空（落到 config.yaml）。"""
     section, key = CHECK_ENABLED_FIELD
     field = settings_catalog.field_index(settings_catalog.lookup(section))[key]
     try:
@@ -89,35 +89,73 @@ def check_enabled(home: Path) -> bool:
     return value is not False
 
 
-StateReader = Callable[[], Optional[dict]]
-
-
-def read_deploy_state(state_reader: Optional[StateReader] = None) -> Optional[dict]:
-    """上一轮自动部署的判决（§56.4 的 sanitized 形，与 dashboard `deploy_state` 逐字同一把
-    reader、同一套键）。**现读文件**而不是读看板投影：投影由 actd 每 pass 写，actd 死了
-    或 launchd 任务被 TCC 拦着时投影正是陈的那一份，而这里要回答的恰恰是「更新链路还活着吗」。
-    读不到 / 坏文件 → None（宪法第 11 条：关于页不因它 500）。"""
-    reader = state_reader or deploy_state.read
-    try:
-        state = reader()
-    except Exception:  # noqa: BLE001 - 部署判决答不上来不许拖垮「关于」页
+def update_available(update: Optional[dict], enabled: bool, current: str) -> Optional[dict]:
+    """§26 payload — dict ONLY when the cached latest is strictly newer and the
+    check is on (an ABSENT / None value is the contract for "no known update")."""
+    latest = (update or {}).get("latest")
+    if not enabled or not isinstance(latest, str) or not update_check.is_newer(latest, current):
         return None
-    return state if isinstance(state, dict) and state else None
+    return {"current": current, "latest": latest,
+            "url": update.get("url") or update_check.RELEASES_PAGE_URL,
+            "pkg_asset_url": update.get("pkg_asset_url"),
+            "manual_upgrade": update_check.needs_manual_upgrade(latest, current)}
 
 
-def snapshot(home: Path, state_reader: Optional[StateReader] = None) -> dict:
-    """``GET /api/about``。``deploy_state`` 是 §68.6 追记的 add-only 键（缺席 = 这台机器
-    没有自动部署的记录）。"""
-    board = _read_json(paths.dashboard_path(home)) or {}
-    update = board.get("update_available")
+def _parse_iso(value) -> Optional[float]:
+    if not isinstance(value, str):
+        return None
+    try:
+        return _dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=_dt.timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def check_due(update: Optional[dict], now: Optional[float] = None) -> bool:
+    """The cache is absent / unparsable / older than the 24h budget."""
+    checked = _parse_iso((update or {}).get("checked_at"))
+    current = now if now is not None else _dt.datetime.now(_dt.timezone.utc).timestamp()
+    return checked is None or current - checked >= CHECK_INTERVAL_S
+
+
+AUTOCHECK_ENV = "AIASSISTANT_UPDATE_AUTOCHECK"
+
+
+def autocheck_enabled() -> bool:
+    """The GET-triggered background check; ``AIASSISTANT_UPDATE_AUTOCHECK=0`` turns it off."""
+    return os.environ.get(AUTOCHECK_ENV, "1").strip() != "0"
+
+
+def _start_periodic_check(home: Path, runner=None) -> None:
+    """One background ``python -m act.lib.update_check`` (self-gated to 24h); never two at once."""
+    if _JOBS.live_count():
+        return
+
+    def job() -> None:
+        subproc.run_module(home, "act.lib.update_check", [], timeout_s=_UPDATE_TIMEOUT_S,
+                           runner=runner)
+
+    _JOBS.spawn(job)
+
+
+def join_jobs_for_tests(timeout: float = background_jobs.JOIN_TIMEOUT_S) -> bool:
+    return _JOBS.join(timeout)
+
+
+def snapshot(home: Path, runner=None, now: Optional[float] = None) -> dict:
+    """``GET /api/about``."""
+    update = update_check_public(home)
+    enabled = check_enabled(home)
+    current = version()
+    if enabled and autocheck_enabled() and check_due(update, now):
+        _start_periodic_check(home, runner)
     return {
-        "version": version(),
+        "version": current,
         "home": str(home),
         "repo": str(paths.repo_root()),
-        "update_available": update if isinstance(update, dict) else None,
-        "update_check": update_check_public(home),
-        "check_enabled": check_enabled(home),
-        "deploy_state": read_deploy_state(state_reader),
+        "update_available": update_available(update, enabled, current),
+        "update_check": update,
+        "check_enabled": enabled,
     }
 
 
@@ -133,60 +171,79 @@ def check_now(home: Path, payload: dict, runner=None) -> dict:
     return doc
 
 
-def _install_gate(payload: dict, platform: Optional[str]) -> None:
+# --------------------------------------------------------------------------- #
+# POST /api/update/install — §79
+# --------------------------------------------------------------------------- #
+def manual_fix(latest: str) -> str:
+    """The one manual upgrade command (inlined since deploy_state retired)."""
+    tag = ("v" + latest) if latest else "v<latest>"
+    return "git fetch --tags origin && git checkout %s && bash install.sh" % tag
+
+
+def _read_update(home: Optional[Path], update_reader: Optional[UpdateReader]) -> Optional[dict]:
+    """§26 缓存的公开子集（请求时现读）；读不到 / 坏文件 / 没给 home → None（宪法第 11 条）。"""
+    if update_reader is None and home is None:
+        return None
+    try:
+        doc = update_reader() if update_reader is not None else update_check_public(home)
+    except Exception:  # noqa: BLE001 - 更新缓存答不上来不许拖垮「立即升级」
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _refuse_if_manual_upgrade(update: Optional[dict]) -> None:
+    """§26 / §56.3 追记：新的大版本只许手动升级——409 ``manual_upgrade`` 把手动命令交给页面。"""
+    current = version()
+    latest = _latest_of(update)
+    if not update_check.needs_manual_upgrade(latest, current):
+        return
+    fix = manual_fix(latest)
+    raise ConflictError(
+        "v%s is a new major version (running v%s) - upgrades never cross a major version by "
+        "themselves; upgrade by hand: %s" % (latest, current, fix),
+        {"reason": "manual_upgrade", "manual_upgrade": True, "current": current,
+         "latest": latest, "fix": fix})
+
+
+def _default_spawner(argv: list, cwd: Path, log_path: Path) -> None:
+    """Detached ``bash scripts/upgrade.sh`` — outlives the request (and the server
+    restart the upgrade itself performs)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "ab") as fh:
+        subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=fh, stderr=fh,
+                         start_new_session=True)
+
+
+def _latest_of(update: Optional[dict]) -> str:
+    latest = (update or {}).get("latest")
+    return latest if isinstance(latest, str) else ""
+
+
+def _require_upgrader(root: Path, latest: str) -> Path:
+    """The §79 script, or 501 while this checkout has none (it lands with PR-D)."""
+    script = root / UPGRADE_SCRIPT
+    if not script.is_file():
+        raise NotImplementedError501(
+            "this checkout has no upgrader yet (%s) - upgrade by hand: %s"
+            % (UPGRADE_SCRIPT, manual_fix(latest)),
+            {"reason": "upgrader_missing", "script": UPGRADE_SCRIPT, "fix": manual_fix(latest)})
+    return script
+
+
+def install_now(payload: dict, home: Optional[Path] = None,
+                update_reader: Optional[UpdateReader] = None,
+                spawner: Optional[Spawner] = None,
+                repo: Optional[Path] = None) -> dict:
+    """``POST /api/update/install {}`` → §79 upgrader (detached). 409 ``manual_upgrade``
+    for a new major; 501 while ``scripts/upgrade.sh`` is not in this checkout yet."""
     if payload:
         raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
-    if (platform or sys.platform) != "darwin":
-        raise NotImplementedError501("auto-deploy is macOS launchd only")
-
-
-def _require_autodeploy_loaded(run: repair.Runner) -> None:
-    if not repair.loaded(AUTODEPLOY_LABEL, run):
-        raise ConflictError(
-            "%s is not loaded in launchd - this install is not auto-deployed; install the release "
-            "by hand from the release page" % AUTODEPLOY_LABEL,
-            {"label": AUTODEPLOY_LABEL, "fix": "bash install.sh (git checkout with features.auto_deploy on)"})
-
-
-def _prev(state: Optional[dict], key: str) -> str:
-    """上一轮判决里的一个字串字段（缺席 / 非字串 → 空串；reader 已消毒过，这里只兜形状）。"""
-    value = (state or {}).get(key)
-    return value if isinstance(value, str) else ""
-
-
-def _refuse_if_blocked(state: Optional[dict]) -> None:
-    """§68.6 追记（#309）：上一轮的判决属于 ``deploy_state.BLOCKING`` → 提前一轮也无事发生
-    （下一轮会以同样的理由再拒），所以**不 kickstart**，409 把拒绝原文交给页面。"""
-    status = _prev(state, "status")
-    if status not in deploy_state.BLOCKING:
-        return
-    detail = _prev(state, "detail")
-    raise ConflictError(
-        "auto-deploy last ended '%s': %s - an early kickstart would refuse for the same reason"
-        % (status, detail or "no detail recorded"),
-        {"reason": "deploy_refused", "deploy_status": status, "deploy_detail": detail,
-         "fix": deploy_state.auto_deploy_fix(status), "label": AUTODEPLOY_LABEL})
-
-
-def install_now(payload: dict, runner: Optional[repair.Runner] = None,
-                platform: Optional[str] = None,
-                state_reader: Optional[StateReader] = None) -> dict:
-    """``POST /api/update/install {}``：kickstart 自动部署 agent（D17）；未加载 409、非 darwin 501。
-    §68.6 追记（#309）：先读 deploy_state——BLOCKING 的状态直接 409 ``deploy_refused``（零
-    kickstart），其余状态的回执带上一轮的 ``deploy_status`` / ``deploy_detail``，页面据此决定
-    能不能说「几分钟后版本会变」。"""
-    _install_gate(payload, platform)
-    state = read_deploy_state(state_reader)
-    run = runner or repair.default_runner
-    # 先问「这台机器走不走自动部署」（不走 → 原生兜底：release 页），再问「这一轮值不值得起」
-    _require_autodeploy_loaded(run)
-    _refuse_if_blocked(state)
-    rc, out = run(["/bin/launchctl", "kickstart", "%s/%s" % (repair.domain(), AUTODEPLOY_LABEL)])
-    if rc != 0:
-        raise ApiError("launchctl kickstart exited %d: %s" % (rc, out.strip()[-300:]),
-                       {"label": AUTODEPLOY_LABEL, "rc": rc})
-    return {"ok": True, "label": AUTODEPLOY_LABEL, "action": "kickstart",
-            "deploy_status": _prev(state, "status"), "deploy_detail": _prev(state, "detail"),
-            # 上一轮记下的中毒 sha（记得下的时候才有）：现读的这一份比页面一进来拉的 about 快照新，
-            # 页面据它说「该 sha 在 main 挪窝之前不会被重试」而不必信任陈旧的快照
-            "deploy_failed_sha": _prev(state, "failed_sha")}
+    update = _read_update(home, update_reader)
+    _refuse_if_manual_upgrade(update)
+    root = repo or paths.repo_root()
+    latest = _latest_of(update)
+    script = _require_upgrader(root, latest)
+    log_path = (home or root) / "state" / UPGRADE_LOG
+    (spawner or _default_spawner)(["/bin/bash", str(script)], root, log_path)
+    return {"ok": True, "action": "upgrade", "script": UPGRADE_SCRIPT, "log": str(log_path),
+            "latest": latest or None}

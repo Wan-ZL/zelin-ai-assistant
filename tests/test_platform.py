@@ -73,15 +73,6 @@ class DarwinSeamTestCase(unittest.TestCase):
             "t", "b", runner=_FakeRunner(
                 raises=subprocess.TimeoutExpired(cmd="osascript", timeout=10))))
 
-    def test_open_path_uses_open(self):
-        runner = _FakeRunner()
-        self.assertTrue(platform.open_path("/tmp/some file.command", runner=runner))
-        (argv, timeout), = runner.calls
-        self.assertEqual(argv, ["open", "/tmp/some file.command"])
-        self.assertEqual(timeout, 15)
-        self.assertFalse(platform.open_path("/x", runner=_FakeRunner(returncode=1)))
-        self.assertFalse(platform.open_path("/x", runner=_FakeRunner(raises=OSError())))
-
     def test_service_list_text_wraps_launchctl(self):
         runner = _FakeRunner(stdout="123\t0\tcom.zelin.aiassistant.actd\n",
                              stderr="warn\n")
@@ -110,11 +101,6 @@ class LinuxSeamTestCase(unittest.TestCase):
         # headless box: notify-send missing -> False, never a crash
         self.assertFalse(platform.notify_user(
             "t", "b", runner=_FakeRunner(raises=FileNotFoundError())))
-
-    def test_open_path_uses_xdg_open(self):
-        runner = _FakeRunner()
-        self.assertTrue(platform.open_path("/tmp/x", runner=runner))
-        self.assertEqual(runner.calls[0][0], ["xdg-open", "/tmp/x"])
 
     def test_service_list_text_uses_systemctl_user(self):
         runner = _FakeRunner(
@@ -145,23 +131,24 @@ class NotifyDelegationTestCase(unittest.TestCase):
     def test_notify_routes_through_the_native_path(self):
         """act/lib/notify.notify must have no OS calls of its own left.
 
-        Since §28 the native path is the app relay (_native_notify, no
+        Since §28 the native path on darwin is the app relay (_queue_write, no
         fallback) — its queue contract lives in tests/test_notify_relay.py;
         here we pin that notify() delegates to it, and that off-darwin (no
         app, no relay) the OS seam is still the one direct route.
         """
         from act.lib import notify
-        with mock.patch.object(notify, "_native_notify",
-                               return_value=True) as native:
+        with mock.patch("sys.platform", "darwin"), \
+             mock.patch.object(notify, "_queue_write",
+                               return_value=object()) as queue:
             self.assertTrue(notify.notify("标题", "正文", subtitle="sub"))
-        native.assert_called_once_with("标题", "正文", "sub", kind=None)
+        queue.assert_called_once_with("标题", "正文", "sub", kind=None)
 
     def test_native_path_reaches_the_seam_off_darwin(self):
         from act.lib import notify
         with mock.patch("sys.platform", "linux"), \
              mock.patch.object(platform, "notify_user",
                                return_value=True) as seam:
-            self.assertTrue(notify._native_notify("标题", "正文", "sub"))
+            self.assertTrue(notify.notify("标题", "正文", "sub"))
         seam.assert_called_once_with("标题", "正文", "sub")
 
 

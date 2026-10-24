@@ -1,9 +1,8 @@
-"""platform — the per-OS argv builders behind the three seam functions.
+"""platform — the per-OS argv builders behind the two seam functions.
 
-Pins the P3b split of notify_user / open_path / service_list_text: each
-builder's exact argv on every OS, the unsupported-OS None, the windows
-os.startfile branch (patched in — it does not exist off windows), and that a
-None argv short-circuits before any runner is touched.
+Pins the P3b split of notify_user / service_list_text: each builder's exact
+argv on every OS, the unsupported-OS None, and that a None argv short-circuits
+before any runner is touched (open_path retired in v2.0.0).
 """
 import subprocess
 import unittest
@@ -48,25 +47,6 @@ class NotifyArgvTestCase(unittest.TestCase):
         with mock.patch("sys.platform", "freebsd13"):
             self.assertFalse(platform.notify_user("t", "b", runner=runner))
             self.assertEqual(platform.service_list_text(runner=runner), "")
-        runner.assert_not_called()
-
-
-class OpenPathWindowsTestCase(unittest.TestCase):
-    def test_startfile_success_and_failure(self):
-        with mock.patch("sys.platform", "win32"):
-            with mock.patch.object(platform.os, "startfile", create=True,
-                                   return_value=None) as sf:
-                self.assertTrue(platform.open_path("C:\\x\\y.txt"))
-            sf.assert_called_once_with("C:\\x\\y.txt")
-            with mock.patch.object(platform.os, "startfile", create=True,
-                                   side_effect=OSError("no assoc")):
-                self.assertFalse(platform.open_path("C:\\x\\y.txt"))
-
-    def test_windows_never_touches_the_runner(self):
-        runner = mock.Mock()
-        with mock.patch("sys.platform", "win32"), \
-                mock.patch.object(platform.os, "startfile", create=True):
-            platform.open_path("x", runner=runner)
         runner.assert_not_called()
 
 

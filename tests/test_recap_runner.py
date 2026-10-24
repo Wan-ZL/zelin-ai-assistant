@@ -362,7 +362,6 @@ class CliTestCase(RecapCase):
         with mock.patch.object(config, "load_config", return_value=self.cfg):
             self.assertEqual(recap.main(["--once"]), 0)
             self.assertEqual(recap.main(["--generate", "meeting:2026-01-01T0000-zoom"]), 1)
-            self.assertEqual(recap.main(["--slack-draft", KEY, "--channel-id", "C0123456789"]), 1)
 
     def test_crash_is_logged_not_raised(self):
         with mock.patch.object(recap, "run_once", side_effect=RuntimeError("kaboom")):

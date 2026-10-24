@@ -1,19 +1,23 @@
-"""act/lib/detached.py — launch ``python -m act.<module> …`` detached from a daemon pass.
+"""act/lib/detached.py — launch ``python -m act.<module> …`` detached from a request.
 
-The inbox's no-id special forms (weekly digest on demand §24, the recap
-buttons §63) need a claude call that can run for minutes; actd's pass is 10 s.
-Pattern (the merge-review analysis subprocess precedent): ``Popen`` in a new
-session, never waited on, stdout/err appended to ``state/<log_name>`` — the
-child outlives the pass and the daemon never blocks on it.
+The recap buttons (§63: 「重新生成 / 现在生成 / 回退到这一版」) need a claude call
+that can run for minutes; an HTTP request cannot wait that long. The board
+server (``server/recaps.py``) spawns ``python -m act.recap …`` through here:
+``Popen`` in a new session, never waited on, stdout/err appended to
+``state/<log_name>`` — the child outlives the request.
 
-:func:`launch` is the whole contract: it returns the §5.4 result_status
-(``"running"`` started | ``"noop"`` launch failed) and reports through the
-caller's ``log`` callable, so a button press can never take the daemon down.
+:func:`launch` is the whole contract: it returns ``"running"`` (started) or
+``"noop"`` (launch failed) and reports through the caller's ``log`` callable, so
+a button press can never take the server down. ``home`` (add-only, v2.0.0) pins
+the child's ``AIASSISTANT_HOME`` / cwd / log location to the caller's home
+instead of this process's env.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Callable, Optional
 
 from act.lib import config
@@ -22,28 +26,37 @@ RUNNING = "running"
 NOOP = "noop"
 
 
-def spawn(module_argv: list, log_name: str) -> None:
+def spawn(module_argv: list, log_name: str, home: Optional[Path] = None) -> None:
     """``python -m <module_argv…>`` detached; raises on a failed launch."""
-    config.ensure_state_dirs()
-    with open(config.STATE_DIR / log_name, "ab") as fh:
+    if home is None:
+        config.ensure_state_dirs()
+        root, env = config.HOME, None
+    else:
+        root = Path(home)
+        env = dict(os.environ, AIASSISTANT_HOME=str(root))
+    state = root / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    with open(state / log_name, "ab") as fh:
         subprocess.Popen(
             [sys.executable, "-m"] + [str(a) for a in module_argv],
-            cwd=str(config.HOME),
+            cwd=str(root),
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=fh,
             stderr=fh,
-            start_new_session=True,  # detached: outlives the pass
+            start_new_session=True,  # detached: outlives the request
         )
 
 
 def launch(module_argv: list, log_name: str, label: str,
-           log: Optional[Callable[[str], None]] = None) -> str:
-    """Spawn and translate the outcome into the inbox ack vocabulary."""
+           log: Optional[Callable[[str], None]] = None,
+           home: Optional[Path] = None) -> str:
+    """Spawn and translate the outcome into ``running`` / ``noop``."""
     say = log or (lambda _msg: None)
     try:
-        spawn(module_argv, log_name)
-    except Exception as e:  # noqa: BLE001 — never let a button kill the pass
-        say(f"inbox: {label} launch FAILED: {e}")
+        spawn(module_argv, log_name, home=home)
+    except Exception as e:  # noqa: BLE001 — never let a button kill the server
+        say(f"{label} launch FAILED: {e}")
         return NOOP
-    say(f"inbox: {label} — subprocess started")
+    say(f"{label} — subprocess started")
     return RUNNING

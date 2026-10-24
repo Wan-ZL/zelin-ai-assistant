@@ -1,6 +1,7 @@
 """doctor `board server` row (CONTRACT §54; §55 resident set) — behavior pins.
 
-The board server is a launchd agent since v0.48.18 (systemd unit on Linux).
+The board server is a launchd agent since v0.48.18 — the one LaunchAgent of
+the §78 closed footprint (v2.0.0 is macOS-only; the systemd unit retired).
 `launchctl list` only proves the process was spawned; whether it BOUND the port
 is what the web board and the shell app need — so the row is driven by a
 loopback `GET /api/health` probe (injected here; the real one is switched off
@@ -15,9 +16,9 @@ live server).
     fix names the kickstart command the shell's dialog prints;
   - unreachable + not hosted → WARN, fix = the installer;
   - probe unavailable / windows → no row;
-  - the server label is a RESIDENT label: a crash-looping server is FAIL in
-    the launchd row (rolls an auto-deploy back, §56); the doctor no longer
-    reports the label as an orphan (a template exists).
+  - the server label is the RESIDENT label: a crash-looping server is FAIL in
+    the launchd row; the doctor never reports the label as an orphan (a
+    template exists).
 """
 import json
 import os
@@ -40,11 +41,10 @@ SERVER = "com.zelin.aiassistant.server"
 PORT = config.DEFAULT_SERVER_PORT
 
 
-def _probes(*, health, launchctl="", platform_units=None):
+def _probes(*, health, launchctl=""):
     return doctor.Probes(
         launchctl_list=lambda: launchctl,
         board_health=lambda port: dict(health, port=port),
-        systemd_units=platform_units,
     )
 
 
@@ -122,16 +122,15 @@ class BoardServerRowDarwinTestCase(unittest.TestCase):
         self.assertIn("47999", r.detail)
 
     def test_row_runs_inside_run_checks_fast(self):
-        # the row is part of the fast set (auto-deploy's rollback judgement)
+        # the row is part of the fast set (the §69 fresh-install summary reads it)
         probes = doctor.Probes(
             launchctl_list=lambda: "4242\t0\t%s\n" % SERVER,
             board_health=lambda port: dict(DOWN),
             launchd_labels=[SERVER], installed_agent_labels=lambda: [],
             installed_plist_text=lambda label: None, launchd_log_tail=lambda s: "",
-            heartbeat_read=lambda: None, daemon_path_env=lambda: None,
+            daemon_path_env=lambda: None,
             login_shell_claude=lambda: None, which=lambda n: None,
             launchd_claude_probe=lambda c, w: {"state": "unavailable", "rc": None, "text": ""},
-            claude_code_settings=lambda: {},
         )
         results = doctor.run_checks(probes, fast=True)
         r = _row(results)
@@ -158,41 +157,6 @@ class BoardServerRowDarwinTestCase(unittest.TestCase):
                                launchd_labels=templates)
         r = doctor._check_launchd_orphans(probes)
         self.assertEqual(r.status, doctor.OK, r.detail)
-
-
-class BoardServerRowLinuxTestCase(unittest.TestCase):
-    def setUp(self):
-        p = mock.patch("sys.platform", "linux")
-        p.start()
-        self.addCleanup(p.stop)
-
-    def _check(self, health, listing):
-        return _row([doctor._check_board_server(_probes(health=health, launchctl=listing))])
-
-    def test_registered_unit_and_reachable_is_ok(self):
-        r = self._check(UP, "zelin-server.service loaded active running Zelin\n")
-        self.assertEqual(r.status, doctor.OK)
-        self.assertIn("systemd-hosted", r.detail)
-
-    def test_failed_unit_bullet_still_counts_as_hosted(self):
-        r = self._check(DOWN, "● zelin-server.service loaded failed failed Zelin\n")
-        self.assertEqual(r.status, doctor.FAIL)
-        self.assertIn("systemctl --user restart zelin-server.service", r.fix)
-
-    def test_not_registered_points_at_the_linux_installer(self):
-        r = self._check(DOWN, "zelin-actd.service loaded active running Zelin\n")
-        self.assertEqual(r.status, doctor.WARN)
-        self.assertIn("install-linux.sh", r.fix)
-        self.assertIn("zelin-server.service", r.fix)
-
-    def test_server_unit_is_a_systemd_resident(self):
-        self.assertIn("zelin-server.service", doctor.SYSTEMD_RESIDENT)
-
-
-class BoardServerRowWindowsTestCase(unittest.TestCase):
-    def test_windows_has_no_row(self):
-        with mock.patch("sys.platform", "win32"):
-            self.assertEqual(doctor._check_board_server(_probes(health=UP)), [])
 
 
 class RealLoopbackProbeTestCase(unittest.TestCase):

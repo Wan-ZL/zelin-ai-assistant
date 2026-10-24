@@ -25,18 +25,22 @@ flow anywhere reads a mark」**自此失效**。marks 参与**恰好两处**判�
 registry、永不触发发送 / 派发 / 卡片状态机，`server/recaps.py` 仍是它唯一的
 写者（act 只读，读不动 = fail-open，只剩 90 天兜底）。
 
-Writers: ``act/recap.py`` (cron `--once` and the actd-spawned `--generate` /
-`--slack-draft` runs, serialized by the flock) owns sessions.json and
-recaps/; ``server/recaps.py`` owns marks.json. The daemon only READS this
-directory: :func:`attach` adds the add-only top-level ``recaps[]`` plus
-``recap_counts`` (the true per-lane totals the caps cut down to; §2 兄弟字段) to
-dashboard.json (history text stripped — only the §63.9 scalar handles
-``history_versions`` ride along, newest first, capped) — the web 会议纪要
-page's data; the §63.11 ``questions`` (the intent questions this recap's own
-text implies) are computed **in the projection** and never stored — a question
-set on disk would drift from the text it was derived from. The one thing actd writes lives OUTSIDE it: the §63.8 generate
-request ledger ``state/recap_requests.json`` (act/lib/recap_requests.py),
-projected per row as ``generate_request``. The §63.3 追记 ``problems`` /
+Writers: ``act/recap.py`` (cron `--once` and the server-spawned `--generate` /
+`--revert` runs, serialized by the flock) owns sessions.json and recaps/;
+``server/recaps.py`` owns marks.json. The board server only READS this
+directory: ``GET /api/recaps`` serves :func:`projection` as ``recaps[]`` plus
+:func:`lane_counts` as ``recap_counts`` (the true per-lane totals the caps cut
+down to) — history text stripped, only the §63.9 scalar handles
+``history_versions`` ride along, newest first, capped. The §63.11 ``questions``
+(the intent questions this recap's own text implies) are computed **in the
+projection** and never stored — a question set on disk would drift from the
+text it was derived from. The one thing the server writes lives OUTSIDE it: the
+§63.8 generate request ledger ``state/recap_requests.json``
+(act/lib/recap_requests.py), projected per row as ``generate_request``.
+
+Every reader takes an optional ``state_dir`` (add-only, v2.0.0): the server
+passes ``<its home>/state`` so the listing never depends on the process env
+(``config.STATE_DIR``) agreeing with the server's own home. The §63.3 追记 ``problems`` /
 ``repairs`` rows ride on the recap file itself (act/recap.py writes them with
 the lines) and reach the wire through :func:`_row` like every other field.
 
@@ -62,14 +66,12 @@ from typing import Optional
 from act.lib import config, recap_intent, recap_requests, recap_sessions, recap_text
 
 KEY_RE = re.compile(r"^meeting:\d{4}-\d{2}-\d{2}T\d{4}-[a-z0-9-]{1,32}$")
-# Slack conversation ids: C… channel, D… DM, G… private group (uppercase alnum)
-CHANNEL_ID_RE = re.compile(r"^[CDG][A-Z0-9]{6,20}$")
 
 PROJECTION_CAP = 60
 # §63.5 追记（issue #301）：已归档 / 已忽略 自己的预算——归档一行永不挤掉活跃的一行；
 # 两个上限切掉多少，`recap_counts`（:func:`lane_counts`）如实报出来，页面照着说
 FILED_PROJECTION_CAP = 60
-# 栏 slug（add-only 词表；web RECAP_LANES 与 dashboard.json `recap_counts` 的键逐字同源）
+# 栏 slug（add-only 词表；web RECAP_LANES 与 GET /api/recaps `recap_counts` 的键逐字同源）
 RECAP_LANES: tuple = ("active", "archived", "dismissed")
 LATE_SLICE_WINDOW_S = 48 * 3600
 PRIOR_DAYS = 14
@@ -94,20 +96,20 @@ QUALITIES: tuple = (QUALITY_OK, QUALITY_NEEDS_REVIEW, QUALITY_THIN, QUALITY_NO_A
 # --------------------------------------------------------------------------- #
 # paths
 # --------------------------------------------------------------------------- #
-def recap_dir() -> Path:
-    return config.STATE_DIR / "recap"
+def recap_dir(state_dir: Optional[Path] = None) -> Path:
+    return (state_dir if state_dir is not None else config.STATE_DIR) / "recap"
 
 
-def recaps_dir() -> Path:
-    return recap_dir() / "recaps"
+def recaps_dir(state_dir: Optional[Path] = None) -> Path:
+    return recap_dir(state_dir) / "recaps"
 
 
-def sessions_path() -> Path:
-    return recap_dir() / "sessions.json"
+def sessions_path(state_dir: Optional[Path] = None) -> Path:
+    return recap_dir(state_dir) / "sessions.json"
 
 
-def marks_path() -> Path:
-    return recap_dir() / "marks.json"
+def marks_path(state_dir: Optional[Path] = None) -> Path:
+    return recap_dir(state_dir) / "marks.json"
 
 
 def lock_path() -> Path:
@@ -115,7 +117,7 @@ def lock_path() -> Path:
 
 
 def log_path() -> Path:
-    # sibling of weekly_digest.log — the detached runs append here
+    # the detached runs append here
     return config.STATE_DIR / "recap.log"
 
 
@@ -127,10 +129,10 @@ def valid_key(key) -> bool:
     return isinstance(key, str) and bool(KEY_RE.match(key))
 
 
-def recap_path(key: str) -> Path:
+def recap_path(key: str, state_dir: Optional[Path] = None) -> Path:
     if not valid_key(key):
         raise ValueError("bad recap key: %r" % (key,))
-    return recaps_dir() / (key.replace(":", "_") + ".json")
+    return recaps_dir(state_dir) / (key.replace(":", "_") + ".json")
 
 
 # --------------------------------------------------------------------------- #
@@ -159,15 +161,8 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def slack_targets(raw) -> dict:
-    """`recap.slack_draft.targets` {app-slug: channel_id}; entries whose value
-    is not a Slack conversation id are dropped (no guessing, §63)."""
-    return {str(k).lower(): v for k, v in _dict(raw).items()
-            if isinstance(v, str) and CHANNEL_ID_RE.match(v)}
-
-
 def settings(cfg: Optional[config.Config] = None) -> dict:
-    """Effective recap settings: the three flat knobs (config.py, Settings
+    """Effective recap settings: the two flat knobs (config.py, Settings
     overridable) + the tuning block read verbatim from config.yaml."""
     cfg = cfg or config.load_config()
     blk = _dict(_dict(cfg.raw).get("recap"))
@@ -177,8 +172,6 @@ def settings(cfg: Optional[config.Config] = None) -> dict:
         # §63.10（issue #303）：出厂形状（`lines` = 快速五行）；单份纪要的形状由按钮传下来的
         # `--shape` 覆盖，认不出的值一律回落到默认形（recap_text.normalize_shape）
         "default_shape": recap_text.normalize_shape(blk.get("default_shape")),
-        "slack_draft_enabled": bool(getattr(cfg, "recap_slack_draft_enabled", False)),
-        "slack_targets": slack_targets(_dict(blk.get("slack_draft")).get("targets")),
         "options": recap_sessions.Options.from_mapping(blk),
         "max_per_run": max(1, recap_sessions.int_or(blk.get("max_per_run"), DEFAULT_MAX_PER_RUN)),
         "max_per_day": max(1, recap_sessions.int_or(blk.get("max_per_day"), DEFAULT_MAX_PER_DAY)),
@@ -193,11 +186,12 @@ def settings(cfg: Optional[config.Config] = None) -> dict:
 # --------------------------------------------------------------------------- #
 # sessions.json
 # --------------------------------------------------------------------------- #
-def load_state() -> Optional[dict]:
+def load_state(state_dir: Optional[Path] = None) -> Optional[dict]:
     """The cursor/buffer document, None on the very first run (no file)."""
-    if not sessions_path().exists():
+    path = sessions_path(state_dir)
+    if not path.exists():
         return None
-    return _read_json(sessions_path(), None)
+    return _read_json(path, None)
 
 
 def new_state(cursor: dict, now_iso: str) -> dict:
@@ -230,6 +224,7 @@ def new_record(session: recap_sessions.Session, key: str, status: str) -> dict:
         # 做主——形状由第一次出稿写死（act/recap.record_shape 的那条优先级链）
         "shape": None, "sections_en": None, "sections_zh": None,
         "copy_en": None, "copy_zh": None,
+        # `slack_draft`：§63.4 退役（v2.0.0）后恒为 None——键留着（add-only，读者不必分版本）
         "note": None, "history": [], "slack_draft": None,
         # §63.11 追记（add-only，issue #302）：`baseline` = **我们见过的第一版**的可粘正文
         # （`{version, generated_at, shape, copy_en, copy_zh}`，只写一次、永不覆盖——
@@ -262,11 +257,12 @@ def _start_ts(rec: dict) -> float:
     return recap_sessions.parse_ts(rec.get("start")) or 0.0
 
 
-def list_recaps() -> list:
+def list_recaps(state_dir: Optional[Path] = None) -> list:
     """Every stored recap, newest start first (unreadable files skipped)."""
-    ensure_dirs()
+    if state_dir is None:
+        ensure_dirs()
     recs = []
-    for p in recaps_dir().glob("meeting_*.json"):
+    for p in recaps_dir(state_dir).glob("meeting_*.json"):
         rec = _read_json(p, None)
         if rec and valid_key(rec.get("key")):
             recs.append(rec)
@@ -346,12 +342,12 @@ def prune(now: float, retention_days: int, dismissed_days: Optional[int] = None)
 # --------------------------------------------------------------------------- #
 # marks.json (server-owned; read-only here)
 # --------------------------------------------------------------------------- #
-def load_marks() -> dict:
-    return _read_json(marks_path(), {})
+def load_marks(state_dir: Optional[Path] = None) -> dict:
+    return _read_json(marks_path(state_dir), {})
 
 
 # --------------------------------------------------------------------------- #
-# projection — dashboard.json top-level `recaps[]` (add-only)
+# projection — GET /api/recaps `recaps[]` (add-only)
 # --------------------------------------------------------------------------- #
 def has_lines(value) -> bool:
     """5 行正文在不在（非空 list）——§63.9 的投影句柄与回退用**同一个**判据，
@@ -421,7 +417,7 @@ def _row(rec: dict, marks: dict, requests: Optional[dict] = None) -> dict:
     row["sent_at"] = mark.get("sent_at")
     # §63.5 追记 add-only（issue #301）：已忽略的时刻（无 = None，键恒在）
     row["dismissed_at"] = mark.get("dismissed_at")
-    # §63.8 add-only：「重新生成 / 现在生成」回执（actd 台账 × 本文件的 generated_at；无请求 = None）
+    # §63.8 add-only：「重新生成 / 现在生成」回执（server 台账 × 本文件的 generated_at；无请求 = None）
     row["generate_request"] = recap_requests.projection(rec.get("key"), rec.get("generated_at"),
                                                         requests if requests is not None else {})
     return row
@@ -472,15 +468,15 @@ def _with_questions(rows: list) -> list:
     return rows
 
 
-def all_rows() -> list:
+def all_rows(state_dir: Optional[Path] = None) -> list:
     """全部投影行（**未切预算**），newest first：已出稿 recap + sessions.json 里还没有文件的
     OPEN 会话（同 key 以文件为准——一份 partial 的「现在生成」盖过裸 OPEN 行），history 剥掉、
     server-owned marks 与 §63.8 生成回执并入、§63.11 的 `questions` 现算。:func:`projection`
     与 :func:`lane_counts` 的共同上游（一次读盘两用）。"""
-    marks = load_marks()
-    requests = recap_requests.load()
-    rows = {r["key"]: _row(r, marks, requests) for r in list_recaps()}
-    for o in open_rows(load_state() or {}):
+    marks = load_marks(state_dir)
+    requests = recap_requests.load(None if state_dir is None else state_dir / "recap_requests.json")
+    rows = {r["key"]: _row(r, marks, requests) for r in list_recaps(state_dir)}
+    for o in open_rows(load_state(state_dir) or {}):
         rows.setdefault(o["key"], _row(o, marks, requests))
     return _with_questions(sorted(rows.values(), key=_start_ts, reverse=True))
 
@@ -520,24 +516,18 @@ def open_rows(state: dict) -> list:
             if isinstance(o, dict) and valid_key(o.get("key"))]
 
 
-def attach(dash: dict) -> dict:
-    """Set ``dash["recaps"]`` and ``dash["recap_counts"]`` (both add-only; a
-    failure leaves the key absent — the board must never die for a recap file).
-
-    ``recap_counts`` = the true per-lane totals before the caps cut anything
-    (§63.5 追记 2026-09-15, issue #301), so the page can say how many older
-    recaps it is not listing instead of silently losing them."""
-    try:
-        rows = all_rows()
-        dash["recaps"] = projection(rows=rows)
-        dash["recap_counts"] = lane_counts(rows)
-    except Exception:  # noqa: BLE001 - projection is best-effort
-        pass
-    return dash
+def snapshot(state_dir: Optional[Path] = None) -> dict:
+    """``GET /api/recaps``: ``{"recaps": projection, "recap_counts": lane_counts}``
+    from one disk read. ``recap_counts`` = the true per-lane totals before the
+    caps cut anything (§63.5 追记 2026-09-15, issue #301), so the page can say
+    how many older recaps it is not listing instead of silently losing them.
+    (Replaces the v1 ``attach()`` that wrote the same two keys into dashboard.json.)"""
+    rows = all_rows(state_dir)
+    return {"recaps": projection(rows=rows), "recap_counts": lane_counts(rows)}
 
 
 # --------------------------------------------------------------------------- #
-# inbox special forms → `python -m act.recap` argv tail (actd spawns detached)
+# request forms → `python -m act.recap` argv tail (the server spawns detached)
 # --------------------------------------------------------------------------- #
 def _note_argv(decision: dict) -> Optional[list]:
     """`--note …` 或空（没带）；畸形（非字符串 / 超 500 字）= None = 整条 noop。"""
@@ -551,7 +541,7 @@ def _note_argv(decision: dict) -> Optional[list]:
 
 def _shape_argv(decision: dict) -> Optional[list]:
     """§63.10（issue #303）：形状只认字面量 lines / sections——别的值 = 畸形 = noop
-    （actd 永不猜；缺席 = 这份纪要上一次用的形状，由持锁的写者决定）。"""
+    （server 永不猜；缺席 = 这份纪要上一次用的形状，由持锁的写者决定）。"""
     shape = decision.get("shape")
     if shape is None:
         return []
@@ -579,13 +569,6 @@ def _generate_argv(decision: dict) -> Optional[list]:
     return ["--generate", decision["meeting_key"]] + note + partial + shape + answers
 
 
-def _slack_draft_argv(decision: dict) -> Optional[list]:
-    channel = decision.get("channel_id")
-    if not (isinstance(channel, str) and CHANNEL_ID_RE.match(channel)):
-        return None
-    return ["--slack-draft", decision["meeting_key"], "--channel-id", channel]
-
-
 def _revert_argv(decision: dict) -> Optional[list]:
     """§63.9（issue #300）：``recap_revert {meeting_key, version}`` → ``--revert KEY
     --to-version N``。version 必须是 ≥ 1 的真整数（bool 不算——wire 上 `true` 曾经
@@ -596,18 +579,17 @@ def _revert_argv(decision: dict) -> Optional[list]:
     return ["--revert", decision["meeting_key"], "--to-version", str(version)]
 
 
-_INBOX_BUILDERS = {"recap_generate": _generate_argv, "recap_slack_draft": _slack_draft_argv,
-                   "recap_revert": _revert_argv}
-INBOX_ACTIONS = frozenset(_INBOX_BUILDERS)
+_REQUEST_BUILDERS = {"recap_generate": _generate_argv, "recap_revert": _revert_argv}
+REQUEST_ACTIONS = frozenset(_REQUEST_BUILDERS)
 
 
-def inbox_argv(decision) -> Optional[list]:
-    """``recap_generate {meeting_key, note?, partial?, shape?, answers?}`` / ``recap_slack_draft
-    {meeting_key, channel_id}`` / ``recap_revert {meeting_key, version}`` → argv
-    tail, or None when malformed (actd acks noop). None of the three carries a
-    recipient: the channel_id of a draft names the owner's own Slack draft box
-    target, never a send."""
+def request_argv(decision) -> Optional[list]:
+    """``recap_generate {meeting_key, note?, partial?, shape?, answers?}`` /
+    ``recap_revert {meeting_key, version}`` → argv tail, or None when malformed
+    (the server answers 400 before spawning anything). Neither carries a
+    recipient. (v1 name: ``inbox_argv``; the ``recap_slack_draft`` form retired
+    with §63.4.)"""
     if not isinstance(decision, dict) or not valid_key(decision.get("meeting_key")):
         return None
-    builder = _INBOX_BUILDERS.get(str(decision.get("action")))
+    builder = _REQUEST_BUILDERS.get(str(decision.get("action")))
     return builder(decision) if builder else None

@@ -1,7 +1,7 @@
 """Board server hosting + UI deploy probes — the pure half of two doctor rows.
 
 CONTRACT §54.2 (the board server is a resident launchd agent / systemd unit;
-the shell only connects) and §56.5 (the `ui` install step). ``act/doctor.py``
+the shell only connects) and §23 (the `ui` step of the install report). ``act/doctor.py``
 wraps these into ``CheckResult`` rows; this module holds the platform-neutral
 logic so it stays testable and keeps doctor.py under the file cap (防腐 #1).
 
@@ -23,7 +23,7 @@ from typing import Optional
 LABEL = "com.zelin.aiassistant.server"      # launchd label (macOS)
 UNIT = "zelin-server.service"               # systemd --user unit (Linux)
 FAILURE_ID = "board_server_down"            # §25 catalog id for every non-OK row
-UI_TCC_FAILURE_ID = "ui_build_tcc_blocked"  # §56.5 `ui=skipped_tcc`
+UI_TCC_FAILURE_ID = "ui_build_tcc_blocked"  # §23 install report `ui=skipped_tcc`
 
 PROBE_TIMEOUT = 2.0
 LOG_HINT = "tail -20 ~/Library/Logs/zelin-ai-assistant/server.launchd.log"

@@ -50,34 +50,28 @@ NO_LAUNCHD_MARKER = "--no-launchd"
 
 # §25 failure ids whose fix is a person's act: a TCC grant (macOS asks the
 # human per binary, no script can click it), a credential, a tool install.
-# The grants are §25's own `owner_action` class (the set the §56.3 deploy
-# verdict skips) — a strict subset of "human": a missing tool or credential is
-# still the person's to fix on a fresh machine, but a deploy that newly loses
-# one is a real regression, so those ids stay out of OWNER_ACTION_IDS.
+# The grants are §25's own `owner_action` class — a strict subset of "human":
+# a missing tool or credential is still the person's to fix on a fresh machine.
 HUMAN_FAILURE_IDS = failures.OWNER_ACTION_IDS | frozenset({
-    "claude_cli_missing", "claude_cli_outdated", "claude_auth_failed",
-    "interpreter_blind", "node_missing", "engine_dead",
+    "claude_cli_missing", "claude_bare_unsupported", "claude_auth_failed",
+    "node_missing", "engine_dead",
 })
 # Rows without a failure id (or WARN-only rows) that still belong to the human.
 HUMAN_ROW_NAMES = frozenset({
-    "anthropic key", "claude CLI", "daemon claude", "claude auth",
-    "obsidian vault", "screenpipe db", "node/npx", "gh CLI",
-    "launchd claude", "launchd volume access", "cron disk access", "cron write access",
+    "anthropic key", "claude CLI", "daemon claude", "claude auth", "claude bare supported",
+    "obsidian vault", "screenpipe db", "node/npx",
+    "launchd claude", "cron disk access", "cron write access",
 })
 
 # Rows that describe the resident daemons / schedulers install.sh wires in
 # step 5 (launchd) and step 6 (cron). Under --no-launchd they are red by
 # construction; agent rows carry the short label as their name, so the id set
 # does the matching there.
-UNWIRED_FAILURE_IDS = frozenset({
-    "agent_unloaded", "cron_missing", "dashboard_stale", "actd_stalled",
-    "board_server_down",
-})
+UNWIRED_FAILURE_IDS = frozenset({"cron_missing", "board_server_down"})
 UNWIRED_ROW_NAMES = frozenset({
-    "daemon claude", "launchd python", "launchd paths", "launchd fd limit",
-    "launchd claude", "launchd volume access", "launchd orphans",
-    "cron ingest chain", "cron digest", "cron disk access", "cron write access",
-    "dashboard", "actd heartbeat", "board server", "systemd units", "scheduled tasks",
+    "daemon claude", "launchd python", "launchd paths", "launchd claude", "launchd orphans",
+    "isolation footprint", "cron ingest chain", "cron disk access", "cron write access",
+    "board server",
 })
 
 BOARD_BUNDLE = version_lib.BOARD_APP_NAME   # §54 bundle folder (id com.zelin.ai-board); single source
@@ -216,9 +210,9 @@ def _fda_steps(home: Path, report: Optional[dict], home_dir: Optional[Path], whi
              "macOS grants it PER BINARY; launchd jobs never inherit your terminal's grant")
     return [
         _step("fda_python", "Full Disk Access for the daemon interpreter", python,
-              "%s — actd / radars / board server run as this binary. %s" % (where, scope)),
+              "%s — the board server runs as this binary. %s" % (where, scope)),
         _step("fda_claude", "Full Disk Access for the daemons' claude",
-              claude, "dispatched agents read your repos as this binary; the stable copy under "
+              claude, "the server-spawned recap runs as this binary; the stable copy under "
               "~/Library/Application Support/ZelinAIAssistant/bin/ keeps this grant valid across "
               "Claude Code updates (§55 第五幕). %s" % scope),
         _step("fda_cron", "Full Disk Access for cron", CRON_BINARY,
@@ -236,8 +230,8 @@ def _claude_step(rows_by_name: Dict[str, dict]) -> List[dict]:
     if _row_ok(rows_by_name, "claude CLI", default_ok=True):
         return []
     return [_step("install_claude", "Install Claude Code CLI",
-                  "curl -fsSL https://claude.ai/install.sh | bash   # then: claude login",
-                  "radars, triage and every dispatched agent run on headless claude")]
+                  "curl -fsSL https://claude.ai/install.sh | bash   # then paste an API key in Settings",
+                  "meeting recaps and note processing run on headless claude")]
 
 
 def _key_step(rows_by_name: Dict[str, dict], home: Path) -> List[dict]:
@@ -246,7 +240,7 @@ def _key_step(rows_by_name: Dict[str, dict], home: Path) -> List[dict]:
     secrets_dir = home / "config/secrets"
     key_file = home / "config/secrets/anthropic-api-key.txt"
     return [_step(
-        "api_key", "Anthropic API key file (headless claude under launchd/cron cannot read Keychain OAuth)",
+        "api_key", "Anthropic API key file (the isolated headless claude accepts an API key only, §78)",
         "mkdir -p %s && chmod 700 %s && printf '%%s\\n' 'sk-ant-…' > %s && chmod 600 %s"
         % (secrets_dir, secrets_dir, key_file, key_file),
         "~/.config/anthropic-key.txt is still honored as the legacy fallback")]

@@ -1,20 +1,19 @@
-"""`python3 -m <module>` 的退出码就是 `main()` 的返回值（CONTRACT §72.2 / §75.4 的
+"""`python3 -m <module>` 的退出码就是 `main()` 的返回值（CONTRACT §72.2 / §78 的
 两条 CLI 入口；§18 的 cron 链逐字调的是这一形）。
 
 两个模块的最后两行是 ``if __name__ == "__main__": raise SystemExit(main())``——cron
 与 owner 手敲的都是这一形（``python3 -m act.lib.screenpipe_retention``、
-``python3 -m act.lib.worktrees --json``），所以「一行 JSON 进 stdout + 退出码 0」这
-条约定必须有判例，而不是只测到 `main()` 那一层就停。
+``python3 -m act.lib.config --print-path headless_cwd``），所以「一行进 stdout + 退出码 0」
+这条约定必须有判例，而不是只测到 `main()` 那一层就停。（v1 的 §75.4
+``act.lib.worktrees --json`` 随 Act 管线退役。）
 
-零子进程、零网络：retention 那一形指向一个不存在的 db（``skipped: no_db``），
-worktrees 那一形把 `subprocess.run` 换成一个不回答的替身（`git` / `du` 的默认
-runner 于是「没有答案」，判决表因此为空）。`runpy` 在本进程里跑，不 spawn。
+零子进程、零网络：retention 那一形指向一个不存在的 db（``skipped: no_db``）；
+config 那一形的 cwd 落在测试沙箱的 AIASSISTANT_CLAUDE_CONFIG_DIR 下。`runpy` 在本进程里跑，不 spawn。
 """
 import contextlib
 import io
 import json
 import runpy
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,15 +23,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 
-from act.lib import screenpipe_retention, worktrees   # noqa: F401 - pinned module paths
-
-
-class _Proc:
-    """`subprocess.run` 的替身结果（rc 0、空输出 = 「问不出东西」）。"""
-
-    returncode = 0
-    stdout = ""
-    stderr = ""
+from act.lib import config, screenpipe_retention   # noqa: F401 - pinned module paths
 
 
 @contextlib.contextmanager
@@ -66,14 +57,16 @@ class ModuleScriptEntryTestCase(unittest.TestCase):
         self.assertEqual(len(out.splitlines()), 1)
         self.assertEqual(json.loads(out)["skipped"], "no_db")
 
-    def test_the_worktrees_module_prints_the_inventory_and_exits_zero(self):
-        with mock.patch.object(subprocess, "run", return_value=_Proc()):
-            code, out = _run_as_script("act.lib.worktrees", ["--json"])
+    def test_the_config_module_prints_the_isolation_cwd_and_exits_zero(self):
+        """§78：ingest/claude-env.sh 用 `python3 -m act.lib.config --print-path headless_cwd`
+        取 headless claude 的 cwd——那一形必须是一行绝对路径 + 退出码 0，且目录真的在。"""
+        code, out = _run_as_script("act.lib.config", ["--print-path", "headless_cwd"])
         self.assertEqual(code, 0)
-        doc = json.loads(out)
-        self.assertEqual(doc["worktrees"], 0)
-        self.assertIn("stale_days", doc)
-
+        self.assertEqual(len(out.splitlines()), 1)
+        path = Path(out.strip())
+        self.assertTrue(path.is_absolute())
+        self.assertTrue(path.is_dir())
+        self.assertEqual(path, config.claude_config_dir() / "cwd")
 
 if __name__ == "__main__":
     unittest.main()

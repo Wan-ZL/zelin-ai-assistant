@@ -1,8 +1,7 @@
 # CI: lint gates (shellcheck + ruff), Python 3.9 floor tests, compile check,
 # unit tests, the web gates and one macOS job (macOS runners are the scarce
 # resource — everything Apple-flavored lives in it: mac app build WITH
-# Sparkle, shared-contract Swift tests, the Swift↔Python crypto interop gate,
-# and the iOS simulator build) — on every pull request, on every merge-queue
+# Sparkle, shared-contract Swift tests and the iOS simulator build) — on every pull request, on every merge-queue
 # group, and on push to main or dev (dev = the integration train PRs are
 # merged into before it is promoted to main; every advance of it gets the
 # full suite so a red dev head is caught before promotion, not after).
@@ -83,8 +82,8 @@ jobs:
         with:
           # swift = everything the macOS `ci` job exercises that the ubuntu
           # legs do not: the Swift trees, the Xcode pin + selector, the
-          # version stamper the builds call, the Python half of the
-          # Swift↔Python interop gate, and this workflow itself.
+          # version stamper the builds call, and this workflow itself.
+          # (act/lib/e2e.py left with the Swift↔Python interop gate in v2.0.0.)
           filters: |
             swift:
               - 'mac/**'
@@ -97,7 +96,6 @@ jobs:
               - 'scripts/version_stamp.py'
               - 'scripts/build_version.sh'
               - 'act/lib/version.py'
-              - 'act/lib/e2e.py'
               - '.github/workflows/ci.yml'
             web:
               - 'web/**'
@@ -507,12 +505,10 @@ jobs:
         if: needs.changes.outputs.swift != 'false'
         run: bash scripts/ci/select_xcode.sh
 
-      - name: Install PyYAML + cryptography
+      - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
-        # cryptography is act/lib/e2e.py's lazy dependency, exercised by the
-        # Swift↔Python interop gate below.
         if: needs.changes.outputs.swift != 'false'
-        run: python3 -m pip install --user "pyyaml>=6,<7" cryptography || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7" cryptography
+        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
 
       - name: Compile Python sources
         if: needs.changes.outputs.swift != 'false'
@@ -599,14 +595,6 @@ jobs:
         # noise, inserts/removals, and the >6-change crossfade cap.
         if: needs.changes.outputs.swift != 'false'
         run: bash ios/tests/boarddiff/run.sh
-
-      - name: Swift↔Python E2E crypto interop
-        # The ONLY check that ios/Sources/E2E.swift byte-interops with
-        # act/lib/e2e.py (tests/test_e2e.py is Python↔Python only): the frozen
-        # ZSYN/ZQR1 wire contract between the pipeline and the phone, both
-        # directions. Plain swiftc + CryptoKit — no Xcode project needed.
-        if: needs.changes.outputs.swift != 'false'
-        run: bash ios/tests/interop/run.sh
 
       - name: Build iOS app (simulator, no signing)
         # ios/Sources was previously compiled by NO workflow — an iOS-only (or

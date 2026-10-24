@@ -2,11 +2,11 @@
 §15 add-only key ``models_fallback``; §49 route ``/api/settings/models``).
 
 - GET carries ``fallback`` / ``off`` / ``fallback_default`` / ``source.fallback``
-  add-only next to the two D22 knobs; the product default draws no warning, a
+  add-only next to the D22 pipeline knob; the product default draws no warning, a
   free-text alias draws the fallback-specific one.
 - PUT ``fallback`` accepts an id or ``off``; diff-write against the
   config.yaml/default effective value (equal → key deleted); malformed → 400
-  INVALID_FIELD naming the field; the two D22 knobs and every other override
+  INVALID_FIELD naming the field; the pipeline knob and every other override
   key are preserved.
 - server ↔ act mirror: constants and the coercion truth table agree, and the
   daemon's config layer reads what the web wrote.
@@ -66,8 +66,9 @@ class GetTestCase(_ServerCase):
         self.assertEqual(obj["fallback_default"], DEFAULT)
         self.assertEqual(obj["source"]["fallback"], "default")
         self.assertEqual(obj["warnings"], [])            # the product default is not a warning
-        # the D22 half is untouched
-        self.assertEqual((obj["dispatch"], obj["pipeline"], obj["follow"]), ("follow", "follow", "follow"))
+        # the D22 half: the pipeline knob alone (v2.0.0 retired dispatch + follow)
+        self.assertEqual(obj["pipeline"], "claude-opus-5")
+        self.assertNotIn("dispatch", obj)
 
     def test_layering_override_over_config_over_default(self):
         write_text(self.home / "config.yaml", "models:\n  fallback: claude-sonnet-5\n")
@@ -99,11 +100,11 @@ class GetTestCase(_ServerCase):
 
 class PutTestCase(_ServerCase):
     def test_put_off_writes_the_key_and_keeps_siblings(self):
-        write_text(self.overrides_path, json.dumps({"language": "en", "models_dispatch": "claude-opus-5"}))
+        write_text(self.overrides_path, json.dumps({"language": "en", "models_pipeline": "claude-sonnet-5"}))
         status, obj = put_json(self.port, "/api/settings/models", {"fallback": "off"})
         self.assertEqual(status, 200)
         self.assertEqual((obj["fallback"], obj["source"]["fallback"]), ("off", "override"))
-        self.assertEqual(self._overrides(), {"language": "en", "models_dispatch": "claude-opus-5",
+        self.assertEqual(self._overrides(), {"language": "en", "models_pipeline": "claude-sonnet-5",
                                              "models_fallback": "off"})
 
     def test_put_default_deletes_the_key_diff_write(self):
@@ -124,11 +125,11 @@ class PutTestCase(_ServerCase):
         self.assertEqual(obj["fallback"], "claude-sonnet-5")
         self.assertEqual(self._overrides(), {"models_fallback": "claude-sonnet-5"})
 
-    def test_put_all_three_knobs_at_once(self):
+    def test_put_both_knobs_at_once(self):
         _s, obj = put_json(self.port, "/api/settings/models",
-                           {"dispatch": "claude-opus-5", "pipeline": "follow", "fallback": "off"})
-        self.assertEqual((obj["dispatch"], obj["pipeline"], obj["fallback"]), ("claude-opus-5", "follow", "off"))
-        self.assertEqual(self._overrides(), {"models_dispatch": "claude-opus-5", "models_fallback": "off"})
+                           {"pipeline": "claude-sonnet-5", "fallback": "off"})
+        self.assertEqual((obj["pipeline"], obj["fallback"]), ("claude-sonnet-5", "off"))
+        self.assertEqual(self._overrides(), {"models_pipeline": "claude-sonnet-5", "models_fallback": "off"})
 
     def test_blank_reads_as_default(self):
         write_text(self.overrides_path, json.dumps({"models_fallback": "off"}))

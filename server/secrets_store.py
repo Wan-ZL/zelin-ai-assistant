@@ -1,41 +1,24 @@
-"""server/secrets_store.py — 凭证文件的 web 侧写者与探针（CONTRACT §19 / §49 / §68）。
-
-原生 Settings 的「凭证」行（CredentialRowView / KeyProbe）落到 server：
+"""server/secrets_store.py — 凭证文件的 web 侧写者与探针（CONTRACT §19 / §49 / §68.3）。
 
 - ``GET /api/secrets`` → 每个已知凭证的**状态**（present / verifiable / mtime + add-only
-  ``legacy``：secrets 文件缺席但 §19 第二 / 三层——config.yaml 显式路径或旧默认路径——的文件
-  非空，原生 CredentialRowView 的「使用旧路径」态；只判在不在，永不读内容出去），
-  **绝不回显值**——值是 write-only：写进去之后 web 只能看见「已保存」。
+  ``legacy``：secrets 文件缺席但 §19 第二层——``~/.config/anthropic-key.txt``——的文件非空；
+  只判在不在，永不读内容出去），**绝不回显值**——值是 write-only。
 - ``PUT /api/secrets/{name}`` body ``{"value": "<token>"}`` → 写
   ``<home>/config/secrets/<name>``（dir 0700 / file 0600；多行粘贴只留首个非空行，
-  与 act/lib/secrets.write_secret 同一契约）；空值 = 删文件（回落 config.yaml 显式
-  路径 / 旧默认路径的解析顺序）。**两条按名字的例外（§68.3 2026-09-05 追记）**：
-  ``volcano-speech-key.txt`` 不截首行——粘贴经 ``VolcanoSpeechCredential``（§36
-  v0.37.1；原生 CaptionCore.swift 的 Python 镜像 ``volcano_speech_credential``）
-  归一：旧版 App ID + Access Token 对 → 两行 ``appid:<id>\\ntoken:<tok>``（壳冻结的
-  decode() 唯一认得的旧版形状）、裸新版 key 原样、硬折行的 key 拼回；回执 add-only
-  ``legacy_pair``。``slack-user-token.txt`` 拒 ``xoxb-`` Bot token（能过 auth.test
-  却读不了 DM）→ 400 INVALID_FIELD + ``details.reason {zh,en}`` 原生原句，永不落盘。
-- ``POST /api/secrets/{name}/verify`` → 用文件里的值做一次最小活探针
-  （Anthropic ``GET /v1/models``、Slack ``auth.test``——成功顺手把 ``user_id``
-  写进 override ``owner_slack_user_id``（§15.3 v0.14 身份零手填）、Gmail IMAP
-  LOGIN）。探针经 ``prober`` 注入缝——测试绝不碰网络。火山（字幕）两把 key 没有
-  免费探针，``verifiable: false``，verify → 400。body 可带 add-only 的
-  ``{"value": "<token>"}`` = **粘贴即验证**（原生 SetupWizard 的 verify-on-paste：
-  先验后存、无效的 key 永不落盘）——只探这个值、**不写文件**；没有 value 照旧探已保存的。
-  **三分判决（§68.3 2026-09-05 追记，原生 KeyProbe.Outcome 的三支）**：``ok:true`` /
-  ``ok:false, network:false`` = 凭证本身的错（Anthropic 401 / 403、Slack token 形状的错误码
-  ``not_authed`` / ``invalid_auth`` / ``account_inactive`` / ``token_revoked`` / ``token_expired``、
-  IMAP LOGIN 拒绝）→ 回执多带 add-only ``reason {zh, en}`` = 原生 ``humanAuthReason`` 的
-  分类人话（Slack 重新生成 User OAuth Token；Gmail 三个 Workspace 管理员禁用的 telltale →
-  「此路不通」句、``application-specific password required`` → 「粘的是普通密码」句、其余
-  「应用密码或地址不对」；Anthropic 去 console 重新生成），raw ``detail`` 跟在括号里；
-  ``ok:false, network:true`` = **判决未知**（DNS / 超时 / 拒连之外，还包括 Anthropic 非
-  401 / 403 的回应——529 过载、5xx——和 Slack 非 token 形状的错误码——``ratelimited``、
-  ``internal_error``、非 JSON 回应；Gmail IMAP LOGIN 途中的传输层 ``OSError``；原生 ``.failed``），
-  不带 ``reason``，web 不把章翻成「验证失败」。**前提失败不是判决**：Gmail 还没填地址 → 探针不跑，
-  ``ok:false, network:false`` + add-only ``extra.precondition = "gmail_address"``、**不带** ``reason``
-  （原生 runVerify 在 KeyProbe 之前就 return 橙句）——web 据此说「还没填 Gmail 地址」、章不动。
+  与 act/lib/secrets.write_secret 同一契约）；空值 = 删文件。``volcano-speech-key.txt``
+  不截首行——粘贴经 ``volcano_speech_credential``（§36 v0.37.1）归一，回执 add-only
+  ``legacy_pair``（字幕凭证随 Live captions 在 PR-B 退役，届时连同这两行一起删）。
+- ``POST /api/secrets/{name}/verify`` → 用文件里的值做一次最小活探针（Anthropic
+  ``GET /v1/models``）。探针经 ``prober`` 注入缝——测试绝不碰网络。火山（字幕）两把 key 没有
+  免费探针，``verifiable: false``，verify → 400。body 可带 add-only 的 ``{"value": "<token>"}`` =
+  **粘贴即验证**（先验后存、无效的 key 永不落盘）——只探这个值、**不写文件**。
+  三分判决：``ok:true`` / ``ok:false, network:false`` = key 本身的错（401 / 403）→ 回执多带
+  add-only ``reason {zh, en}``；``ok:false, network:true`` = **判决未知**（DNS / 超时 / 529 /
+  5xx），不带 ``reason``。
+
+v2.0.0：Slack user token 与 Gmail 应用密码两行随雷达退役（xoxb- 门口拒绝、auth.test 自动填
+``owner_slack_user_id``、IMAP 探针一并删除；全文见 tag full）。Anthropic key 是唯一的模型凭证——
+§78 的隔离运行（``--bare``）只认它，不读 Claude Code 登录或钥匙串。
 
 文件名是 §19 的固定词表（server 不 import act.lib.secrets：它 import 期就把
 SECRETS_DIR 钉在进程 env 的 HOME 上，测试注入 home 会失真——判例
@@ -43,7 +26,6 @@ tests/test_server_secrets.py 钉住两侧名单逐字一致）。
 """
 from __future__ import annotations
 
-import imaplib
 import json
 import os
 import re
@@ -59,10 +41,6 @@ from server.errors import InvalidFieldError, NotFoundError, UnknownFieldError
 SECRETS: tuple = (
     {"name": "anthropic-api-key.txt", "probe": "anthropic",
      "label": {"zh": "Anthropic API key", "en": "Anthropic API key"}},
-    {"name": "slack-user-token.txt", "probe": "slack",
-     "label": {"zh": "Slack user token（xoxp-）", "en": "Slack user token (xoxp-)"}},
-    {"name": "gmail-app-password.txt", "probe": "gmail",
-     "label": {"zh": "Gmail 应用专用密码", "en": "Gmail app password"}},
     {"name": "volcano-speech-key.txt", "probe": None,
      "label": {"zh": "豆包语音凭证（字幕识别）", "en": "Doubao speech credential (captions)"}},
     {"name": "volcano-ark-key.txt", "probe": None,
@@ -70,58 +48,21 @@ SECRETS: tuple = (
 )
 _BY_NAME = {s["name"]: s for s in SECRETS}
 VOLCANO_SPEECH = "volcano-speech-key.txt"
-SLACK_TOKEN = "slack-user-token.txt"
-
-# 原生 SettingsSlack.saveToken 的门口拒绝句（xoxb- 永不落盘）——web SecretRow 先按同一句拒，
-# server 这层是给绕过 UI 的写者（curl / 别的客户端）留的同一道门。
-XOXB_REFUSAL: dict = {
-    "zh": "这是 Bot token（xoxb-）——雷达读你的 DM 需要 User OAuth Token（xoxp- 开头，在 OAuth & Permissions 页的 User 区）。",
-    "en": "That's a Bot token (xoxb-) — reading your DMs needs the User OAuth Token (starts with xoxp-, in the User section of OAuth & Permissions).",
-}
 
 # 原生 Settings.swift humanAuthReason（audit 6.1）的分类人话：什么错了 + 修它的那一个动作，raw 跟在括号里。
 # server-owned {zh, en}，web 按 UI 语言取键（防腐 #10，与 XOXB_REFUSAL 同一机制）。``{raw}`` = 探针的 detail 原文。
 AUTH_REASONS: dict = {
-    "slack": {
-        "zh": "token 无效——到 api.slack.com/apps → OAuth & Permissions 重新生成 User OAuth Token 再粘贴（{raw}）",
-        "en": "The token is invalid — regenerate the User OAuth Token at api.slack.com/apps → OAuth & Permissions and paste it again ({raw})",
-    },
-    # Workspace 管理员禁用了 IMAP / 强制网页登录（应用密码也进不去）——docs/GMAIL_SETUP.md 的 caveat 落在出错的当场
-    "gmail_workspace": {
-        "zh": "你的公司 Google Workspace 禁用了这条登录路（{raw}）——此路不通，不用再试；你读邮件的画面仍会经屏幕录制链进入系统。",
-        "en": "Your company's Google Workspace has disabled this login path ({raw}) — it's a dead end, don't keep trying; mail you read on screen still reaches the system via the recording pipeline.",
-    },
-    "gmail_normal_password": {
-        "zh": "粘贴的是账号普通密码——这里需要的是应用专用密码：点「打开 Google 应用专用密码页」生成一个再粘贴（{raw}）",
-        "en": "That's your normal account password — this needs an app password: click \"Open Google app passwords\" to generate one and paste it ({raw})",
-    },
-    "gmail": {
-        "zh": "应用密码或地址不对——重新生成一个应用专用密码再粘贴（{raw}）",
-        "en": "Wrong app password or address — generate a fresh app password and paste it ({raw})",
-    },
     "anthropic": {
         "zh": "key 无效——到 console.anthropic.com 重新生成，回来粘贴保存（{raw}）",
         "en": "The key is invalid — regenerate it at console.anthropic.com, then paste and save ({raw})",
     },
 }
-# Google 拒绝 LOGIN 时的原话（小写比对）：前三条 = Workspace 管理员禁用；第四条 = 粘的是账号普通密码
-GMAIL_WORKSPACE_TELLTALES: tuple = ("disabled for your domain", "web login required", "imap access is disabled")
-GMAIL_NORMAL_PASSWORD_TELLTALE = "application-specific password required"
-# auth.test 里 token 本身的错误码（原生 KeyProbe.slack / SettingsSlack.authTest 同一张表）；其余错误码 = 判决未知
-SLACK_TOKEN_ERRORS: frozenset = frozenset(
-    {"invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired"})
 # Anthropic 只有这两个状态码说明 key 本身有问题（原生 KeyProbe.anthropic）；其余非 2xx = 服务侧 / 判决未知
 ANTHROPIC_UNAUTHORIZED_STATUSES: frozenset = frozenset({401, 403})
-# 探针没跑的前提失败（``extra.precondition`` 的值）：Gmail 还没填地址——不是凭证的判决，verify() 不挂 reason
-PRECONDITION_GMAIL_ADDRESS = "gmail_address"
-
-# §19 后两层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
-# act/lib 各读者一致（act/llm.py / act/ask.py / act/radar_gmail.DEFAULT_APP_PASSWORD_PATH /
-# config.slack_token_path）、与原生 Pages.swift legacy* / Settings.swift legacyPath 同表。
+# §19 第二层的**位置**（不是内容）：(config.yaml 显式路径的键路径 | None, 旧默认路径)。与
+# act/lib/secrets.LEGACY_ANTHROPIC_KEY_PATH 同一字面。
 _LEGACY_PATHS: dict = {
     "anthropic-api-key.txt": (None, "~/.config/anthropic-key.txt"),
-    "slack-user-token.txt": (("sources", "slack_token_path"), "~/Desktop/Keys/slack-user-token.txt"),
-    "gmail-app-password.txt": (("sources", "gmail", "app_password_path"), "~/Desktop/Keys/gmail-app-password.txt"),
 }
 
 _DIR_MODE = 0o700
@@ -274,8 +215,7 @@ def snapshot(home: Path) -> dict:
 
 def write_value(home: Path, name: str, payload: dict) -> dict:
     """``PUT /api/secrets/{name}``：写 0600 文件（空值 = 删）；返回该条状态 + add-only
-    ``legacy_pair``（只有豆包语音凭证识别为旧版 App ID + Access Token 对时 True）。
-    Slack 行拒 ``xoxb-``（原生 saveToken 门口那句，永不落盘）。"""
+    ``legacy_pair``（只有豆包语音凭证识别为旧版 App ID + Access Token 对时 True）。"""
     entry = _lookup(name)
     unknown = set(payload) - {"value"}
     if unknown:
@@ -298,16 +238,11 @@ def write_value(home: Path, name: str, payload: dict) -> dict:
 
 def _stored_form(name: str, value: str) -> "tuple[str, bool]":
     """粘贴 → (落盘内容, 识别为旧版凭证对?)。默认只留首个非空行（§19 一行 token）；
-    豆包语音凭证走 ``volcano_speech_credential`` 归一（§36 v0.37.1，可能两行）；Slack 的 Bot token 拒。"""
+    豆包语音凭证走 ``volcano_speech_credential`` 归一（§36 v0.37.1，可能两行）。"""
     if name == VOLCANO_SPEECH:
         cred = volcano_speech_credential(value)
         return ("", False) if cred is None else (cred["file"], cred["legacy"])
-    token = _first_token_line(value)
-    if name == SLACK_TOKEN and token.startswith("xoxb-"):
-        raise InvalidFieldError(
-            "that's a Bot token (xoxb-) - reading your DMs needs the User OAuth Token (xoxp-)",
-            {"field": "value", "reason": dict(XOXB_REFUSAL)})
-    return token, False
+    return _first_token_line(value), False
 
 
 def _remove(path: Path) -> None:
@@ -379,71 +314,15 @@ def _api_error_suffix(doc: dict) -> str:
     return ": %s" % _clip(message) if isinstance(message, str) and message.strip() else ""
 
 
-def _probe_slack(token: str, _ctx: dict) -> "tuple[bool, str, dict]":
-    req = urllib.request.Request(
-        "https://slack.com/api/auth.test", data=b"", method="POST",
-        headers={"Authorization": "Bearer " + token,
-                 "Content-Type": "application/x-www-form-urlencoded"})
-    _status, doc = _http_json(req)
-    if doc.get("ok") is True:
-        extra = {k: doc.get(k) for k in ("user_id", "user", "team") if doc.get(k)}
-        return True, "auth.test ok", extra
-    if "ok" not in doc:
-        raise ProbeNetworkError("auth.test gave no verdict (non-JSON response)")   # 原生 .failed("no response")
-    code = str(doc.get("error") or "unknown_error")
-    detail = "auth.test failed: %s" % code
-    if code in SLACK_TOKEN_ERRORS:
-        return False, detail, {}
-    raise ProbeNetworkError(detail)   # ratelimited / internal_error / …：不是 token 的错，判决未知
-
-
-def _probe_gmail(token: str, ctx: dict) -> "tuple[bool, str, dict]":
-    address = str(ctx.get("address") or "").strip()
-    if not address:
-        # 前提没满足、探针没跑——不是凭证的判决（原生 runVerify(.gmail) 在 KeyProbe 之前就 return）：
-        # add-only ``extra.precondition`` 让 verify() 不挂 reason、web 说「还没填 Gmail 地址」而不是「应用密码不对」
-        return (False, "no Gmail address configured (Sources → Gmail address)",
-                {"precondition": PRECONDITION_GMAIL_ADDRESS})
-    try:
-        conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=_PROBE_TIMEOUT_S)
-    except (OSError, imaplib.IMAP4.error) as exc:
-        raise ProbeNetworkError(str(exc))
-    try:
-        conn.login(address, token)
-    except imaplib.IMAP4.error as exc:
-        return False, "IMAP LOGIN rejected: %s" % _clip(str(exc)), {}
-    except OSError as exc:
-        # LOGIN 途中的传输层错（socket.timeout / ssl.SSLError / ConnectionResetError）——原生 gmailProbeSync 的 PROBE_NET，判决未知
-        raise ProbeNetworkError(str(exc))
-    finally:
-        _quiet_logout(conn)
-    return True, "IMAP LOGIN ok as %s" % address, {}
-
-
-def _quiet_logout(conn) -> None:
-    try:
-        conn.logout()
-    except Exception:  # noqa: BLE001 - 已经拿到判决，收尾失败无关
-        pass
-
-
 def _clip(text: str) -> str:
     return re.sub(r"\s+", " ", text)[:200]
 
 
-_PROBES: dict = {"anthropic": _probe_anthropic, "slack": _probe_slack, "gmail": _probe_gmail}
+_PROBES: dict = {"anthropic": _probe_anthropic}
 
 
 def default_prober(kind: str, token: str, ctx: dict) -> "tuple[bool, str, dict]":
     return _PROBES[kind](token, ctx)
-
-
-def _gmail_context(home: Path) -> dict:
-    section = settings_catalog.lookup("gmail")
-    field = settings_catalog.field_index(section)["gmail_address"]
-    value, _src = settings_catalog.effective(
-        field, settings_catalog.read_overrides(home), settings_catalog.load_config_doc(home))
-    return {"address": value or ""}
 
 
 def _probe_target(home: Path, name: str, value: Optional[str] = None) -> "tuple[str, str]":
@@ -477,23 +356,9 @@ def verify_payload_value(payload: dict) -> Optional[str]:
     return value
 
 
-def _autofill_slack_owner(home: Path, kind: str, ok: bool, extra: dict) -> None:
-    """§15.3 v0.14：auth.test 成功 → owner_slack_user_id 自动写入（身份零手填）。"""
-    if ok and kind == "slack" and isinstance(extra.get("user_id"), str):
-        settings_catalog.set_flat_override(home, "owner_slack_user_id", extra["user_id"])
-
-
 def human_auth_reason(kind: str, raw: str) -> dict:
-    """原生 ``humanAuthReason``：探针种类 + raw detail → ``{zh, en}`` 分类人话，raw 跟在括号里。
-    Gmail 先比 Workspace 三个 telltale，再比「普通密码」那一个，都不中才是通用句。"""
-    key = kind
-    if kind == "gmail":
-        lower = raw.lower()
-        if any(t in lower for t in GMAIL_WORKSPACE_TELLTALES):
-            key = "gmail_workspace"
-        elif GMAIL_NORMAL_PASSWORD_TELLTALE in lower:
-            key = "gmail_normal_password"
-    template = AUTH_REASONS.get(key) or {"zh": "{raw}", "en": "{raw}"}
+    """原生 ``humanAuthReason``：探针种类 + raw detail → ``{zh, en}`` 分类人话，raw 跟在括号里。"""
+    template = AUTH_REASONS.get(kind) or {"zh": "{raw}", "en": "{raw}"}
     return {lang: sentence.replace("{raw}", raw) for lang, sentence in template.items()}
 
 
@@ -502,18 +367,13 @@ def verify(home: Path, name: str, prober: Optional[Prober] = None,
     """``POST /api/secrets/{name}/verify`` → ``{"ok": bool, "network": bool, "detail": str, "extra": {}}``
     三分判决：凭证本身的错 ``ok:false, network:false`` 再多带 add-only ``reason {zh, en}``
     （``human_auth_reason``）；网络 / 服务层失败（``ProbeNetworkError``）``ok:false, network:true``
-    = 判决未知，不带 ``reason``。探针没跑的前提失败（Gmail 没地址，``extra.precondition``）也不带
-    ``reason``——那不是凭证的判决。Slack 成功自动填 ``owner_slack_user_id``（只在探已保存的值时——
-    粘贴即验证还没落盘，不动 override）。"""
+    = 判决未知，不带 ``reason``。"""
     kind, token = _probe_target(home, name, value)
-    ctx = _gmail_context(home) if kind == "gmail" else {}
     try:
-        ok, detail, extra = (prober or default_prober)(kind, token, ctx)
+        ok, detail, extra = (prober or default_prober)(kind, token, {})
     except ProbeNetworkError as exc:
         return {"ok": False, "network": True, "detail": "network error: %s" % _clip(str(exc)),
                 "extra": {}}
-    if value is None:
-        _autofill_slack_owner(home, kind, ok, extra)
     return _with_reason({"ok": ok, "network": False, "detail": detail, "extra": extra}, kind)
 
 

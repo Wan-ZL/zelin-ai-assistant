@@ -24,12 +24,12 @@ from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - hermetic sandbox HOME
 
-from act.lib import card_summary
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # Server-owned wire vocabulary that is Chinese by contract and rendered per language by
 # the client (§64 verdict tokens → web VerdictChip labels): not prose, not a translation target.
-_WIRE_VOCAB = frozenset(card_summary.VERDICTS)
+# Inlined since act/lib/card_summary.py retired with the Act pipeline (v2.0.0); the demo dataset
+# itself is rewritten to recap fixtures in a later lite-2.0 slice.
+_WIRE_VOCAB = frozenset(("建议验收", "需继续做", "需要拍板"))
 DEMO_SEED_PATH = REPO_ROOT / "scripts" / "demo_seed.py"
 # CJK unified ideographs + fullwidth/CJK punctuation（「」，。？：）
 _CJK = re.compile(r"[　-〿㐀-䶿一-鿿＀-￯]")

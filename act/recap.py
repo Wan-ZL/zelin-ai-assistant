@@ -21,11 +21,10 @@ its own PID lock — no new daemon, no crontab change). One round:
      plus the §63.3 追记 short window on 已忽略 (marks.json `dismissed_at`) —
      save the cursor/buffer.
 
-Nothing here can send: the recap is not a card (no registry, no dispatch), the
-JSON has no recipient / channel field, and the only exit is the clipboard on
-the web 会议纪要 page. The optional Slack **draft** (§63.4; Settings toggle,
-default off) is a second, whitelisted call (act/lib/recap_slack_draft.py)
-that puts the text in the owner's own draft box — sending stays manual.
+Nothing here can send: the recap is not a card, the JSON has no recipient /
+channel field, and the only exit is the clipboard on the web 会议纪要 page.
+The Slack draft (§63.4) retired in v2.0.0 — the isolated claude (§78) has no
+Slack MCP server to place it with (full text in tag ``full``).
 
 §63.10 (issue #303): a recap is generated in one of **two shapes** — the
 5-line ``lines`` form above (the quick personal note) or the sendable
@@ -33,7 +32,7 @@ that puts the text in the owner's own draft box — sending stays manual.
 ``act/lib/recap_text.py``). The shape rides with the request (``--shape``),
 falls back to the record's previous shape, then to config
 ``recap.default_shape``; everything downstream of a recap having text (history,
-the notification, the Slack draft body, the 「较上次变化」 anchor for the next
+the notification, the 「较上次变化」 anchor for the next
 meeting) asks ``recap_store.has_text`` / :func:`copy_body`, so a sections recap
 is never silently treated as a recap that never landed.
 
@@ -54,13 +53,13 @@ tag on the same commitment — but the tag is decided **here**
 foreign claim is discarded and re-assigned, and the per-letter counter on the
 record (``tag_seq``) never goes back, so a tag is never reused inside one key.
 
-Other entry points (spawned detached by actd for the inbox special forms):
-``--generate <key> [--note …] [--partial] [--shape …] [--answers …]``, ``--slack-draft <key>
---channel-id <C…>`` and ``--revert <key> --to-version <n>`` (§63.9: a stored
-version's text becomes version + 1 — no model call, and this module stays the
-only writer of ``recaps/``, the server never touches a recap file). All runs
-serialize on a flock; the cron round gives up immediately when another run
-holds it.
+Other entry points — spawner = the board server (``POST /api/recaps/generate``
+/ ``POST /api/recaps/revert`` → ``server/recaps.py`` → ``act/lib/detached.py``):
+``--generate <key> [--note …] [--partial] [--shape …] [--answers …]`` and
+``--revert <key> --to-version <n>`` (§63.9: a stored version's text becomes
+version + 1 — no model call, and this module stays the only writer of
+``recaps/``, the server never touches a recap file). All runs serialize on a
+flock; the cron round gives up immediately when another run holds it.
 """
 from __future__ import annotations
 
@@ -76,7 +75,6 @@ from typing import Optional
 
 from act import llm
 from act.lib import (
-    analytics,
     config,
     failures,
     logcap,
@@ -84,7 +82,6 @@ from act.lib import (
 )
 from act.lib import recap_intent as intent
 from act.lib import recap_sessions as sessions
-from act.lib import recap_slack_draft as slack_draft
 from act.lib import recap_store as store
 from act.lib import recap_text as text
 
@@ -94,11 +91,10 @@ except ImportError:  # pragma: no cover - Windows: no flock, the cron chain is m
     fcntl = None  # type: ignore[assignment]
 
 LLM_TIMEOUT_S = 240
-DRAFT_TIMEOUT_S = 180
 MAX_GENERATION_FAILURES = 3
 HISTORY_CAP = 5
 LOCK_WAIT_S = 120.0
-NOTIFY_KIND = "recap_ready"
+NOTIFY_KIND = notify.KIND_RECAP_READY
 
 
 # --------------------------------------------------------------------------- #
@@ -152,9 +148,9 @@ class Lock:
 # generation (the sealed model call)
 # --------------------------------------------------------------------------- #
 def voice_profile_text() -> Optional[str]:
-    """docs/VOICE.md two-level fallback (mirrors executor.resolve_voice_profile
-    — entrypoints may not import each other): private state/voice-profile.md,
-    else the shipped config/voice-profile.default.md, else None."""
+    """docs/VOICE.md two-level fallback (server/folders.py's reveal mirrors it):
+    private state/voice-profile.md, else the shipped config/voice-profile.default.md,
+    else None."""
     for p in (config.STATE_DIR / "voice-profile.md",
               config.HOME / "config" / "voice-profile.default.md"):
         if p.exists():
@@ -445,73 +441,14 @@ def _row_label(rec: dict, tz: str) -> str:
 
 
 def _announce(rec: dict, st: dict) -> None:
-    """Notification (§28 relay; only when there is text to copy) + metadata-
-    only analytics — never the recap text, never the transcript."""
+    """Notification (§28 relay; only when there is text to copy) — never the
+    recap text, never the transcript."""
     if store.has_text(rec):
         label = _row_label(rec, st["options"].timezone)
         notify.notify(failures.pick("会议纪要已生成", "Meeting recap ready"),
                       failures.pick("%s —— 打开看板「会议纪要」复制" % label,
                                     "%s — open the board's Meeting recaps page to copy" % label),
                       kind=NOTIFY_KIND)
-    analytics.log_event("recap_generated", app=rec.get("app"), duration_min=rec.get("duration_min"),
-                        words=rec.get("transcript_words"), quality=rec.get("quality"),
-                        version=rec.get("version"), partial=rec.get("partial") or None,
-                        shape=rec.get("shape"))
-
-
-# --------------------------------------------------------------------------- #
-# Slack draft (§63.4) — only reachable when the toggle is on
-# --------------------------------------------------------------------------- #
-def _draft_language(st: dict, cfg) -> str:
-    lang = st["default_language"]
-    if lang == "auto":
-        lang = "en" if getattr(cfg, "language", "zh") == "en" else "zh"
-    return lang if lang in ("en", "zh") else "en"
-
-
-def _draft_body(rec: dict, st: dict, cfg) -> str:
-    """草稿正文 = 那一语言粘出去的那份（§63.10 两种形状同一条路）；那一版缺这门
-    语言就退到另一门——空草稿比一份英文草稿差得多。"""
-    lang = _draft_language(st, cfg)
-    body = copy_body(rec, lang) or copy_body(rec, "en" if lang == "zh" else "zh")
-    return body if body.strip() else ""
-
-
-def post_slack_draft(rec: dict, channel_id: str, st: dict, runner, cfg, now: float) -> dict:
-    """Whitelisted call → ``rec["slack_draft"]`` receipt. Disabled toggle or a
-    recap without text short-circuits without any model call.
-
-    §63.10：「有正文」= ``store.has_text`` **且**渲染出来的那份非空。两道判据同源
-    （两边都是 `recap_text.render_*`），第二道是兜底：一份正文渲染成空串的纪要
-    宁可诚实地 ``failed``，也不许把一个空正文送进模型、把一份空草稿放进人的草稿箱。"""
-    body = _draft_body(rec, st, cfg) if st["slack_draft_enabled"] and store.has_text(rec) else ""
-    if not st["slack_draft_enabled"]:
-        receipt = {"status": slack_draft.STATUS_DISABLED, "channel_link": None}
-    elif not body:
-        receipt = {"status": slack_draft.STATUS_FAILED, "channel_link": None}
-    else:
-        try:
-            raw = _call_model(slack_draft.build_prompt(channel_id, body), runner, cfg,
-                              slack_draft.ALLOWLIST_ARGV, DRAFT_TIMEOUT_S)
-            receipt = slack_draft.parse_result(raw)
-        except Exception as exc:  # noqa: BLE001 - a draft failure is a row badge, not a crash
-            _log("slack draft failed for %s: %s" % (rec["key"], exc))
-            receipt = {"status": slack_draft.STATUS_FAILED, "channel_link": None}
-    receipt["at"] = _iso(now)
-    rec["slack_draft"] = receipt
-    return receipt
-
-
-def _auto_draft(rec: dict, st: dict, runner, cfg, now: float) -> None:
-    """The CLOSED-time hook: configured target → draft; none → 未投草稿."""
-    if not st["slack_draft_enabled"] or not store.has_text(rec):
-        return
-    channel = slack_draft.resolve_target(st["slack_targets"], rec["app"])
-    if channel is None:
-        rec["slack_draft"] = {"status": slack_draft.STATUS_NO_TARGET, "channel_link": None,
-                              "at": _iso(now)}
-        return
-    post_slack_draft(rec, channel, st, runner, cfg, now)
 
 
 # --------------------------------------------------------------------------- #
@@ -580,7 +517,6 @@ def _generate_closed(session: sessions.Session, key: str, conn, st: dict, runner
         _apply_lines(rec, None, store.QUALITY_FAILED, None, False, now,
                      shape=record_shape(rec, st))
     state["failures"].pop(key, None)
-    _auto_draft(rec, st, runner, cfg, now)
     store.save_recap(rec)
     summary["generated"] += 1
     _bump_day(state)
@@ -704,7 +640,7 @@ def run_once(now: Optional[float] = None, conn=None, runner=None, cfg=None) -> d
 
 
 # --------------------------------------------------------------------------- #
-# inbox-spawned entry points
+# server-spawned entry points (POST /api/recaps/generate | revert)
 # --------------------------------------------------------------------------- #
 def _open_session_record(key: str) -> Optional[dict]:
     rows = store.open_rows(store.load_state() or {})
@@ -865,25 +801,8 @@ def revert(key: str, to_version, now: Optional[float] = None) -> Optional[dict]:
         return None
     _apply_history_entry(rec, entry, now)
     store.save_recap(rec)
-    # 元数据（宪法第 9 条：正文永不进 analytics）
-    analytics.log_event("recap_reverted", app=rec.get("app"), version=rec.get("version"),
-                        reverted_from=rec.get("reverted_from"), quality=rec.get("quality"))
     _log("revert %s: v%s restores v%s (%s)" % (key, rec["version"], version, rec["quality"]))
     return rec
-
-
-def slack_draft_for(key: str, channel_id: str, now: Optional[float] = None,
-                    runner=None, cfg=None) -> Optional[dict]:
-    """「投到 Slack 草稿」with an explicit conversation pick."""
-    cfg, st, now = _boot(cfg, now)
-    rec = store.load_recap(key)
-    if rec is None or not store.CHANNEL_ID_RE.match(str(channel_id or "")):
-        _log("slack draft: unknown key or bad channel id (%s)" % key)
-        return None
-    receipt = post_slack_draft(rec, channel_id, st, runner, cfg, now)
-    store.save_recap(rec)
-    _log("slack draft %s: %s" % (key, receipt["status"]))
-    return receipt
 
 
 # --------------------------------------------------------------------------- #
@@ -913,8 +832,6 @@ def _dispatch(args) -> int:
     if args.generate:
         return _ok(generate(args.generate, note=args.note, partial=args.partial,
                             shape=args.shape, answers=_cli_answers(args.answers)))
-    if args.slack_draft:
-        return _ok(slack_draft_for(args.slack_draft, args.channel_id))
     if args.revert:
         return _ok(revert(args.revert, args.to_version))
     summary = run_once()
@@ -932,12 +849,10 @@ def main(argv: Optional[list] = None) -> int:
                     help="output shape for --generate (default: the record's, then config)")
     ap.add_argument("--answers", default="",
                     help='§63.11 intent answers for --generate, compact JSON: \'["split1=drop"]\'')
-    ap.add_argument("--slack-draft", metavar="KEY", help="place the recap as a Slack draft")
-    ap.add_argument("--channel-id", default="", help="Slack conversation id for --slack-draft")
     ap.add_argument("--revert", metavar="KEY", help="restore a stored version (§63.9)")
     ap.add_argument("--to-version", type=int, default=0, help="stored version for --revert")
     args = ap.parse_args(argv)
-    wait = 0.0 if not (args.generate or args.slack_draft or args.revert) else LOCK_WAIT_S
+    wait = 0.0 if not (args.generate or args.revert) else LOCK_WAIT_S
     try:
         with Lock(wait) as ok:
             if not ok:

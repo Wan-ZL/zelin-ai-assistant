@@ -1,7 +1,7 @@
-"""server/background_jobs.py — server 后台线程的唯一生成缝 + 有界 join（CONTRACT §72.1 / §75.4 / §68.4）。
+"""server/background_jobs.py — server 后台线程的唯一生成缝 + 有界 join（CONTRACT §72.1 / §68.4 / §26）。
 
 三处请求路径用同一个形制把重活挪出 handler 线程：录制磁盘快照（§72.1 `server/screenpipe_disk.py`）、
-worktree 清点（§75.4 `server/worktree_inventory.py`）、手动 ingest / export（§68.4 `server/ingest_run.py`）。
+§26 周期更新检查（`server/about.py`；v1 的 §75.4 worktree 清点已退役）、手动 ingest / export（§68.4 `server/ingest_run.py`）。
 生产里它们是 daemon 线程，这没问题——进程退出不等它们。**判例里却是一个真的竞态**：每个 TestCase 拿
 `tempfile.TemporaryDirectory` 当 home，`shutil.rmtree` 走 `state/` 的同时后台线程还在往里写样本文件
 （train PR CI 2026-09-15 · ubuntu 3.9 真红过一次：``OSError: [Errno 39] Directory not empty: 'state'``），

@@ -1,6 +1,6 @@
-"""「重新生成 / 现在生成」回执的 Python 半边（CONTRACT §63.8，issue #297）：inbox ``recap_generate``
-→ actd ``_spawn_recap`` 先取 requested_at 再分离起 ``act.recap --generate``、记台账
-``state/recap_requests.json``（actd 单写者、TTL + cap 有界）→ ``recaps[]`` 行的 add-only
+"""「重新生成 / 现在生成」回执的 Python 半边（CONTRACT §63.8，issue #297）：``POST /api/recaps/generate``
+→ server/recaps.generate 先取 requested_at 再分离起 ``act.recap --generate``、记台账
+``state/recap_requests.json``（server 单写者、TTL + cap 有界）→ ``GET /api/recaps`` 行的 add-only
 ``generate_request``（running / done / noop / lost，纯磁盘真值函数：done ⇔ 文件的
 generated_at ≥ requested_at）。末尾一条走真 ``recap.generate``（fixture DB + 假 runner）
 钉住「子进程落笔即 done」的时序契约。绝不真 spawn、绝不真调模型。
@@ -16,11 +16,12 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests import recap_fixture as fx
 
-from act import actd, recap
-from act.lib import config, dashboard, detached, notify
+from act import recap
+from act.lib import config, detached, notify
 from act.lib import recap_requests as requests
 from act.lib import recap_sessions as rs
 from act.lib import recap_store as store
+from server import recaps as server_recaps
 
 KEY = "meeting:2026-08-31T1256-zoom"
 NOW = _dt.datetime(2026, 9, 14, 12, 0, 0, tzinfo=_dt.timezone.utc)
@@ -165,14 +166,14 @@ class StoreProjectionTestCase(SandboxCase):
         self.assertEqual((rows[KEY]["generate_request"]["state"], rows[KEY]["generate_request"]["note"]),
                          ("noop", "launch_failed"))
 
-    def test_corrupt_ledger_never_breaks_the_projection_or_the_dashboard(self):
+    def test_corrupt_ledger_never_breaks_the_projection_or_the_listing(self):
         store.save_recap(store.new_record(self._session(), KEY, rs.CLOSED))
         requests.REQUESTS_PATH.write_text("{not json", encoding="utf-8")
         rows = store.projection()
         self.assertEqual([r["key"] for r in rows], [KEY])
         self.assertIsNone(rows[0]["generate_request"])
-        dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=config.Config(), archived=[])
-        self.assertIsNone(dash["recaps"][0]["generate_request"])
+        snap = store.snapshot()                       # GET /api/recaps 的数据源
+        self.assertIsNone(snap["recaps"][0]["generate_request"])
 
     def test_recap_json_on_disk_stays_free_of_the_receipt(self):
         # 回执住台账、只在投影里合并——recap 文件（act/recap.py 独写）一个字都不多
@@ -182,22 +183,23 @@ class StoreProjectionTestCase(SandboxCase):
         self.assertNotIn("generate_request", store.load_recap(KEY))
 
 
-class ActdTestCase(SandboxCase):
+class ServerSpawnTestCase(SandboxCase):
+    """server/recaps.generate = v1 actd ``_spawn_recap`` 的接班人（§63.8 写者 = server）。"""
+
     def setUp(self):
         super().setUp()
-        config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        self.home = Path(self.tmp.name)               # state/ 已建（SandboxCase）
+        self.ledger = self.home / "state" / "recap_requests.json"
         self.spawned = []
-        mock.patch.object(detached, "spawn", lambda argv, log_name: self.spawned.append((argv, log_name))).start()
+        mock.patch.object(detached, "spawn",
+                          lambda argv, log_name, home=None: self.spawned.append((argv, log_name, home))).start()
 
-    def _drop(self, name, decision):
-        path = config.INBOX_DIR / name
-        path.write_text(json.dumps(dict(decision, ts="2026-09-14T00:00:00Z")), encoding="utf-8")
-        return path
+    def _ledger(self) -> dict:
+        return requests.load(self.ledger)
 
     def test_recap_generate_stamps_requested_at_before_launch_and_records_after(self):
         # 戳必须贴着**真实**此刻取：`record()` 不带 now → 按真实时钟剪 TTL_S 条，
-        # 写死的 2026-09-14T12:00:00Z 只在那天之后 24 小时内活着（这条判例
-        # 2026-09-15 就因此变红——测试不许有保质期）。
+        # 写死的时刻只在那天之后 24 小时内活着（测试不许有保质期）。
         STAMP = _iso(_dt.datetime.now(_dt.timezone.utc))
         events = []
         real_launch = detached.launch
@@ -206,41 +208,45 @@ class ActdTestCase(SandboxCase):
             events.append("stamp")
             return STAMP
 
-        def launch(argv, log_name, label, log=None):
-            events.append(("launch", requests.load()))   # 台账在起子进程那一刻还是空的（起完才记 running / noop）
-            return real_launch(argv, log_name, label, log)
+        def launch(argv, log_name, label, log=None, home=None):
+            events.append(("launch", self._ledger()))   # 台账在起子进程那一刻还是空的（起完才记 running / noop）
+            return real_launch(argv, log_name, label, log, home=home)
 
         with mock.patch.object(requests, "iso_now", iso_now), mock.patch.object(detached, "launch", launch):
-            rc = actd._DETACHED_ACTIONS["recap_generate"]({"action": "recap_generate", "meeting_key": KEY})
-        self.assertEqual(rc, "running")
-        self.assertEqual(self.spawned, [(["act.recap", "--generate", KEY], "recap.log")])
+            out = server_recaps.generate(self.home, {"key": KEY})
+        self.assertEqual((out["ok"], out["launch"], out["requested_at"]), (True, "running", STAMP))
+        self.assertEqual(self.spawned, [(["act.recap", "--generate", KEY], "recap.log", self.home)])
         # §63.8 done 判据的根：requested_at 在起子进程之前取——子进程自己的 generated_at 只会 ≥ 它
         self.assertEqual([e if isinstance(e, str) else e[0] for e in events], ["stamp", "launch"])
         self.assertEqual(events[1][1], {})
-        rec = requests.load()[KEY]
+        rec = self._ledger()[KEY]
         self.assertEqual((rec["launch"], rec["note"], rec["requested_at"]), ("running", None, STAMP))
+        self.assertEqual(out["generate_request"]["state"], "running")   # 回执即时可见（还没有文件）
 
     def test_launch_failure_is_recorded_as_noop(self):
         with mock.patch.object(detached, "spawn", side_effect=OSError("no fork")):
-            rc = actd._DETACHED_ACTIONS["recap_generate"]({"action": "recap_generate", "meeting_key": KEY, "partial": True})
-        self.assertEqual(rc, "noop")
-        self.assertEqual((requests.load()[KEY]["launch"], requests.load()[KEY]["note"]), ("noop", "launch_failed"))
+            out = server_recaps.generate(self.home, {"key": KEY, "partial": True})
+        self.assertEqual((out["ok"], out["launch"]), (False, "noop"))
+        self.assertEqual((self._ledger()[KEY]["launch"], self._ledger()[KEY]["note"]), ("noop", "launch_failed"))
+        self.assertEqual(out["generate_request"]["state"], "noop")
 
-    def test_malformed_and_slack_draft_leave_the_ledger_alone(self):
-        self.assertEqual(actd._DETACHED_ACTIONS["recap_generate"]({"action": "recap_generate", "meeting_key": "R-1"}), "noop")
-        rc = actd._DETACHED_ACTIONS["recap_slack_draft"]({"action": "recap_slack_draft", "meeting_key": KEY,
-                                                          "channel_id": "C0123456789"})
-        self.assertEqual(rc, "running")
-        self.assertEqual(requests.load(), {})
-        self.assertEqual(self.spawned[0][0][:2], ["act.recap", "--slack-draft"])
+    def test_malformed_requests_leave_the_ledger_alone_and_spawn_nothing(self):
+        from server.errors import InvalidFieldError, UnknownFieldError
+        with self.assertRaises(InvalidFieldError):
+            server_recaps.generate(self.home, {"key": "R-1"})
+        with self.assertRaises(UnknownFieldError):        # §63.4 Slack draft retired
+            server_recaps.generate(self.home, {"key": KEY, "channel_id": "C0123456789"})
+        self.assertEqual(self._ledger(), {})
+        self.assertEqual(self.spawned, [])
 
-    def test_inbox_pass_writes_the_ledger_and_the_early_dashboard_shows_running(self):
-        store.save_recap(store.new_record(self._session(), KEY, rs.CLOSED))
-        self._drop("recap-gen.json", {"action": "recap_generate", "meeting_key": KEY, "note": "deadline is Friday"})
-        self.assertEqual(actd.process_inbox(), 1)
+    def test_the_listing_shows_running_right_after_the_request(self):
+        rec = store.new_record(self._session(), KEY, rs.CLOSED)
+        rec["generated_at"] = _iso(_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1))
+        store.save_recap(rec)
+        server_recaps.generate(self.home, {"key": KEY, "note": "deadline is Friday"})
         self.assertEqual(self.spawned[0][0], ["act.recap", "--generate", KEY, "--note", "deadline is Friday"])
-        dash = dashboard.build_dashboard(reqs=[], agents=[], cfg=config.Config(), archived=[])
-        self.assertEqual(dash["recaps"][0]["generate_request"]["state"], "running")
+        snap = server_recaps.list_recaps(self.home)
+        self.assertEqual(snap["recaps"][0]["generate_request"]["state"], "running")
 
 
 class _Runner:

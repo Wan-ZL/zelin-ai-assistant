@@ -3,7 +3,8 @@
 2026-09-02 live: the thin shell spawned `python3 -m server` as its own child and
 the child died with "No module named server" — a GUI app is the TCC responsible
 process for what it spawns and the shell bundle holds no disk grant. The server
-is a launchd agent now (systemd unit on Linux); the shell only connects.
+is a launchd agent now (the one LaunchAgent of the §78 closed footprint); the
+shell only connects. (The Linux systemd unit retired in v2.0.0: lite is macOS-only.)
 
 Pinned here:
   - act/launchd/com.zelin.aiassistant.server.plist: KeepAlive resident,
@@ -12,7 +13,6 @@ Pinned here:
     tests/test_launchd_render.py — this file adds the server-specific shape);
   - install.sh render_launchd_plist rewrites the ZAI_PORT value from
     SERVER_PORT (real function run under bash); default 47820 when unset;
-  - act/systemd/zelin-server.service mirrors it (@ZAI_PORT@ token, Restart=always);
   - config.yaml `server.port` → Config.server_port, 1..65535, garbage → default;
     the default is the same number server/app.py binds (mirror pin);
   - server.app.main() on a busy port prints ONE line and exits 75 — no traceback
@@ -34,7 +34,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act.* import
 
-from act.lib import config, systemd
+from act.lib import config
 from server import app as server_app
 
 REPO = Path(__file__).resolve().parents[1]
@@ -118,46 +118,22 @@ class InstallShRendersThePortTestCase(unittest.TestCase):
         self.assertEqual(obj["EnvironmentVariables"]["ZAI_PORT"], str(config.DEFAULT_SERVER_PORT))
 
 
-class SystemdUnitMirrorTestCase(unittest.TestCase):
-    def test_server_unit_renders_port_and_is_resident(self):
-        rendered = systemd.render_all("/usr/bin/python3", "/home/f/repo", "/home/f/.local/bin",
-                                      zai_port="47999")
-        unit = rendered["zelin-server.service"]
-        self.assertIn("ExecStart=/usr/bin/python3 -m server", unit)
-        self.assertIn("Environment=ZAI_PORT=47999", unit)
-        self.assertIn("Restart=always", unit)
-        self.assertIn("WantedBy=default.target", unit)
-        self.assertNotIn("@ZAI_PORT@", unit)
-
-    def test_default_port_matches_the_python_side(self):
-        rendered = systemd.render_all("/usr/bin/python3", "/home/f/repo", "/home/f/.local/bin")
-        self.assertIn("Environment=ZAI_PORT=%d" % config.DEFAULT_SERVER_PORT,
-                      rendered["zelin-server.service"])
-
-    def test_cli_accepts_zai_port(self):
-        tmp = Path(tempfile.mkdtemp(prefix="systemd-cli-"))
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        with redirect_stdout(io.StringIO()):
-            rc = systemd.main(["--python", "/usr/bin/python3", "--repo-root", "/r",
-                               "--claude-bin-dir", "/c", "--out", str(tmp), "--zai-port", "48000"])
-        self.assertEqual(rc, 0)
-        self.assertIn("Environment=ZAI_PORT=48000",
-                      (tmp / "zelin-server.service").read_text(encoding="utf-8"))
-
-
 class ServerPortKnobTestCase(unittest.TestCase):
     def test_default_mirrors_server_app(self):
         self.assertEqual(config.DEFAULT_SERVER_PORT, server_app.DEFAULT_PORT)
-        self.assertEqual(int(systemd.DEFAULT_ZAI_PORT), server_app.DEFAULT_PORT)
         self.assertEqual(config.Config().server_port, server_app.DEFAULT_PORT)
 
     def test_server_port_parsed_and_clamped(self):
-        self.assertEqual(config._server_port_from({"server": {"port": 47999}}), 47999)
-        self.assertEqual(config._server_port_from({"server": {"port": "48000"}}), 48000)
+        def port_of(data):
+            cfg = config.Config()
+            config._apply_server_models(cfg, data)
+            return cfg.server_port
+        self.assertEqual(port_of({"server": {"port": 47999}}), 47999)
+        self.assertEqual(port_of({"server": {"port": "48000"}}), 48000)
         for bad in ({}, {"server": "hi"}, {"server": {"port": 0}}, {"server": {"port": 70000}},
                     {"server": {"port": True}}, {"server": {"port": "eighty"}},
                     {"server": {"port": None}}):
-            self.assertEqual(config._server_port_from(bad), config.DEFAULT_SERVER_PORT, bad)
+            self.assertEqual(port_of(bad), config.DEFAULT_SERVER_PORT, bad)
 
     def test_load_config_reads_the_block(self):
         tmp = Path(tempfile.mkdtemp(prefix="server-port-cfg-"))

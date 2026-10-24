@@ -1,63 +1,70 @@
-"""dashboard.json 变更监视 → SSE ``board.updated``（BUILD-CONTRACT §2.1）。
+"""state/recap/ 变更监视 → SSE ``recaps.updated``（CONTRACT §49 / §63）。
 
-300ms mtime 轮询（不用 FSEvents/inotify：stdlib 白名单 + actd 是原子写
-tmp+rename，mtime_ns+size 足够可靠）。事件 data 只带 {generated_at}——
-客户端收到后自行 refetch /api/board，server 不推全量。
+300ms mtime 轮询（不用 FSEvents：stdlib 白名单）。被看的是两个目录本身的 mtime：
+``state/recap/``（sessions.json / marks.json 的原子 rename 落在这里）与
+``state/recap/recaps/``（每份纪要文件的原子 rename 落在这里）——每个写者都是
+tmp + rename，目录项一变目录 mtime 就变，读不到半截文件。事件 data 只带
+``{"updated_at"}``，客户端收到后自行 refetch ``GET /api/recaps``，server 不推全量。
+
+v2.0.0：dashboard.json 与 ``board.updated`` 事件随 actd 退役（全文见 tag full）。
 """
 from __future__ import annotations
 
-import json
+import datetime as _dt
 import threading
 from pathlib import Path
 from typing import Optional
 
-from server import paths
 from server.sse import EventHub
 
 POLL_INTERVAL = 0.3
+EVENT = "recaps.updated"
 
 
-def _stat_key(p: Path) -> Optional[tuple]:
-    try:
-        st = p.stat()
-    except OSError:
-        return None
-    return (st.st_mtime_ns, st.st_size)
+def recap_dirs(home: Path) -> tuple:
+    # mirrors act/lib/recap_store.recap_dir / recaps_dir
+    base = home / "state" / "recap"
+    return (base, base / "recaps")
 
 
-def _generated_at(p: Path) -> Optional[str]:
-    """读投影里的 generated_at；写入是原子 rename，读到半截文件的概率≈0，
-    但解析失败也绝不抛穿（宪法第 11 条精神）——降级为 None。"""
-    try:
-        doc = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    v = doc.get("generated_at") if isinstance(doc, dict) else None
-    return v if isinstance(v, str) else None
+def _stat_key(dirs: tuple) -> Optional[tuple]:
+    out = []
+    for d in dirs:
+        try:
+            out.append(d.stat().st_mtime_ns)
+        except OSError:
+            out.append(None)
+    return tuple(out) if any(v is not None for v in out) else None
 
 
-class BoardWatcher(threading.Thread):
+def _now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class RecapWatcher(threading.Thread):
     """守护线程；stop() 幂等。baseline = 启动时的现状（启动不触发事件）。"""
 
     def __init__(self, home: Path, hub: EventHub,
                  interval: float = POLL_INTERVAL) -> None:
-        super().__init__(name="board-watcher", daemon=True)
-        self._path = paths.dashboard_path(home)
+        super().__init__(name="recap-watcher", daemon=True)
+        self._dirs = recap_dirs(home)
         self._hub = hub
         self._interval = interval
         self._stop = threading.Event()
-        self._last = _stat_key(self._path)
+        self._last = _stat_key(self._dirs)
 
     def run(self) -> None:
         while not self._stop.wait(self._interval):
-            cur = _stat_key(self._path)
+            cur = _stat_key(self._dirs)
             if cur == self._last:
                 continue
             self._last = cur
             if cur is None:
-                continue  # 文件消失：不广播（下次出现再推）
-            self._hub.publish("board.updated",
-                              {"generated_at": _generated_at(self._path)})
+                continue  # 目录消失：不广播（下次出现再推）
+            self._hub.publish(EVENT, {"updated_at": _now_iso()})
 
     def stop(self) -> None:
         self._stop.set()
+
+
+BoardWatcher = RecapWatcher   # v1 name (server/app.py and older tests)

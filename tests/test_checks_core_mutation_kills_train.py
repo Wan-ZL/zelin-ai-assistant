@@ -26,8 +26,10 @@ from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
 
 from act.lib.checks import core
 
-ACTD = core.ACTD_LABEL
-SYNCD = core.SYNCD_LABEL
+# v2.0.0: the server is the one agent we ship; the second label just stands for
+# "some other row after the clipped one" (an unrelated vendor's job).
+ACTD = core.SERVER_LABEL
+SYNCD = "com.example.unrelated"
 
 
 def _probes(listing: str):

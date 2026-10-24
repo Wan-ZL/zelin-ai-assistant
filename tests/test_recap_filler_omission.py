@@ -31,10 +31,6 @@ FULL_EN = ["Decided: the run moves to the new mix", "Split: Ann owns the eval",
 FULL_ZH = ["定了：训练改用新配比", "分工：评测归 Ann", "截止：未定", "较上次变化：无记录", "待定：无"]
 
 
-def _never_called(argv, **kwargs):
-    raise AssertionError("no model call may happen for a recap without a body: %r" % (argv,))
-
-
 class LinesTestCase(unittest.TestCase):
     def test_the_template_fillers_are_dropped_in_both_languages(self):
         self.assertEqual(rt.render(FULL_EN).split("\n"), FULL_EN[:2])
@@ -130,10 +126,6 @@ class SectionsTestCase(unittest.TestCase):
         self.assertIsNone(mangled["copy_en"])
         self.assertFalse(store.has_text(mangled))
         self.assertIsNone(store._version_handle(dict(mangled, version=1)))
-        st = dict(store.settings(config.Config(raw={"recap": {}})), slack_draft_enabled=True)
-        receipt = recap.post_slack_draft(mangled, "C0123456789", st, _never_called,
-                                         config.Config(), 0.0)
-        self.assertEqual(receipt["status"], "failed")      # 空草稿比一句诚实的 failed 差得多
 
 
 class EndToEndTestCase(unittest.TestCase):

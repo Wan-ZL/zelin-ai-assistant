@@ -6,24 +6,29 @@ repo 不依赖任何一个 session 的记性，依赖下面这套成文体系。
 
 ## 这是什么软件
 
-Zelin's AI Assistant：Mac 菜单栏 app（Swift，`mac/`）+ Python 守护管线（`act/`，
-stdlib+PyYAML）。信息源（Slack/Gmail/屏幕录制/会议音频/手动捕获）→ ingest 笔记 →
-radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`，唯一真源）→
-用户在看板上审批 → headless agent 执行 → 交付验收。数据流契约锁定在
+Zelin's AI Assistant **lite 2.0**：屏幕 + 音频录制（screenpipe，薄 macOS 壳 `shell/` 托管）→
+cron 的 ingest 链（`ingest/`：export → cleanup → process）把录到的内容整理进 Obsidian vault →
+会后自动出会议纪要（`act/recap.py` → `state/recap/`），由本机唯一的看板 server（`server/`，只听
+127.0.0.1）供 web UI（`web/`）与壳读写。Python 侧 = stdlib + PyYAML。每一次 headless `claude -p`
+都在 §78 的隔离常量下运行（自己的 `CLAUDE_CONFIG_DIR`、repo 树之外的 cwd、`ISOLATION_ARGV`），
+应用不读不写 owner 的 `~/.claude`（宪法第 13 条）。1.x 的 Act 管线（卡片注册表、actd、雷达、执行器、
+看板投影 / inbox、自我改进通道、遥测）在 v2.0.0 退役，全文在 git tag / branch `full`。数据流契约锁定在
 `docs/CONTRACT.md`——那是本 repo 的法典。
 
 ## 三份必读文件（按顺序）
 
-1. **`docs/CONTRACT.md` 的 §0 设计宪法** — 11 条不变原则。任何功能与宪法冲突：
-   要么改功能，要么在 PR 里显式修宪。没有第三条路。
+1. **`docs/CONTRACT.md` 的 §0 设计宪法** — 13 条不变原则（第 12 条是 v2.0.0 的 tombstone）。任何功能与
+   宪法冲突：要么改功能，要么在 PR 里显式修宪。没有第三条路。
 2. **`docs/CONTRACT.md` 相关章节** — 你要动的每个模块在这里都有一节法条
-   （§1-§45，编号永不复用）。改行为 = 同步修法，同一个 PR 里。
-3. **`CONTRIBUTING.md`** — 四道本地门（compileall / unittest / build / swift 逻辑测试），
-   PR 前自己跑过。
+   （§1-§79，编号永不复用；退役的节是一行 tombstone，全文见 tag `full`）。改行为 = 同步修法，同一个 PR 里。
+3. **`CONTRIBUTING.md`** — 四道本地门（`python3 -m compileall` / unittest 全套 / `shell/build.sh` /
+   `shell/tests/run.sh`），PR 前自己跑过。
 
-## 当前进行中的大轮次(2026-09 起)
+## 当前进行中的大轮次(2026-10 起)
 
-**`docs/design/vnext2-plan.md` 是本轮(数据层换 SQLite、退役原生 Mac app、QA 仪表全上、每日自我改进循环、素材库、自动草稿 PR 通道)的总设计与 owner 决策台账,含 owner 原话。任何 session 或 agent 在这些方向上动手前必读;与它冲突的做法必须先改它。**
+**lite 2.0：退役 Act 管线，只留录制 / ingest / 会议纪要（owner 2026-10-23 决定）。** 切片在 `dev` 上暂存、
+各自过完整 CI，最后一条 dev→main PR 切出 v2.0.0。1.x 的 `docs/design/vnext2-plan.md` 是历史台账（全文
+留在 tag `full`）；本轮的默认取舍与 owner 决定以 CONTRACT §0 修宪段、§78、§79 为准。
 
 ## 添加任何功能前，必答三问（答案写进 PR 描述）
 
@@ -34,7 +39,8 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
 
 ## 最容易踩的雷（历届 session 的血泪，按出现频率排）
 
-- **registry 单写者**：只有 actd 主循环能写卡片文件；任何旁路进程只读+回执（§44）。
+- **纪要单写者**：`state/recap/recaps/` 与 `sessions.json` 只由 `act.recap` 写；server 只派生它、只写
+  marks / 请求台账 / overrides（宪法第 1 条，§63.6）。
 - **字段 add-only**：跨组件 JSON/YAML 字段只增不改不删不重编号（CONTRACT header）。
 - **不可信文本进围栏**：外部内容进 LLM prompt 必过 `sanitize.fence_untrusted`。
 - **LLM 输出不可信**：类型逐字段消毒（数字 title、bool deadline 都真实出现过）；
@@ -45,8 +51,9 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
   `[Unreleased]` 下。要看你这个 checkout 的版本：`python3 scripts/version_stamp.py`。
 - **测试即判例**：1500+ 条测试钉着历史行为；改坏一条先想想它当初为什么在那。
   运行时依赖白名单 = stdlib + PyYAML，测试侧可加（hypothesis 在 CI 装）。
-- **屏幕不发起卡片**（§45）：screenpipe 屏幕 OCR 的内容只能佐证已有卡，
-  永不铸新卡——这是回声环的一刀，性质测试钉死，别在任何新功能里绕开它。
+- **录到的东西只变成笔记和纪要**（宪法第 4 条）：永不成任务、永不自动外发；唯一出机的是模型调用。
+- **不碰 owner 的 `~/.claude`**（宪法第 13 条，§78）：headless claude 只经 `act/llm.py` /
+  `ingest/claude-env.sh` 的隔离常量运行；`tests/test_isolation_footprint.py` 的 grep 门会拦。
 
 ## 语言与风格
 

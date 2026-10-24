@@ -1,45 +1,44 @@
-"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.9 / §63.10).
+"""server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63 / §63.8 / §63.9 / §63.10 / §63.11).
 
-Three small things, all stdlib (config.yaml is read through
-server.settings.config_yaml_doc, which degrades to {} without PyYAML):
+v2.0.0: the board server owns the whole page (actd and dashboard.json retired —
+full text in tag ``full``). Five things:
 
-1. **Recap settings** ``GET/PUT /api/settings/recap`` — the three knobs the
-   pipeline reads (act/lib/config.py): ``enabled`` (default true),
-   ``default_language`` (auto | zh | en), ``slack_draft_enabled`` (**default
-   false**: a CLOSED recap is placed as a Slack *draft*, the send button stays
-   the owner's). Effective value = settings_overrides.json flat key
-   (``recap_enabled`` / ``recap_default_language`` / ``recap_slack_draft_enabled``)
-   → config.yaml ``recap:`` block → default; PUT diff-writes the flat keys with
-   the §15 semantics server/settings.py already implements for the model knobs.
-   §63.10 adds a fourth, **read-only** value on the same GET: ``default_shape``
-   (``lines`` | ``sections``, config.yaml only — the pipeline has no override
-   flat key for it), which the 会议纪要 panel seeds its shape picker from.
+1. **The listing** ``GET /api/recaps`` → ``{"recaps": [...], "recap_counts": {...}}``
+   — ``act/lib/recap_store.snapshot`` over ``<home>/state`` (the §63.5 two-budget
+   projection + true per-lane totals, the §63.8 ``generate_request`` receipt per
+   row, the §63.11 ``questions``; history text stripped). Read-only.
 
-2. **Local marks** ``POST /api/recaps/mark`` — 「复制」/「标记已发送」/「忽略」
-   write ``state/recap/marks.json``
-   ``{key: {copied_at, sent_at, dismissed_at}}``. This file is server-owned
-   (act/recap.py never writes it; act/lib/recap_store.py only reads it).
-   §63.5 追记（2026-09-15，issue #301）retires the old clause «**no control
-   flow reads a mark** — it is a badge, not a state transition»: ``sent_at``
-   (= 已归档, derived — un-marking restores) and ``dismissed_at`` now decide
-   exactly two things, both in ``recap_store``, both read-only there — which
-   projection budget a row spends (活跃 / 已归档 / 已忽略) and when a dismissed
-   recap is pruned (`recap.dismissed_retention_days`). A mark still never
-   enters the registry and never triggers a send / dispatch / card
-   transition; this endpoint is still the only writer of the file.
+2. **Generate / regenerate** ``POST /api/recaps/generate``
+   ``{key, note?, partial?, shape?, answers?}`` (「重新生成」/「现在生成」/
+   「重新生成成可发送长版」/「按我的答案再出一版」). Field rules are the v1
+   inbox_writer gate verbatim (note non-blank and ≤ 500 chars, ``partial`` only ``true``,
+   ``shape`` ∈ lines | sections, ``answers`` = 1..12 distinct ``id=value`` strings);
+   ``recap_store.request_argv`` then applies the daemon-side vocabulary
+   (``recap_intent.answers_ok``) — a malformed request is a 400 and spawns
+   nothing. The server takes ``requested_at`` **before** spawning, launches
+   ``python -m act.recap --generate …`` detached (``act/lib/detached.launch``, the
+   child serializes on the recap flock), and records the attempt in the §63.8
+   ledger ``state/recap_requests.json`` (``recap_requests.record``; this module
+   is its single writer).
 
-3. **Stored versions** ``GET /api/recaps/history?key=…`` (§63.9, issue #300) —
-   the earlier text, which the board projection deliberately does not carry
-   (``recaps[]`` keeps only the §63.9 scalar handles ``history_versions``, so a
-   10-second board poll never hauls 60 × 5 × 2 recap bodies). **Read-only**:
-   the revert the panel offers goes inbox ``recap_revert`` → actd →
-   ``python -m act.recap --revert``, because ``act/recap.py`` is the only
-   writer of ``state/recap/recaps/`` (§63.6) and this process must never write
-   a recap file.
+3. **Revert** ``POST /api/recaps/revert {key, version}`` (§63.9「回退到这一版」) →
+   ``python -m act.recap --revert KEY --to-version N`` detached. Whether that
+   version exists is the locked writer's call (``act/recap.revert``).
 
-server/ does not import act (§49): the key shape, the language vocabulary and
-the override key names are mirrored from act/lib/recap_store.py /
-act/lib/config.py and pinned by tests/test_server_paths_mirror.py.
+4. **Recap settings** ``GET/PUT /api/settings/recap`` — the two knobs the pipeline
+   reads (act/lib/config.py): ``enabled`` (default true) and ``default_language``
+   (auto | zh | en). Effective value = settings_overrides.json flat key
+   (``recap_enabled`` / ``recap_default_language``) → config.yaml ``recap:`` block
+   → default; PUT diff-writes the flat keys (§15). ``default_shape``
+   (``lines`` | ``sections``, config.yaml only) rides read-only on the same GET.
+   The §63.4 ``slack_draft_enabled`` knob retired (the isolated claude of §78 has
+   no Slack MCP server to place a draft with).
+
+5. **Local marks** ``POST /api/recaps/mark`` and **stored versions**
+   ``GET /api/recaps/history?key=…`` — unchanged: marks.json is server-owned
+   (act only reads it); history is read-only (``act/recap.py`` stays the only
+   writer of ``state/recap/recaps/``, §63.6 — this process never writes a recap
+   file, it only spawns the writer).
 """
 from __future__ import annotations
 
@@ -49,6 +48,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from act.lib import detached, recap_requests, recap_store   # server → act.lib（§58.3 规则 3）
 from server import settings
 from server.errors import InvalidFieldError, UnknownFieldError
 
@@ -61,13 +61,10 @@ LANGUAGES: tuple = ("auto", "zh", "en")
 SHAPES: tuple = ("lines", "sections")
 # wire key → settings_overrides.json flat key (config._OVERRIDE_FIELDS)
 OVERRIDE_KEYS = {"enabled": "recap_enabled",
-                 "default_language": "recap_default_language",
-                 "slack_draft_enabled": "recap_slack_draft_enabled"}
+                 "default_language": "recap_default_language"}
 # §63.10：`default_shape` 在 DEFAULTS 里但**不在** OVERRIDE_KEYS 里——它只住 config.yaml
-# 的 recap 块（act/lib/recap_store.settings 读的就是那里，没有 overrides 扁平键），
-# 所以它是**只读**的一格：GET 照层报给面板（面板拿它当形状选择器的初值），PUT 仍只认三把旋钮
-DEFAULTS = {"enabled": True, "default_language": "auto", "slack_draft_enabled": False,
-            "default_shape": SHAPES[0]}
+# 的 recap 块，所以它是**只读**的一格：GET 照层报给面板，PUT 仍只认两把旋钮
+DEFAULTS = {"enabled": True, "default_language": "auto", "default_shape": SHAPES[0]}
 # §63.5 追记（issue #301）：dismissed = 「忽略」（add-only 词表，永不改写已有值）
 MARKS: tuple = ("copied", "sent", "dismissed")
 # §63.9（issue #300）GET /api/recaps/history 的读门与上限
@@ -80,6 +77,17 @@ ENTRIES_CAP = 20
 
 _BOOL_TRUE = ("true", "yes", "on", "1")
 _BOOL_FALSE = ("false", "no", "off", "0")
+
+# ---- request gates (the v1 server/inbox_writer rules, verbatim) ------------- #
+NOTE_MAX = 500
+# §63.11 意图问答的一条答案（镜像 act/lib/recap_intent.ANSWER_RE）——这里只查**形状**，
+# id 与选项的闭表住 act 侧（``recap_intent.answers_ok``，经 ``recap_store.request_argv``）
+ANSWER_RE = re.compile(r"^[a-z]{1,8}\d{0,2}=[a-z_]{1,12}$")
+ANSWERS_MAX = 12          # 镜像 act/lib/recap_intent.MAX_ANSWERS
+VERSION_MAX = 99_999      # §63.9 回退目标的版本号理智闸
+GENERATE_FIELDS = ("key", "note", "partial", "shape", "answers")
+REVERT_FIELDS = ("key", "version")
+LOG_NAME = "recap.log"    # mirrors act/lib/recap_store.log_path (the detached runs append here)
 
 
 def marks_path(home: Path) -> Path:
@@ -137,7 +145,7 @@ def coerce_shape(value) -> str:
 
 
 _COERCE = {"enabled": coerce_bool, "default_language": coerce_language,
-           "slack_draft_enabled": coerce_bool, "default_shape": coerce_shape}
+           "default_shape": coerce_shape}
 
 
 def _coerce_or(field: str, value, default):
@@ -152,14 +160,10 @@ def _coerce_or(field: str, value, default):
 # --------------------------------------------------------------------------- #
 def _config_block(home: Path) -> dict:
     """config.yaml ``recap:`` block as {wire key: raw value} for the keys it
-    spells (slack_draft.enabled flattened); {} when absent / unreadable."""
+    spells; {} when absent / unreadable."""
     blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
-    out = {k: blk[k] for k in ("enabled", "default_language", "default_shape") if k in blk}
-    draft = blk.get("slack_draft")
-    if isinstance(draft, dict) and "enabled" in draft:
-        out["slack_draft_enabled"] = draft["enabled"]
-    return out
+    return {k: blk[k] for k in ("enabled", "default_language", "default_shape") if k in blk}
 
 
 def _base_values(home: Path) -> "tuple[dict, dict]":
@@ -177,7 +181,7 @@ def snapshot(home: Path) -> dict:
     """Wire shape (web/src/types.ts ``RecapSettings`` mirrors verbatim)::
 
         {"enabled": bool, "default_language": "auto|zh|en",
-         "slack_draft_enabled": bool, "default_shape": "lines|sections",
+         "default_shape": "lines|sections",
          "languages": [...],
          "source": {"enabled": "override|config|default", ...}}
 
@@ -210,7 +214,7 @@ def _reject_unknown(payload: dict, allowed) -> None:
 
 
 def _wanted(payload: dict) -> dict:
-    """The validated subset of the three knobs the PUT carries."""
+    """The validated subset of the two knobs the PUT carries."""
     _reject_unknown(payload, OVERRIDE_KEYS)
     if not payload:
         raise InvalidFieldError("nothing to save")
@@ -226,7 +230,7 @@ def _wanted(payload: dict) -> dict:
 
 
 def update(home: Path, payload: dict) -> dict:
-    """Validate ``{enabled?, default_language?, slack_draft_enabled?}`` and
+    """Validate ``{enabled?, default_language?}`` and
     diff-write the flat override keys (value == config/default → key deleted).
     Unknown keys → 400 UNKNOWN_FIELD; a bad value → 400 INVALID_FIELD."""
     wanted = _wanted(payload)
@@ -383,3 +387,117 @@ def mark(home: Path, payload: dict) -> dict:
     settings.atomic_write_json(marks_path(home), marks)
     return {"ok": True, "key": key, "copied_at": entry.get("copied_at"),
             "sent_at": entry.get("sent_at"), "dismissed_at": entry.get("dismissed_at")}
+
+
+# --------------------------------------------------------------------------- #
+# listing: GET /api/recaps
+# --------------------------------------------------------------------------- #
+def list_recaps(home: Path, query: Optional[dict] = None) -> dict:
+    """``GET /api/recaps`` → ``{"recaps": [...], "recap_counts": {active, archived, dismissed}}``.
+    The query is ignored (the projection has its own budgets)."""
+    del query
+    return recap_store.snapshot(home / "state")
+
+
+# --------------------------------------------------------------------------- #
+# generate / revert: POST /api/recaps/generate | revert
+# --------------------------------------------------------------------------- #
+def _bad_answers(answers) -> bool:
+    """形状闸：1..ANSWERS_MAX 条 ``id=value`` 字符串、id 不重复。"""
+    if not (isinstance(answers, list) and 1 <= len(answers) <= ANSWERS_MAX):
+        return True
+    if not all(isinstance(a, str) and ANSWER_RE.match(a) for a in answers):
+        return True
+    ids = [a.split("=", 1)[0] for a in answers]
+    return len(set(ids)) != len(ids)
+
+
+def _check_note(note) -> str:
+    if not isinstance(note, str):
+        raise InvalidFieldError("note must be a string", {"field": "note"})
+    if not note.strip():
+        raise InvalidFieldError("note must not be empty", {"field": "note"})
+    if len(note) > NOTE_MAX:
+        raise InvalidFieldError("note allows at most %d chars" % NOTE_MAX, {"field": "note"})
+    return note
+
+
+def _check_partial(partial) -> bool:
+    if partial is not True:
+        raise InvalidFieldError("partial is only true", {"field": "partial"})
+    return True
+
+
+def _check_shape(shape) -> str:
+    if shape not in SHAPES:
+        raise InvalidFieldError("shape must be %s" % " or ".join(SHAPES), {"field": "shape"})
+    return shape
+
+
+def _check_answers(answers) -> list:
+    if _bad_answers(answers):
+        raise InvalidFieldError("answers must be 1..%d distinct id=value strings" % ANSWERS_MAX,
+                                {"field": "answers"})
+    return list(answers)
+
+
+# optional generate fields → their gate (order = the 400 a malformed body names first)
+_GENERATE_CHECKS = (("note", _check_note), ("partial", _check_partial),
+                    ("shape", _check_shape), ("answers", _check_answers))
+
+
+def _generate_decision(payload: dict) -> dict:
+    """The validated ``recap_generate`` request (400 on the first bad field)."""
+    _reject_unknown(payload, GENERATE_FIELDS)
+    decision = {"action": "recap_generate", "meeting_key": _require_key(payload)}
+    for field, check in _GENERATE_CHECKS:
+        if field in payload:
+            decision[field] = check(payload[field])
+    return decision
+
+
+def _revert_decision(payload: dict) -> dict:
+    _reject_unknown(payload, REVERT_FIELDS)
+    version = payload.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) \
+            or not (1 <= version <= VERSION_MAX):
+        raise InvalidFieldError("version must be an integer 1..%d" % VERSION_MAX,
+                                {"field": "version"})
+    return {"action": "recap_revert", "meeting_key": _require_key(payload), "version": version}
+
+
+def _argv(decision: dict) -> list:
+    """``recap_store.request_argv`` (the act-side vocabulary); None = 400, nothing spawned."""
+    tail = recap_store.request_argv(decision)
+    if tail is None:
+        raise InvalidFieldError("malformed recap request", {"field": "answers"})
+    return ["act.recap"] + tail
+
+
+def generate(home: Path, payload: dict, launcher=None) -> dict:
+    """``POST /api/recaps/generate`` → ``{"ok", "key", "launch", "requested_at",
+    "generate_request"}``. ``launch`` = ``running`` (spawned) | ``noop`` (the spawn
+    failed — the receipt says so, the row shows ``launch_failed``). ``launcher``
+    = ``detached.launch``-shaped seam (tests never spawn)."""
+    decision = _generate_decision(payload)
+    argv = _argv(decision)
+    key = decision["meeting_key"]
+    requested_at = recap_requests.iso_now()
+    launch = (launcher or detached.launch)(argv, LOG_NAME, "recap generate %s" % key, home=home)
+    ledger = home / "state" / "recap_requests.json"
+    recap_requests.record(key, launch, requested_at, path=ledger)
+    rec = _read_doc(recap_file_path(home, key))[0] or {}
+    return {"ok": launch == recap_requests.RUNNING, "key": key, "launch": launch,
+            "requested_at": requested_at,
+            "generate_request": recap_requests.projection(key, rec.get("generated_at"),
+                                                          recap_requests.load(ledger))}
+
+
+def revert(home: Path, payload: dict, launcher=None) -> dict:
+    """``POST /api/recaps/revert {key, version}`` → ``{"ok", "key", "version", "launch"}``."""
+    decision = _revert_decision(payload)
+    argv = _argv(decision)
+    key = decision["meeting_key"]
+    launch = (launcher or detached.launch)(argv, LOG_NAME, "recap revert %s" % key, home=home)
+    return {"ok": launch == detached.RUNNING, "key": key, "version": decision["version"],
+            "launch": launch}

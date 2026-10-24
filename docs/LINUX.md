@@ -141,7 +141,6 @@ exercised on Linux here — please test and PR fixes:
   (this class of bug bit macOS twice — see the PATH comments in the units).
 - The **board** in a real browser (the API layer + token/Origin defense are
   unit-tested; the end-to-end click-through is not).
-- `xdg-open` behavior for `open_path()`.
 
 ## What is CI-validated (no Linux machine needed)
 

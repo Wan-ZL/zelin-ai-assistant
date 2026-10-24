@@ -1,24 +1,25 @@
-"""Configuration + canonical runtime paths for Zelin's AI Assistant.
+"""Configuration + canonical runtime paths for Zelin's AI Assistant (lite).
 
 契约：CONTRACT §15（`state/settings_overrides.json` 最后合并、只碰点名的键）+
-§16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
-§53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮 +
-D53 的第三把 `models.fallback`）+ §63（recap 旋钮）+ §64（card_summary）+
-§70（daily_loop 块）+ §65（`self_improve.enabled`：自动改进本软件的通道总开关；
-§65.5 的 `self_improve.owner_logins` 是 overrides 能碰的第二键）+
-§72（录制数据保留期：`recording.retention_days` 的 DB 天数与 §72.4
-`recording.media_retention_minutes` 的媒体分钟数，后者经 `--print-value` 给 cron 消费）。
+§19（凭证路径）+ §54（server.port）+ §59（模型旋钮 `models.pipeline` 与 D53 的
+`models.fallback`）+ §63（recap 旋钮）+ §72（录制数据保留期：`recording.retention_days`
+的 DB 天数与 §72.4 `recording.media_retention_minutes` 的媒体分钟数，后者经
+`--print-value` 给 cron 消费）+ §78（headless claude 的隔离常量 CLAUDE_CONFIG_DIR /
+HEADLESS_CWD）+ §79（`updates.auto_install`）。
 
-Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
-(source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
-(``R-*.yaml``) are gitignored — they contain real extracted work data.
+v2.0.0 起 Act 管线退役（tag `full` 留全文）：approval / execution（claude_bin pin 除外）/
+registry / digest / daily_loop / self_improve / slack / gmail / telemetry / feedback /
+features 这些字段与它们的 override handler 一并删除；settings_overrides.json 里残留的
+旧键按「未知键」静默忽略（§15 add-only 的读者一侧）。
 
-All paths are derived from the ``AIASSISTANT_HOME`` env var, defaulting to
-``~/Projects/zelin-ai-assistant``. Constants are exposed as ``pathlib.Path`` objects so
-every component (executor, actd, radar, dashboard) resolves to the same files.
+Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). All paths are
+derived from the ``AIASSISTANT_HOME`` env var, defaulting to
+``~/Projects/zelin-ai-assistant``. Constants are ``pathlib.Path`` objects so
+every component resolves to the same files.
 
-Shell consumers (the ingest scripts) resolve vault paths through the same
-layer via ``python3 -m act.lib.config --print-path obsidian_unprocessed``.
+Shell consumers (the ingest scripts) resolve paths and scalar settings through
+the same layer: ``python3 -m act.lib.config --print-path obsidian_unprocessed``,
+``--print-path headless_cwd``, ``--print-value claude_bin``.
 """
 from __future__ import annotations
 
@@ -45,41 +46,42 @@ def _home() -> Path:
 
 HOME: Path = _home()
 STATE_DIR: Path = HOME / "state"
-REGISTRY_DIR: Path = HOME / "act" / "registry"
-INBOX_DIR: Path = STATE_DIR / "inbox"
 NOTIFY_QUEUE_DIR: Path = STATE_DIR / "notify_queue"  # §28 app notification relay
-FOLD_RECEIPTS_DIR: Path = STATE_DIR / "fold_receipts"  # §44.6 静默并入看板回执
-DASHBOARD_PATH: Path = STATE_DIR / "dashboard.json"
 LOG_DIR: Path = STATE_DIR / "logs"
-
-# Auto-memory MEMORY.md injected into every dispatched prompt — Claude Code
-# keys its per-project memory dir on the dash-encoded absolute project path.
-MEMORY_PATH: Path = (
-    Path.home() / ".claude" / "projects"
-    / str(Path.home() / "Projects").replace("/", "-")
-    / "memory" / "MEMORY.md"
-)
 
 # Config files (config.yaml is gitignored; config.example.yaml is the fallback).
 CONFIG_PATH: Path = HOME / "config.yaml"
 CONFIG_EXAMPLE_PATH: Path = HOME / "config.example.yaml"
 
-# Mac-app settings overrides (§15) — app writes ONLY this file; load_config()
-# merges it LAST so it has the highest priority.
+# Settings overrides (§15) — the web Settings page writes ONLY this file;
+# load_config() merges it LAST so it has the highest priority.
 SETTINGS_OVERRIDES_PATH: Path = STATE_DIR / "settings_overrides.json"
 
 # Built-in Obsidian vault root fallback — used to derive the pipeline dirs
 # when sources.obsidian_raw is not configured (v0.10.3 契约二).
 DEFAULT_OBSIDIAN_VAULT: str = "~/Documents/Obsidian Vault"
 
+# Per-user application support directory (never TCC-gated, outside the repo).
+APP_SUPPORT_DIR: Path = Path.home() / "Library" / "Application Support" / "ZelinAIAssistant"
+
+# §78 headless claude isolation. Every `claude -p` this app spawns runs with
+# CLAUDE_CONFIG_DIR pointed here (never the owner's Claude Code home) and with its cwd
+# in HEADLESS_CWD — an empty directory outside the repo tree, so no CLAUDE.md,
+# repo-local skills or project settings are on the ancestor chain. ingest/claude-env.sh
+# carries the same two literals (equality pinned by tests/test_isolation_footprint.py).
+# `AIASSISTANT_CLAUDE_CONFIG_DIR` relocates both (the test sandbox does; same
+# pattern as AIASSISTANT_STABLE_CLAUDE below).
+CLAUDE_CONFIG_DIR: Path = APP_SUPPORT_DIR / "claude-config"
+HEADLESS_CWD: Path = CLAUDE_CONFIG_DIR / "cwd"
+
 # Sensitive-app capture exclusion (P1-9) — applied at BOTH ends of the screen
-# pipeline: the mac app passes each entry to the engine as --ignored-windows
+# pipeline: the shell passes each entry to the engine as --ignored-windows
 # (screenpipe skips matching windows BEFORE anything is stored), and
 # ingest/screenpipe-export.sh filters already-stored frames with the same list
 # (see recording_exclusion_sql). Bare terms match case-insensitive substring
 # against app name OR window title; the engine's `App::Title` scoping syntax is
 # honoured too. Keep in sync with ScreenpipeRecipe.defaultIgnoredApps in
-# mac/Sources/Recording.swift (drift-guarded by tests/test_capture_exclusion.py).
+# shell/Sources/Recording.swift (drift-guarded by tests/test_capture_exclusion.py).
 DEFAULT_IGNORED_APPS: list = [
     "1Password",
     "Bitwarden",
@@ -91,125 +93,72 @@ DEFAULT_IGNORED_APPS: list = [
 ]
 
 # §72.4 原始媒体（帧 / 音频片段）的保留期，分钟：cron 链第二步
-# ingest/screenpipe-cleanup.sh 的 `find -mmin +N`。出厂 60 = 现状一字不变；
-# 下限 5 分钟（链每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧）、
-# 上限 1 年（再长等于没有保留期）。区间外 = 坏值（yaml 回落默认、override
-# 整条跳过）——绝不悄悄夹到边界上：文件里写着的数必须就是 cron 用的数。
+# ingest/screenpipe-cleanup.sh 的 `find -mmin +N`。出厂 60；下限 5 分钟（链每 30 分钟
+# 一轮，比这更短会削到同一轮里正在导出的那批帧）、上限 1 年。区间外 = 坏值（yaml 回落
+# 默认、override 整条跳过）——绝不悄悄夹到边界上：文件里写着的数必须就是 cron 用的数。
 DEFAULT_MEDIA_RETENTION_MINUTES: int = 60
 MIN_MEDIA_RETENTION_MINUTES: int = 5
 MAX_MEDIA_RETENTION_MINUTES: int = 365 * 24 * 60
 
-# Telemetry defaults (docs/TELEMETRY.md) — anonymous usage analytics upload is
-# ON by default (like VS Code) and points at the maintainer's Supabase project.
-# The publishable key is DESIGNED to be public (RLS allows INSERT only — it can
-# never read anyone's data). A key file (CONTRACT §19 / telemetry.key_path)
-# still wins when present. Opt out: Settings toggle or `telemetry.enabled:
-# false`; setting `supabase_url: ""` disables uploads entirely (forks!).
-DEFAULT_TELEMETRY_SUPABASE_URL: str = "https://vlxshwmdjpaxmcwbhutb.supabase.co"
-DEFAULT_TELEMETRY_PUBLISHABLE_KEY: str = (
-    "sb_publishable_bNWOKJTAH52AfwTao-nHUQ_jdsTUpYi"
-)
-TELEMETRY_LEVELS: tuple = ("basic", "detailed")
-# §15 default output format for drafted deliverables. "markdown" = status quo
-# (no prompt change); "html" makes the executor author deliverables as HTML.
-OUTPUT_FORMATS: tuple = ("markdown", "html")
-# §17 digest cadence (D19). "off" = never scheduled (the cron still fires;
-# act/digest.py self-gates); the other three are rolling intervals measured
-# from the state/digest.json marker, not pinned to a weekday.
-DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
-DEFAULT_DIGEST_FREQUENCY: str = "off"
-# §68.7 「在终端打开」用哪个终端（原生 UserDefaults terminalApp 的 server 侧落点，
-# §66.2 setting:prefs:terminalApp）：auto = Ghostty 装了就 Ghostty，否则 Terminal
-# （原生 TerminalLauncher.preferred 同款）。唯一读者是 server/terminal_launch（open -a）。
-TERMINAL_APPS: tuple = ("auto", "ghostty", "terminal", "iterm2")
-DEFAULT_TERMINAL_APP: str = "auto"
-# §70 每日自我改进循环解锁时刻（本地 HH:MM；owner 机器夜里 03:30 无人用板）。
-# 形状由 coerce_clock_time 归一；坏值回落默认，绝不让循环因 typo 永不解锁。
-DEFAULT_DAILY_LOOP_TIME: str = "03:30"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
-# §70 每天最多铸几张 🤖 提案卡。D10 定 5；D33（2026-09-04）降到 2：自检类信号
-# 不再铸卡后剩下的都是 GitHub 面与素材，一天两张够审、也不会把提案列刷成一排 🤖。
-# server/settings.py DAILY_LOOP_DEFAULTS 手抄同值（§49，判例 test_server_paths_mirror）。
-DEFAULT_DAILY_LOOP_MAX_PROPOSALS: int = 2
-# §76.2（issue #313）提案被提够多少次算「被提了这么多次还没人处理」。issue 原文
-# 举的数就是 5（P-008 被提 ×23 一次升级都没有）。0 或负 = 关掉升级（计数照常累加）。
-DEFAULT_MENTION_ESCALATION: int = 5
-# §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
-# yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
-# registry.backend()——这里只是配置词表。
-REGISTRY_BACKENDS: tuple = ("auto", "yaml", "sqlite")
-DEFAULT_REGISTRY_BACKEND: str = "auto"
+
 # §54 看板 server 的回环端口（config.yaml `server.port`）。install.sh 把它渲进
-# com.zelin.aiassistant.server.plist / zelin-server.service 的 ZAI_PORT；server/
-# 自己只读 env（server/app.py DEFAULT_PORT 镜像这个默认值，tests/
-# test_server_paths_mirror.py 钉漂移）。壳 app 缺 env 时也回落到同一默认。
+# com.zelin.aiassistant.server.plist 的 ZAI_PORT；server/ 自己只读 env
+# （server/app.py DEFAULT_PORT 镜像这个默认值，tests/test_server_paths_mirror.py 钉漂移）。
 DEFAULT_SERVER_PORT: int = 47820
-# §59 模型旋钮（D22）：两把——`models.dispatch`（claude --bg 派工 agent，"手"）
-# 与 `models.pipeline`（各处 headless `claude -p`：雷达/分诊/判官/问答，"脑"）。
-# 值 = "follow"（默认：argv 不带 --model，继承 Claude Code 全局默认
-# ~/.claude/settings.json `model`）或一个显式模型 id。canonical 表是 UI 下拉
-# 的全集；表外的自由文本照收（[1m]/-eap 一类别名/后缀会随时下线——2026 一次
-# EAP 别名退场让派工静默全败——所以 UI 与 doctor 对表外值给 WARN）。
-# server/settings.py 镜像这两组常量（server 不 import act），
-# tests/test_server_paths_mirror.py 钉漂移。
-MODEL_FOLLOW: str = "follow"
-MODEL_MODES: tuple = ("dispatch", "pipeline")
+
+# §59 模型旋钮：`models.pipeline`（每一次 headless `claude -p`：会议纪要）与 D53 的
+# `models.fallback`（`--fallback-model`）。v2.0.0 退役了 `models.dispatch`（没有派工了）
+# 与 "follow" 模式：隔离目录（§78）里没有 owner 的 Claude Code 全局设置可跟随，
+# 所以出厂值是一个显式 id；旧文件里写着的 "follow" 读作「未设置」= 出厂值。
+# canonical 表是 UI 下拉的全集；表外的自由文本照收（UI 与 doctor 对表外值给 WARN）。
+# server/settings.py 镜像这些常量，tests/test_server_paths_mirror.py 钉漂移。
+MODEL_MODES: tuple = ("pipeline",)
+LEGACY_MODEL_FOLLOW: str = "follow"
 CANONICAL_MODELS: tuple = (
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
     "claude-haiku-4-5-20251001",
 )
+DEFAULT_MODEL_PIPELINE: str = "claude-opus-5"
 # 模型 id 的形状闸（不是词表）：字母数字开头，之后允许 . _ - [ ] ，≤64 字符。
-# 只防 argv 注入面上的垃圾（空白/控制字符/引号），不猜模型名的未来拼法。
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
-# §59 第三把旋钮 `models.fallback`（D53，2026-09-07）：主模型（--model 或 Claude Code
-# 全局默认）拿不到时 claude 切到的模型——act/llm.py 给每个 headless -p / --bg 站点
-# 追加 `--fallback-model <id>`。owner 原话「fable 5.1 用不了的使用 claude code 默认
-# 使用了 opus 4.8 这个老模型。能否去掉这个 4.8 这个老模型」→ 出厂值就是 Opus 5
-# 的 1M 别名，与 owner ~/.claude/settings.json 的 fallbackModel 同一字面；"off" =
-# 不传旗标（CLI 自己的回退——4.8——重新登场，所以 doctor 那时不再软化 WARN）。
-# 不是 MODEL_MODES 的成员：llm.run(mode=) 不接受 "fallback"，它是横切旗标不是站点。
+# §59 D53：主模型拿不到时 claude 切到的模型；"off" = 不传旗标。
 MODEL_FALLBACK_OFF: str = "off"
 DEFAULT_MODEL_FALLBACK: str = "claude-opus-5[1m]"
 
-# Feature flags (§16) — default ALL on; config.yaml `features:` then
-# settings_overrides.json `features` overlay on top.
-DEFAULT_FEATURES: dict = {
-    "slack_radar": True,
-    "gmail_radar": True,
-    "obsidian_radar": True,
-    "digest": True,
-    "auto_resume": True,
-    "analytics": True,
-    # 建议公开跟踪表: opted-in feedback records -> GitHub issues. The flag
-    # alone changes nothing — the sync also needs the token file to exist
-    # (feedback_sync.token_path) AND a per-report publish opt-in.
-    "feedback_sync": True,
-    # §56 合并即上岗: install.sh installs the self-updating deploy agent
-    # (com.zelin.aiassistant.autodeploy) only for a git checkout with this on.
-    "auto_deploy": True,
-}
+# §63 recap.default_language：auto | zh | en；其余回 auto（跟随 UI 语言）。
+RECAP_LANGUAGES: tuple = ("auto", "zh", "en")
 
 
 def ensure_state_dirs() -> None:
     """Create the runtime state directories if they do not yet exist."""
-    for d in (STATE_DIR, INBOX_DIR, LOG_DIR):
+    for d in (STATE_DIR, LOG_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
-def headless_cwd() -> str:
-    """判官/提取类 headless ``claude -p`` 子进程的统一中性 cwd。
+def claude_config_dir() -> Path:
+    """§78 CLAUDE_CONFIG_DIR for every headless claude (env override, then default)."""
+    override = os.environ.get("AIASSISTANT_CLAUDE_CONFIG_DIR", "").strip()
+    return Path(override).expanduser() if override else CLAUDE_CONFIG_DIR
 
-    actd/launchd 的 WorkingDirectory 是 repo 根；子进程不传 cwd 就继承它，
-    claude 会自动把根下的 CLAUDE.md（指挥性入职文档）注进每一次管线调用——
-    token/延迟膨胀（radar 有 v0.43.2 慢性超时前科），还把「先读 CONTRACT」
-    之类与提取任务无关的指令喂给判官。STATE_DIR 没有 CLAUDE.md、也不对应
-    任何 Claude 项目 memory，是干净的落脚点。executor 派发的真工作会话不用
-    这个——那些本来就该在目标 repo 里跑。
+
+def headless_cwd() -> str:
+    """§78 the neutral cwd of every headless ``claude -p``: ``<claude-config>/cwd``.
+
+    An empty directory under Application Support — outside the repo tree, so the
+    repo's CLAUDE.md, its repo-local skills and the vault mirror's project settings
+    are never on claude's ancestor chain even if ``--bare`` semantics change.
+    Created on demand (0700); never written into by this app.
     """
-    ensure_state_dirs()
-    return str(STATE_DIR)
+    cwd = claude_config_dir() / "cwd"
+    try:
+        cwd.mkdir(parents=True, exist_ok=True)
+        os.chmod(cwd.parent, 0o700)
+    except OSError:
+        pass
+    return str(cwd)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,311 +170,73 @@ class Config:
 
     raw: dict = field(default_factory=dict)
 
-    # owner
-    owner_name: str = "Zelin"
-    owner_slack_user_id: Optional[str] = None
-
-    # sources
+    # sources — Obsidian pipeline dirs (v0.10.3 契约二). Unset ones are derived
+    # from obsidian_raw's parent (vault root) + the standard folder names;
+    # never None after load_config().
     obsidian_raw: Optional[str] = None
-    # Obsidian 管线另外三目录（v0.10.3 契约二）— 缺省时由 obsidian_raw 的
-    # parent（vault 根）+ 标准目录名派生；load_config() 之后永不为 None。
     obsidian_unprocessed: Optional[str] = None
     obsidian_change_summary: Optional[str] = None
     obsidian_wiki: Optional[str] = None
-    slack_channels: list = field(default_factory=list)
-    slack_token_path: Optional[str] = None
-    # Slack MCP fallback (v0.11) — 没有 xoxp token（卡在管理员审批）时，radar_slack
-    # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
-    slack_mcp_fallback: bool = True
-    slack_mcp_interval_minutes: int = 30
-    # §48 源开关（sources.<src>.enabled）— gmail 的同款开关，三源对齐；
-    # sources.enabled() 拿它与 features.<src>_radar 做合取。
-    slack_enabled: bool = True
-    obsidian_enabled: bool = True
-    # §40 capture receipts — emoji reaction ack on captured self-DM messages
-    # (📥 filed / 🚫 ignored / ↩️ re-raised). Best-effort; default ON.
-    slack_capture_receipts: bool = True
-    watch_people: list = field(default_factory=list)
-    # gmail capture (CONTRACT §14) — app password file missing => radar no-ops
-    gmail_address: Optional[str] = None
-    gmail_app_password_path: str = "~/Desktop/Keys/gmail-app-password.txt"
-    gmail_enabled: bool = True
-    # §14bis: user-owned fetcher CLI (Workspace 禁 app password/IMAP 的后备)。
-    # Non-empty => wins over IMAP. Contract: radar_gmail.fetch_via_command.
-    gmail_fetch_command: Optional[str] = None
-    # v0.46 完成提醒 (off|banner|sound)。App(NotifyRelay) 是唯一读者——管线只
-    # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
-    review_notify: str = "sound"
-    # §28 追记（issue #29）通知偏好：安静时段 + 分类开关。唯一读者 =
-    # act/lib/notify.suppression_reason（抑制在写方，理由见那里）。出厂值 =
-    # 本改动前的行为（安静时段关、三类全开），所以新装机一字不变。
+
+    # §28 通知偏好：只剩安静时段（唯一读者 act/lib/notify.suppression_reason）。
     quiet_hours_enabled: bool = False
     quiet_hours_start: str = "22:00"    # 本地 HH:MM；跨午夜合法
     quiet_hours_end: str = "08:00"
-    notify_proposals: bool = True       # 新卡待审批 / 批量 / 回锅
-    notify_needs_input: bool = True     # 任务停下来了，等人一句话
-    notify_failures: bool = True        # 需重新登录 / 雷达停摆 / 派发失败（穿透安静时段）
-    # §44.6 追记（issue #308）：提案列顶那排绿色「刚才的输入已并入 …」的总开关。
-    # 唯一读者 = dashboard._fold_receipts（关掉 = 顶层键投空列，键本身恒在）。
-    # 出厂 True = 本改动前的行为（自动通道的回执已由通道闸挡在写入端）。
-    fold_receipt_notices: bool = True
-    # §68.7 终端应用 (auto|ghostty|terminal|iterm2)。server/terminal_launch 是唯一读者
-    # （web 「在终端打开（接管会话）/ 开发会话 / 卸载」都经它 open -a）；键收进白名单以便记账。
-    terminal_app: str = DEFAULT_TERMINAL_APP
-    # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
-    # ingest output and turns it into a review-lane digest card. Default OFF
-    # since D19 (owner 2026-09-01: digest 不再默认铸卡; 15 automation-idea
-    # cards minted, 0 approved) — an explicit `enabled: true` opts back in.
-    weekly_digest_enabled: bool = False
-    weekly_digest_day: int = 0    # 0=Monday .. 6=Sunday (python weekday())
-    weekly_digest_hour: int = 9   # local hour (24h) the weekly run unlocks
-    # §17 state digest cadence (D19): off | daily | every2days | weekly.
-    # Default off — the owner turns it on in Settings (overrides key
-    # `digest_frequency`) or config.yaml `digest.frequency`.
-    digest_frequency: str = DEFAULT_DIGEST_FREQUENCY
 
-    # §53 数据层后端开关（config.yaml `registry.backend`）——rollback 用；
-    # 词表外的值一律回落 auto（fail-safe：配错字不至于让真源判定翻车）。
-    registry_backend: str = DEFAULT_REGISTRY_BACKEND
     # §54 看板 server 端口（config.yaml `server.port`，1..65535；坏值回默认）。
-    # 只在安装期消费（渲进 launchd/systemd 模板），无 override 键——改动需重跑
-    # bash install.sh。
     server_port: int = DEFAULT_SERVER_PORT
 
-    # §59 模型旋钮（D22）。"follow" = 不传 --model（继承 Claude Code 全局
-    # 默认）；其余 = act/llm.py 在 argv 末尾唯一一处追加 `--model <id>`。
-    # 形状坏（空白/控制字符）回落 follow——宁可跟随全局，不可把垃圾塞进 argv。
-    models_dispatch: str = MODEL_FOLLOW
-    models_pipeline: str = MODEL_FOLLOW
-    # §59 D53：`--fallback-model` 的值；"off" = 不传。坏形状回落出厂值（宁可回退到
-    # Opus 5，不可把垃圾塞进 argv、也不可静默掉回 CLI 自己的 4.8）。
+    # §59 模型旋钮。坏形状回落出厂值——不可把垃圾塞进 argv。
+    models_pipeline: str = DEFAULT_MODEL_PIPELINE
     models_fallback: str = DEFAULT_MODEL_FALLBACK
 
-    # §64 待验收卡 AI 摘要 + 完成度评语（config.yaml `card_summary.enabled`，
-    # overrides 扁平键 `card_summary_enabled`）。默认开；关 = 只停派新判官。
-    card_summary_enabled: bool = True
-
-    # approval / cost
-    poll_interval_seconds: int = 10
-    show_cost_above_usd: float = 5.0
-    require_text_confirm_above_usd: float = 50.0
-    # §76.2（issue #313）被提 N 次仍未处理的升级阈值（config.yaml
-    # `approval.mention_escalation`）。`repeated >= 阈值` 的提案卡投影
-    # `mention_escalated: true` 并（首次翻真时）响一次通知；**0 或负 = 关**。
-    approval_mention_escalation: int = DEFAULT_MENTION_ESCALATION
-
-    # execution
-    default_target_repo: str = "~/Projects/your-workbench"
-    # True only when default_target_repo came from an EXPLICIT source
-    # (config.yaml execution block or a Settings override) — writers that
-    # would otherwise CREATE the example placeholder path must check this
-    # and fall back to state/ instead (2026-07-08 backfill storm).
-    default_target_repo_configured: bool = False
-    memory_inject: bool = True
-    # False by default: approving a card must not silently create GitHub repos
-    # / push content that originated from screen/meetings/mail. Explicit
-    # config.yaml values (either way) are honored unchanged (PRIVACY.md row 8).
-    create_github_repo: bool = False
-    auto_resume: bool = True
-    # claude --bg with --dangerously-skip-permissions (default, unattended);
-    # False = claude's normal permission model, blocked agents -> needs_input
-    skip_permissions: bool = True
-    # explicit claude CLI pin (execution.claude_bin) — None = resolve via the
-    # stable daemon copy, then PATH, then ~/.local/bin/claude (see
-    # resolve_claude_bin below). The pin is the runtime escape hatch for
-    # machines with multiple claude installs where the daemon PATH keeps
-    # picking the wrong one (2026-07-08 incident).
+    # explicit claude CLI pin (config.yaml execution.claude_bin) — None = the
+    # stable daemon copy, then PATH, then ~/.local/bin/claude (resolve_claude_bin).
     claude_bin: Optional[str] = None
-    # dispatch-storm brake (§4 / §51): after this many CONSECUTIVE launch
-    # failures of the same failure class the card stops auto-retrying and
-    # surfaces in the blocked lane (2026-08-31: one card re-dispatched 66
-    # times in 13h behind a 256-fd cap). 0 = never brake (pre-v0.48.4).
-    dispatch_max_failures: int = 5
-    self_check: bool = True
-    fresh_context_review: bool = True
-
-    # trash / recycle bin
-    trash_retention_days: int = 60
-
-    # auto-archive（vnext W1.c 决议）：delivered 卡最后活动超过 N 天自动封存
-    # （actd.archive_stale 冷扫读取此值）。live v0.20.0 首发默认 0（off）；
-    # vnext 把默认改为 30（0 = 关闭，恢复永不自动归档）。见
-    # docs/design/vnext-amendments.md §W1.c。
-    archive_after_days: int = 30
-
-    # §70 每日自我改进循环（owner 决策 D10）：actd pass 内每天一次「先维护再
-    # 提案」。time = 本地 HH:MM 解锁时刻；max_proposals_per_day 默认见
-    # DEFAULT_DAILY_LOOP_MAX_PROPOSALS（D33 降为 2；设置里可改）；stale_days =
-    # 提案/潜在任务列无活动多少天判过时（Q4：45 + 保护罩）；
-    # trash_retention_days = 循环自动扔进回收站的卡（`stale:*` / `daily-merge:*`）
-    # 保留多少天再硬删——owner 没亲眼看过这些卡进回收站，比手动 trash 的 60 天
-    # 更长（Q4：90）；trash.retention_days 为 0 时整体关闭，本值随之无效。
-    daily_loop_enabled: bool = True
-    daily_loop_time: str = DEFAULT_DAILY_LOOP_TIME
-    daily_loop_max_proposals_per_day: int = DEFAULT_DAILY_LOOP_MAX_PROPOSALS
-    daily_loop_stale_days: int = 45
-    daily_loop_trash_retention_days: int = 90
-    # §70.2 追记 / D74（issue #312）：待验收列的老化天数——闲置 N 天的待验收卡
-    # 先收到一条汇总通知，下一轮进回收站（可恢复）。0 = 关掉这条规则。
-    daily_loop_review_stale_days: int = 14
-
-    # §65.1 自动改进本软件的通道总开关（config.yaml `self_improve.enabled`；issue
-    # #307 / D57）：**默认关**——这是开发者/维护者功能，出厂对所有安装关闭。关着时
-    # 每日循环不跑 issues/prs/mutation 三个 GitHub 读取器、§65.5 巡检不巡、§51 第二
-    # 条 lane 不免批派发；打开它的唯一面 = 设置页「开发者」区（扁平 override 键同名）。
-    self_improve_enabled: bool = False
 
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
     recording_ignored_apps: list = field(
         default_factory=lambda: list(DEFAULT_IGNORED_APPS)
     )
-    # §72 screenpipe DB 保留期（天）：0 = 永久保留（出厂默认 = 现状不变）；N ≥ 1 =
-    # cron 链的 cleanup 步删掉「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行
-    # （act/lib/screenpipe_retention.py）。config.yaml 落点 recording.retention_days，
-    # 设置页 override 扁平键 screenpipe_retention_days。
+    # §72 screenpipe DB 保留期（天）：0 = 永久保留（出厂）；config.yaml
+    # recording.retention_days，override 扁平键 screenpipe_retention_days。
     screenpipe_retention_days: int = 0
-    # §72.4 原始 jpg / mp4 在 ~/.screenpipe/data 里活多久（分钟）：cleanup 步的
-    # `find -mmin +N`。config.yaml 落点 recording.media_retention_minutes，设置页
-    # override 扁平键 screenpipe_media_retention_minutes；区间见上面三个常量。
+    # §72.4 原始 jpg / mp4 保留分钟数：config.yaml recording.media_retention_minutes。
     screenpipe_media_retention_minutes: int = DEFAULT_MEDIA_RETENTION_MINUTES
 
-    # local pre-send redaction (opt-in)
+    # local pre-send redaction (opt-in; act/lib/sanitize.py)
     redaction_enabled: bool = False
     redaction_terms_file: str = "config/redaction_terms.txt"
     redaction_mask_secrets: bool = True
 
-    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — levels
-    # carry event metadata (names, timings, counts, ids). Typed text THE USER
-    # ENTERS INTO THIS APP (captures, Ask questions, card comments,
-    # instruction summaries) is recorded when capture_input is true AND level
-    # is "detailed" (capture_input_active below). v0.48 flips capture_input
-    # to default OFF (opt-in): typed text uploads only after the user checks
-    # the first-run「分享输入文本」checkbox or the Settings toggle (both write
-    # the explicit override key), or writes the key in config.yaml. Ingested
-    # third-party content (screen OCR, emails, Slack/iMessage messages) is
-    # NEVER telemetry, at any setting.
-    telemetry_enabled: bool = True
-    voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
-    telemetry_level: str = "detailed"
-    telemetry_capture_input: bool = False
-    # True only when capture_input came from an EXPLICIT source (config.yaml
-    # telemetry block or a Settings/first-run-checkbox override) — writing
-    # the key is an informed choice, and since v0.48 it is the ONLY consent
-    # source analytics.content_gate accepts (the v2 disclosure marker alone
-    # no longer arms content; CONTRACT §15 v0.48 opt-in revision).
-    telemetry_capture_input_explicit: bool = False
-    telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
-    telemetry_key_path: Optional[str] = None
-
-    # W18 远程直跑闸门（vnext 决议）：webui/syncd 这类网络 ingress 是否放行
-    # capture mode:"run"（§34 direct-run 跳过人审预览）。默认关（fail-closed）；
-    # 仅 config.yaml `remote.allow_direct_run: true` 显式开启，settings_overrides
-    # 不可覆盖（deliberately NOT in _OVERRIDE_FIELDS）。见
-    # docs/design/vnext-amendments.md §W18。
-    remote_allow_direct_run: bool = False
-
-    # AI Doctor (§25) — "让 AI 修 / Fix with AI" escape hatch: generates a
-    # Terminal .command that hands the scrubbed diagnostic bundle to claude.
-    # `doctor.ai_fix_enabled: false` in config.yaml disables the button + CLI.
-    doctor_ai_fix_enabled: bool = True
-
-    # in-app update check (§26) — GitHub releases API, ETag-cached, at most
-    # one network attempt per 24h. Off = no request is ever made (and the
-    # cached answer stops being projected into the dashboard).
+    # §26 in-app update check (GitHub releases API, ETag-cached, ≤1 attempt/24h).
     updates_check_enabled: bool = True
+    # §79 add-only: a newer tagged release installs itself when the §26 check
+    # finds one. Default OFF — the About page's "Upgrade now" is the normal path.
+    updates_auto_install: bool = False
 
-    # in-app Q&A (§27) — `ask.enabled: false` in config.yaml disables both
-    # `python3 -m act.ask` (exit 2) and the app's Ask page input.
-    ask_enabled: bool = True
-
-    # 会议 recap（§63，issue #129）：三把 Settings 可改的旋钮（config.yaml `recap:`
-    # 块 + overrides 扁平键 recap_enabled / recap_default_language /
-    # recap_slack_draft_enabled）。slack_draft **默认关**——开了也只投草稿，
-    # 发送键在人手里；其余调参（gap/quiet/上限/应用表）留在 cfg.raw["recap"]，
-    # 由 act/lib/recap_store.settings 读取。
+    # 会议 recap（§63）：config.yaml `recap:` 块 + overrides 扁平键 recap_enabled /
+    # recap_default_language；其余调参留在 cfg.raw["recap"]，由
+    # act/lib/recap_store.settings 读取。
     recap_enabled: bool = True
     recap_default_language: str = "auto"   # auto | zh | en（auto 跟随 language）
-    recap_slack_draft_enabled: bool = False
 
-    # 设置「开发者 · 维护会话」— the one-click claude session over THIS
-    # software's own repo (App 设置区 diff-write; None = the app falls back
-    # to its resolved repo root / a fresh session). The Python pipeline never
-    # launches it; the fields live here so the §15 override allowlist covers
-    # the app's writes.
-    maintainer_repo_path: Optional[str] = None
-    maintainer_session_id: Optional[str] = None
-    # 建议公开跟踪表 — publish opted-in feedback records as GitHub issues
-    # (act/lib/feedback_sync.py). repo = "owner/name" slug the issues land on;
-    # token_path resolves against the pipeline root when relative, and the
-    # file simply not existing turns the whole sync off (no health complaint).
-    feedback_sync_repo: str = "Wan-ZL/zelin-ai-assistant"
-    feedback_sync_token_path: str = "config/secrets/github-feedback-token.txt"
-    # App 写入的 override-only 键（提建议弹窗「同时公开」勾选框记住的上次
-    # 选择，settings_overrides.json 扁平键 feedback_publish_default）——yaml
-    # 不提供此旋钮：读它的只有 App 弹窗，config.yaml 拼一个出来不会有任何
-    # 消费者，等于文档上有效实际无效的隐私开关，宁可不收。出厂 false：公开
-    # 是逐条 opt-in，预勾会让「打字→↩」的肌肉记忆把建议直接发进公开 repo。
-    feedback_publish_default: bool = False
-
-    # UI language (§15) — stored value only for now ("zh" | "en")
+    # UI language (§15) — "zh" | "en"
     language: str = "zh"
-    # §15 default output format for drafted deliverables ("markdown" | "html").
-    # markdown = status quo (executor prompt unchanged); html injects an HTML
-    # authoring instruction so drafts/reports/FINAL DRAFT come back as HTML.
-    default_output_format: str = "markdown"
-
-    # feature flags (§16) — default all on; see DEFAULT_FEATURES
-    features: dict = field(default_factory=lambda: dict(DEFAULT_FEATURES))
-
-    @property
-    def target_repo_path(self) -> Path:
-        return Path(self.default_target_repo).expanduser()
-
-    def feature(self, name: str) -> bool:
-        """Feature-flag check (§16). Unknown flags default to on."""
-        try:
-            return bool(self.features.get(name, True))
-        except AttributeError:
-            return True
-
-    def requester_display(self) -> str:
-        """Best-effort display name for the person whose asks we track."""
-        if self.watch_people:
-            return self.watch_people[0].split(".")[0].title()
-        return self.owner_name
-
-    def capture_input_active(self) -> bool:
-        """Typed-text capture gate (docs/TELEMETRY.md「输入文本收集」).
-
-        True only when BOTH `telemetry.capture_input` AND `telemetry.level:
-        detailed` are set — capture_input defaults OFF since v0.48 (opt-in:
-        the first-run checkbox / Settings toggle / config.yaml key turn it
-        on), and either switch alone turns text capture off. Every emit
-        site that attaches user-typed text must check this — when the gate is
-        closed the text never reaches events.jsonl, so it can never upload
-        either. Scope: only text the user types into THIS app — ingested
-        third-party content (screen OCR, emails, Slack/iMessage messages)
-        must never be attached regardless of this gate. Mirrored by
-        Telemetry.contentCaptureActive() in mac/Sources/Utils.swift.
-        """
-        return bool(self.telemetry_capture_input
-                    and self.telemetry_level == "detailed")
 
 
 # --------------------------------------------------------------------------- #
-# 类型校验 helpers — config.yaml / settings_overrides.json 都是用户可手改的
-# 文件：坏值绝不能崩掉 daemon，更不能把语义反转。经典坑是 bool("false") ==
-# True：用户手写 "false" 想关遥测/关 --dangerously-skip-permissions，粗暴
-# bool() 反而全开（隐私面 CONTRACT §15：关闭意图必须可靠生效）。
+# 类型校验 helpers — config.yaml / settings_overrides.json 都是用户可手改的文件：
+# 坏值绝不能崩掉守护进程，更不能把语义反转（bool("false") == True 的经典坑）。
 # --------------------------------------------------------------------------- #
 _BOOL_TRUE_WORDS = ("true", "yes", "on", "1")
 _BOOL_FALSE_WORDS = ("false", "no", "off", "0")
 
 
-def _coerce_bool(value) -> bool:
-    """严格布尔转换：真布尔、0/1、常见字符串拼写（"false"/"no"/"off"…）之外
-    一律 ValueError——让调用方按「类型错 = 跳过、保留原生效值」处理。"""
+def coerce_bool(value) -> bool:
+    """严格布尔转换：真布尔、0/1、常见字符串拼写之外一律 ValueError——调用方按
+    「类型错 = 跳过、保留原生效值」处理。公开名（防腐 #2）。"""
     if isinstance(value, bool):
         return value
     if isinstance(value, int) and value in (0, 1):
@@ -545,10 +256,13 @@ def _bool_word(value: str) -> bool:
     raise ValueError(f"not a bool: {value!r}")
 
 
+_coerce_bool = coerce_bool   # 旧名（本模块内部沿用）
+
+
 def _bool_or(value, default: bool) -> bool:
     """config.yaml 路径的宽容版：坏值保留 default（原生效值），不抛。"""
     try:
-        return _coerce_bool(value)
+        return coerce_bool(value)
     except (TypeError, ValueError):
         return default
 
@@ -562,63 +276,19 @@ def _int_or(value, default: int) -> int:
         return default
 
 
-def _float_or(value, default: float) -> float:
-    try:
-        if isinstance(value, bool):
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _dict_or(value) -> dict:
-    """config.yaml 的块必须是 mapping；写成标量/列表（如 `owner: hi`）时按
-    缺失处理——否则 .get() 直接 AttributeError 崩掉 load_config。"""
+    """config.yaml 的块必须是 mapping；写成标量/列表时按缺失处理。"""
     return value if isinstance(value, dict) else {}
 
 
-def _coerce_digest_frequency(value) -> str:
-    """§17 digest.frequency：规范到 DIGEST_FREQUENCIES 成员；typo/未知值
-    fail-quiet 回 "off"（宁可少一份摘要，不可按错误节奏刷卡）。yaml 与
-    overrides 两条路径共用，两侧读出同一答案。"""
-    v = str(value).strip().lower().replace("_", "").replace("-", "")
-    return v if v in DIGEST_FREQUENCIES else DEFAULT_DIGEST_FREQUENCY
-
-
-def _coerce_terminal_app(value) -> str:
-    """§68.7 terminal_app：规范到 TERMINAL_APPS 成员；未知值回 auto（原生对已卸载的
-    存值同样回落到 Ghostty-或-Terminal）。"""
-    v = str(value or "").strip().lower()
-    return v if v in TERMINAL_APPS else DEFAULT_TERMINAL_APP
-
-
-def _coerce_registry_backend(value) -> str:
-    v = str(value or "").strip().lower()
-    return v if v in REGISTRY_BACKENDS else DEFAULT_REGISTRY_BACKEND
-
-
-# §63 recap.default_language：auto | zh | en；其余回 auto（跟随 UI 语言）。
-RECAP_LANGUAGES: tuple = ("auto", "zh", "en")
-
-
-def _coerce_recap_language(value) -> str:
+def coerce_recap_language(value) -> str:
     v = str(value or "").strip().lower()
     return v if v in RECAP_LANGUAGES else "auto"
 
 
-def _apply_recap_block(cfg: "Config", data: dict) -> None:
-    """§63 config.yaml `recap:` 块的三把旋钮（坏值保留默认；调参留在 cfg.raw）。"""
-    blk = _dict_or(data.get("recap"))
-    cfg.recap_enabled = _bool_or(blk.get("enabled", cfg.recap_enabled), cfg.recap_enabled)
-    cfg.recap_default_language = _coerce_recap_language(
-        blk.get("default_language", cfg.recap_default_language))
-    draft = _dict_or(blk.get("slack_draft"))
-    cfg.recap_slack_draft_enabled = _bool_or(
-        draft.get("enabled", cfg.recap_slack_draft_enabled), cfg.recap_slack_draft_enabled)
 def coerce_clock_time(value) -> str:
-    """§70 `daily_loop.time`：本地 HH:MM（"3:30" 归一为 "03:30"）；其余形状
-    ValueError——yaml 路径经 _clock_or 回落默认，overrides 路径 per-entry 跳过。
-    server/settings.py 镜像同一正则（tests/test_server_paths_mirror.py 钉）。"""
+    """本地 HH:MM（"3:30" 归一为 "03:30"）；其余形状 ValueError。server/settings.py
+    镜像同一正则（tests/test_server_paths_mirror.py 钉）。"""
     if not isinstance(value, str):
         raise ValueError(f"not a HH:MM time: {value!r}")
     m = CLOCK_TIME_RE.match(value.strip())
@@ -627,35 +297,11 @@ def coerce_clock_time(value) -> str:
     return "%02d:%s" % (int(m.group(1)), m.group(2))
 
 
-def _clock_or(value, default: str) -> str:
-    try:
-        return coerce_clock_time(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _nonneg_int(value) -> int:
-    """overrides 路径的严格非负整数（bool 不算数；负数/垃圾 → ValueError → 跳过）。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise ValueError(f"not a count: {value!r}")
-    n = int(value)
-    if n < 0:
-        raise ValueError(f"negative count: {value!r}")
-    return n
-
-
 def coerce_media_retention_minutes(value) -> int:
-    """§72.4 `recording.media_retention_minutes`：整数且落在
-    [MIN_MEDIA_RETENTION_MINUTES, MAX_MEDIA_RETENTION_MINUTES] 内，否则 ValueError
-    （overrides 路径整条跳过、yaml 路径回落 60）。**不夹取**——夹取会让设置页
-    显示的数与 cron 真用的数不是一个（server/settings_catalog.py 的 bounds 闸
-    在写入那一侧拦同一个区间，判例钉住两侧同一条规则）。
-
-    收什么形状也必须与目录那一侧**逐字同一条规则**（`_coerce_number(value, integer=True)`
-    → `_finite_number`）：只收非 bool 的 `int` 与整值 `float`；字串（yaml 里写成
-    `"120"`）、非整值 float（`90.5`）、inf / nan 都是坏值。两边收的形状不同 =
-    同一份 config.yaml 在设置页上显示 60、在 cron 里却按 120 删文件，正是
-    本节立法要防的那件事（判例 tests/test_screenpipe_media_retention_knob.py 两侧同钉）。"""
+    """§72.4 `recording.media_retention_minutes`：非 bool 的 int 或整值 float，且落在
+    [MIN, MAX] 内，否则 ValueError（overrides 路径整条跳过、yaml 路径回落 60）。**不夹取**
+    ——与 server/settings_catalog.py 的 bounds 闸逐字同一条规则（判例
+    tests/test_screenpipe_media_retention_knob.py 两侧同钉）。"""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("not a retention: %r" % (value,))
     if isinstance(value, float) and not value.is_integer():   # 非整值 / inf / nan
@@ -666,70 +312,26 @@ def coerce_media_retention_minutes(value) -> int:
     return minutes
 
 
-def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
-    """§70 config.yaml `daily_loop:` 块 → cfg（坏值保留默认；负数按 0 = 关）。
-    独立函数：load_config 的圈复杂度账本已在上限之外，这里一条调用零分支。"""
-    blk = _dict_or(data.get("daily_loop"))
-    cfg.daily_loop_enabled = _bool_or(blk.get("enabled"), cfg.daily_loop_enabled)
-    cfg.daily_loop_time = _clock_or(blk.get("time"), cfg.daily_loop_time)
-    for key in ("max_proposals_per_day", "stale_days", "trash_retention_days",
-                "review_stale_days"):
-        attr = f"daily_loop_{key}"
-        setattr(cfg, attr, max(0, _int_or(blk.get(key), getattr(cfg, attr))))
-
-
-def _apply_self_improve_block(cfg: "Config", data: dict) -> None:
-    """§65.1 config.yaml `self_improve:` 块的总开关 → cfg（坏值/缺键保留默认 = 关）。
-    块里其余键（repo_path / tick_minutes / owner_logins / github_repo）仍由
-    `policy.self_improve_config` 现读 raw——只有总开关要走 overrides 层（设置页）。"""
-    blk = _dict_or(data.get("self_improve"))
-    cfg.self_improve_enabled = _bool_or(blk.get("enabled"), cfg.self_improve_enabled)
-
-
-def _server_port_from(data: dict) -> int:
-    """§54 `server.port`：整数 1..65535 才收，其余（缺失/bool/越界/字符串
-    垃圾）一律回 DEFAULT_SERVER_PORT——端口写错不该让 server 起不来。"""
-    port = _int_or(_dict_or(data.get("server")).get("port"), DEFAULT_SERVER_PORT)
-    return port if 0 < port < 65536 else DEFAULT_SERVER_PORT
-
-
-def _card_summary_enabled_from(data: dict, default: bool) -> bool:
-    """§64 `card_summary.enabled`：缺失/坏值回 default（_bool_or 语义）。
-    独立 helper 而非 load_config 里的分支——load_config 的复杂度账本已在上限之外。"""
-    return _bool_or(_dict_or(data.get("card_summary")).get("enabled", default), default)
-
-
 def coerce_model(value) -> str:
-    """§59 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
-    合法的 id 原样（大小写保留——模型 id 由 CLI 判，这里不猜）；其余（含控制
-    字符、空格、超长）→ ValueError，由调用方按「坏值 = 保留原生效值」处理。
-    yaml 路径经 _model_or 吞成 follow；overrides 路径经 per-entry try 跳过。"""
+    """§59 `models.pipeline` 归一：None / 空白 / 旧哨兵 "follow"（大小写不敏感）→ 出厂值
+    DEFAULT_MODEL_PIPELINE；形状合法的 id 原样；其余 → ValueError（调用方按「坏值 =
+    保留原生效值」处理）。"""
     if value is None:
-        return MODEL_FOLLOW
+        return DEFAULT_MODEL_PIPELINE
     if not isinstance(value, str):
         raise ValueError(f"not a model id: {value!r}")
     s = value.strip()
-    if not s or s.lower() == MODEL_FOLLOW:
-        return MODEL_FOLLOW
+    if not s or s.lower() == LEGACY_MODEL_FOLLOW:
+        return DEFAULT_MODEL_PIPELINE
     if not MODEL_ID_RE.match(s):
         raise ValueError(f"not a model id: {value!r}")
     return s
 
 
-def _model_or(value, default: str) -> str:
-    try:
-        return coerce_model(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def coerce_fallback_model(value) -> str:
-    """§59 D53 `models.fallback` 归一：None/空白 → 出厂值 DEFAULT_MODEL_FALLBACK；
-    "off"（大小写不敏感）**或布尔 False** → "off"（YAML 1.1 把裸 `off` 读成 False——
-    config.yaml 里按文档写 `fallback: off` 必须真的关掉，而不是被当垃圾吞成出厂值）；
-    形状合法的 id 原样；其余（含 True）→ ValueError（调用方按「坏值 = 保留原生效值」
-    处理：yaml 路径经 _fallback_or 吞成出厂值，overrides 路径 per-entry 跳过）。
-    与 coerce_model 的差别只有哨兵词与空值的落点。"""
+    """§59 D53 `models.fallback` 归一：None/空白 → 出厂值；"off"（大小写不敏感）**或布尔
+    False** → "off"（YAML 1.1 把裸 `off` 读成 False）；形状合法的 id 原样；其余（含 True）
+    → ValueError。"""
     if value is None:
         return DEFAULT_MODEL_FALLBACK
     if value is False:
@@ -750,18 +352,17 @@ def _coerce_fallback_str(s: str) -> str:
     return s
 
 
-def _fallback_or(value, default: str) -> str:
+def _or_default(coerce, value, default):
     try:
-        return coerce_fallback_model(value)
+        return coerce(value)
     except (TypeError, ValueError):
         return default
 
 
 def model_is_canonical(value) -> bool:
-    """UI/doctor 的 WARN 判据：显式值是否在 CANONICAL_MODELS 表内。"follow"
-    不是模型 id，按 True（没有可警告的东西）。"""
+    """UI/doctor 的 WARN 判据：显式值是否在 CANONICAL_MODELS 表内（空值 = 出厂值，算 True）。"""
     s = str(value or "").strip()
-    return (not s) or s.lower() == MODEL_FOLLOW or s in CANONICAL_MODELS
+    return (not s) or s in CANONICAL_MODELS
 
 
 def _config_path() -> Path:
@@ -769,221 +370,43 @@ def _config_path() -> Path:
 
 
 def _load_yaml_dict(path: Path) -> dict:
-    """config.yaml → dict；缺文件 / 坏 yaml / 坏编码 / 非 mapping = {}（全默认，
-    绝不崩 daemon）。"""
+    """config.yaml → dict；缺文件 / 坏 yaml / 坏编码 / 非 mapping = {}（全默认）。"""
     if yaml is None or not path.exists():
         return {}
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 — 坏 yaml/编码 = 全默认，绝不崩 daemon
+    except Exception:  # noqa: BLE001 — 坏 yaml/编码 = 全默认，绝不崩守护进程
         return {}
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _apply_owner(cfg: Config, data: dict) -> None:
-    owner = _dict_or(data.get("owner"))
-    cfg.owner_name = owner.get("name", cfg.owner_name)
-    cfg.owner_slack_user_id = owner.get("slack_user_id", cfg.owner_slack_user_id)
-
-
+# --------------------------------------------------------------------------- #
+# config.yaml block appliers (each writes only its own fields)
+# --------------------------------------------------------------------------- #
 def _apply_sources(cfg: Config, data: dict) -> None:
     sources = _dict_or(data.get("sources"))
-    cfg.obsidian_raw = sources.get("obsidian_raw", cfg.obsidian_raw)
-    cfg.obsidian_unprocessed = sources.get(
-        "obsidian_unprocessed", cfg.obsidian_unprocessed
-    )
-    cfg.obsidian_change_summary = sources.get(
-        "obsidian_change_summary", cfg.obsidian_change_summary
-    )
-    cfg.obsidian_wiki = sources.get("obsidian_wiki", cfg.obsidian_wiki)
-    cfg.slack_channels = sources.get("slack_channels", []) or []
-    # NOTE: 历史 key `sources.slack_dms` 已诚实下线（配了从来没有任何效果）：
-    # radar_slack.fetch_new_messages 本来就无条件扫全部 im/mpim 会话
-    # （conversations.list types=im,mpim），无需任何 DM 白名单。旧 config 里
-    # 遗留的 slack_dms 键按「未知 key」语义被静默忽略，不会破坏加载。
-    cfg.slack_token_path = sources.get("slack_token_path", cfg.slack_token_path)
-    cfg.slack_mcp_fallback = _bool_or(
-        sources.get("slack_mcp_fallback", cfg.slack_mcp_fallback),
-        cfg.slack_mcp_fallback,
-    )
-    cfg.slack_mcp_interval_minutes = _int_or(
-        sources.get("slack_mcp_interval_minutes", cfg.slack_mcp_interval_minutes),
-        cfg.slack_mcp_interval_minutes,
-    )
-    cfg.slack_capture_receipts = _bool_or(
-        sources.get("slack_capture_receipts", cfg.slack_capture_receipts),
-        cfg.slack_capture_receipts,
-    )
-    cfg.watch_people = sources.get("watch_people", []) or []
-    _apply_gmail(cfg, sources)
-    _apply_source_switches(cfg, sources)
-    _apply_weekly_digest(cfg, sources)
-
-
-def _apply_gmail(cfg: Config, sources: dict) -> None:
-    gmail = _dict_or(sources.get("gmail"))
-    cfg.gmail_address = gmail.get("address", cfg.gmail_address)
-    cfg.gmail_app_password_path = gmail.get(
-        "app_password_path", cfg.gmail_app_password_path
-    )
-    cfg.gmail_enabled = _bool_or(
-        gmail.get("enabled", cfg.gmail_enabled), cfg.gmail_enabled
-    )
-    cfg.gmail_fetch_command = gmail.get(
-        "fetch_command", cfg.gmail_fetch_command
-    )
-
-
-def _apply_source_switches(cfg: Config, sources: dict) -> None:
-    """§48: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
-    写法，此前静默无效（半个开关）；三源对齐后 sources.enabled() 的合取
-    对每个源都成立。"""
-    for _src in ("slack", "obsidian"):
-        _blk = _dict_or(sources.get(_src))
-        _cur = getattr(cfg, f"{_src}_enabled")
-        setattr(cfg, f"{_src}_enabled",
-                _bool_or(_blk.get("enabled", _cur), _cur))
-
-
-def _int_in_range(value, lo: int, hi: int) -> Optional[int]:
-    """int(value) when it parses and lies in [lo, hi]; else None."""
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return None
-    return n if lo <= n <= hi else None
-
-
-def _apply_weekly_digest(cfg: Config, sources: dict) -> None:
-    wd = sources.get("weekly_digest", {}) or {}
-    if not isinstance(wd, dict):
-        return
-    cfg.weekly_digest_enabled = _bool_or(
-        wd.get("enabled", cfg.weekly_digest_enabled), cfg.weekly_digest_enabled
-    )
-    day = _int_in_range(wd.get("day", cfg.weekly_digest_day), 0, 6)
-    if day is not None:
-        cfg.weekly_digest_day = day
-    hour = _int_in_range(wd.get("hour", cfg.weekly_digest_hour), 0, 23)
-    if hour is not None:
-        cfg.weekly_digest_hour = hour
-
-
-def _apply_approval(cfg: Config, data: dict) -> None:
-    approval = _dict_or(data.get("approval"))
-    # poll_interval: config.example uses minutes for the approval surface; the
-    # daemon loop also accepts an explicit seconds override.
-    if "poll_interval_seconds" in approval:
-        cfg.poll_interval_seconds = _int_or(
-            approval["poll_interval_seconds"], cfg.poll_interval_seconds
-        )
-    elif "poll_interval_minutes" in approval:
-        # Daemon default stays 10s; the minutes value governs the approval
-        # surface poll, not the tight local loop. We keep 10s unless an explicit
-        # seconds value is provided, to remain responsive to the inbox.
-        cfg.poll_interval_seconds = cfg.poll_interval_seconds
-    thresholds = _dict_or(approval.get("cost_thresholds"))
-    cfg.show_cost_above_usd = _float_or(
-        thresholds.get("show_cost_above_usd", cfg.show_cost_above_usd),
-        cfg.show_cost_above_usd,
-    )
-    cfg.require_text_confirm_above_usd = _float_or(
-        thresholds.get("require_text_confirm_above_usd", cfg.require_text_confirm_above_usd),
-        cfg.require_text_confirm_above_usd,
-    )
-    # §76.2 升级阈值：坏形状（非数字 / 字符串）回落出厂值——配错一个字不许把
-    # 「被提 N 次仍未处理」这条唯一的升级路悄悄关掉（fail-open 到出厂行为）。
-    cfg.approval_mention_escalation = _int_or(
-        approval.get("mention_escalation", cfg.approval_mention_escalation),
-        cfg.approval_mention_escalation,
-    )
+    for attr in ("obsidian_raw", "obsidian_unprocessed", "obsidian_change_summary",
+                 "obsidian_wiki"):
+        setattr(cfg, attr, sources.get(attr, getattr(cfg, attr)))
 
 
 def _apply_execution(cfg: Config, data: dict) -> None:
-    execution = _dict_or(data.get("execution"))
-    if "default_target_repo" in execution and execution["default_target_repo"]:
-        cfg.default_target_repo_configured = True
-    cfg.default_target_repo = execution.get("default_target_repo", cfg.default_target_repo)
-    _apply_execution_flags(cfg, execution)
-    _cb = execution.get("claude_bin")
-    if _cb and str(_cb).strip():
-        cfg.claude_bin = str(_cb).strip()
-    cfg.dispatch_max_failures = max(0, _int_or(
-        execution.get("dispatch_max_failures", cfg.dispatch_max_failures),
-        cfg.dispatch_max_failures,
-    ))
-    qg = _dict_or(execution.get("quality_gate"))
-    cfg.self_check = _bool_or(qg.get("self_check", cfg.self_check), cfg.self_check)
-    cfg.fresh_context_review = _bool_or(
-        qg.get("fresh_context_review", cfg.fresh_context_review),
-        cfg.fresh_context_review,
-    )
+    # v2.0.0：execution 块只剩 claude_bin 这一把 pin（其余键随 executor 退役，静默忽略）
+    pinned = _dict_or(data.get("execution")).get("claude_bin")
+    if pinned and str(pinned).strip():
+        cfg.claude_bin = str(pinned).strip()
 
 
-def _apply_execution_flags(cfg: Config, execution: dict) -> None:
-    cfg.memory_inject = _bool_or(
-        execution.get("memory_inject", cfg.memory_inject), cfg.memory_inject
-    )
-    cfg.create_github_repo = _bool_or(
-        execution.get("create_github_repo", cfg.create_github_repo),
-        cfg.create_github_repo,
-    )
-    cfg.auto_resume = _bool_or(
-        execution.get("auto_resume", cfg.auto_resume), cfg.auto_resume
-    )
-    cfg.skip_permissions = _bool_or(
-        execution.get("skip_permissions", cfg.skip_permissions),
-        cfg.skip_permissions,
-    )
-
-
-def _apply_retention(cfg: Config, data: dict) -> None:
-    trash = _dict_or(data.get("trash"))
-    cfg.trash_retention_days = _int_or(
-        trash.get("retention_days", cfg.trash_retention_days),
-        cfg.trash_retention_days,
-    )
-    archive = _dict_or(data.get("archive"))
-    cfg.archive_after_days = _int_or(
-        archive.get("after_days", cfg.archive_after_days),
-        cfg.archive_after_days,
-    )
-    _apply_daily_loop_block(cfg, data)   # §70
-
-
-def _apply_digest_registry_server(cfg: Config, data: dict) -> None:
-    # §17 (D19) digest cadence. The legacy `digest.weekly: monday` key that
-    # config.example.yaml carried for years was never read by any code —
-    # it stays an ignored unknown key; only `frequency` is law.
-    digest_blk = _dict_or(data.get("digest"))
-    if "frequency" in digest_blk:
-        cfg.digest_frequency = _coerce_digest_frequency(digest_blk.get("frequency"))
-    # §53（D2）数据层后端开关——registry.backend() 的配置输入
-    registry_blk = _dict_or(data.get("registry"))
-    if "backend" in registry_blk:
-        cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
-    # §54 看板 server 端口
-    cfg.server_port = _server_port_from(data)
-    # §64 待验收卡 AI 摘要 + 评语开关
-    cfg.card_summary_enabled = _card_summary_enabled_from(data, cfg.card_summary_enabled)
-
-
-def _apply_models_voice(cfg: Config, data: dict) -> None:
-    # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
-    # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。
-    models_blk = _dict_or(data.get("models"))
-    for _mode in MODEL_MODES:
-        if _mode in models_blk:
-            setattr(cfg, f"models_{_mode}",
-                    _model_or(models_blk.get(_mode), MODEL_FOLLOW))
-    # D53 第三把：`models.fallback`，坏形状回落出厂值（不是 off——配错字不该
-    # 让 CLI 自己的 4.8 回退悄悄复活）。
-    if "fallback" in models_blk:
-        cfg.models_fallback = _fallback_or(models_blk.get("fallback"), DEFAULT_MODEL_FALLBACK)
-    voice = _dict_or(data.get("voice"))
-    cfg.voice_enabled = _bool_or(
-        voice.get("enabled", cfg.voice_enabled), cfg.voice_enabled
-    )
+def _apply_server_models(cfg: Config, data: dict) -> None:
+    port = _int_or(_dict_or(data.get("server")).get("port"), DEFAULT_SERVER_PORT)
+    cfg.server_port = port if 0 < port < 65536 else DEFAULT_SERVER_PORT
+    models = _dict_or(data.get("models"))
+    if "pipeline" in models:
+        cfg.models_pipeline = _or_default(coerce_model, models.get("pipeline"),
+                                          DEFAULT_MODEL_PIPELINE)
+    if "fallback" in models:
+        cfg.models_fallback = _or_default(coerce_fallback_model, models.get("fallback"),
+                                          DEFAULT_MODEL_FALLBACK)
 
 
 def _apply_recording(cfg: Config, data: dict) -> None:
@@ -993,162 +416,57 @@ def _apply_recording(cfg: Config, data: dict) -> None:
         cfg.recording_ignored_apps = [
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
-    _apply_recording_retention(cfg, recording)
-
-
-def _apply_recording_retention(cfg: Config, recording: dict) -> None:
-    """§72 两把保留期旋钮的 yaml 层（宽容读：坏值 / 越界按「未设」）。独立函数——
-    `_apply_recording` 的圈复杂度账本只剩一格。"""
-    # §72.2：坏值 / 负数按「未设」= 永久保留（与 daily_loop 数字键同款）
+    # §72.2：坏值 / 负数按「未设」= 永久保留
     days = _int_or(recording.get("retention_days", cfg.screenpipe_retention_days),
                    cfg.screenpipe_retention_days)
     cfg.screenpipe_retention_days = days if days >= 0 else cfg.screenpipe_retention_days
     # §72.4：区间外 / 坏值按「未设」= 出厂 60
     if "media_retention_minutes" in recording:
-        try:
-            cfg.screenpipe_media_retention_minutes = coerce_media_retention_minutes(
-                recording.get("media_retention_minutes"))
-        except (TypeError, ValueError):
-            cfg.screenpipe_media_retention_minutes = DEFAULT_MEDIA_RETENTION_MINUTES
-
-
-def _apply_telemetry(cfg: Config, data: dict) -> None:
-    tele = _dict_or(data.get("telemetry"))
-    cfg.telemetry_enabled = _bool_or(
-        tele.get("enabled", cfg.telemetry_enabled), cfg.telemetry_enabled
-    )
-    _lvl = str(tele.get("level", cfg.telemetry_level) or "").strip().lower()
-    cfg.telemetry_level = _lvl if _lvl in TELEMETRY_LEVELS else "basic"
-    if "capture_input" in tele:
-        _apply_capture_input(cfg, tele.get("capture_input"))
-    # An explicit empty/null supabase_url disables uploads entirely (forks:
-    # this is the hard off switch); an ABSENT key keeps the default project.
-    cfg.telemetry_supabase_url = str(
-        tele.get("supabase_url", cfg.telemetry_supabase_url) or ""
-    )
-    cfg.telemetry_key_path = tele.get("key_path", cfg.telemetry_key_path)
-
-
-def _apply_capture_input(cfg: Config, value) -> None:
-    """只有值有效才算「知情选择」——坏值绝不能反过来打开 v2 consent 门。"""
-    try:
-        cfg.telemetry_capture_input = _coerce_bool(value)
-        cfg.telemetry_capture_input_explicit = True
-    except (TypeError, ValueError):
-        pass
+        cfg.screenpipe_media_retention_minutes = _or_default(
+            coerce_media_retention_minutes, recording.get("media_retention_minutes"),
+            DEFAULT_MEDIA_RETENTION_MINUTES)
 
 
 def _apply_redaction(cfg: Config, data: dict) -> None:
     red = _dict_or(data.get("redaction"))
-    cfg.redaction_enabled = _bool_or(
-        red.get("enabled", cfg.redaction_enabled), cfg.redaction_enabled
-    )
+    cfg.redaction_enabled = _bool_or(red.get("enabled", cfg.redaction_enabled),
+                                     cfg.redaction_enabled)
     cfg.redaction_terms_file = red.get("terms_file", cfg.redaction_terms_file)
-    cfg.redaction_mask_secrets = _bool_or(
-        red.get("mask_secrets", cfg.redaction_mask_secrets),
-        cfg.redaction_mask_secrets,
-    )
-    _tf = cfg.redaction_terms_file
-    if _tf and not str(_tf).startswith(("/", "~")):
-        cfg.redaction_terms_file = str(HOME / _tf)
+    cfg.redaction_mask_secrets = _bool_or(red.get("mask_secrets", cfg.redaction_mask_secrets),
+                                          cfg.redaction_mask_secrets)
+    terms = cfg.redaction_terms_file
+    if terms and not str(terms).startswith(("/", "~")):
+        cfg.redaction_terms_file = str(HOME / terms)
 
 
-def _apply_switch_blocks(cfg: Config, data: dict) -> None:
-    """remote (W18) / doctor / updates / ask — one bool each. A non-mapping
-    block reads as {} → the default survives (same outcome as skipping it)."""
-    # W18：config.yaml 是这个闸门的唯一写入面（fail-closed；见 dataclass 注释）
-    remote = _dict_or(data.get("remote"))
-    cfg.remote_allow_direct_run = _bool_or(
-        remote.get("allow_direct_run", cfg.remote_allow_direct_run),
-        cfg.remote_allow_direct_run,
-    )
-    doctor_block = _dict_or(data.get("doctor"))
-    cfg.doctor_ai_fix_enabled = _bool_or(
-        doctor_block.get("ai_fix_enabled", cfg.doctor_ai_fix_enabled),
-        cfg.doctor_ai_fix_enabled,
-    )
-    updates_block = _dict_or(data.get("updates"))
-    cfg.updates_check_enabled = _bool_or(
-        updates_block.get("check_enabled", cfg.updates_check_enabled),
-        cfg.updates_check_enabled,
-    )
-    ask_block = _dict_or(data.get("ask"))
-    cfg.ask_enabled = _bool_or(
-        ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
-    )
-    _apply_recap_block(cfg, data)   # §63 会议 recap 的三把旋钮
-
-
-def _nonblank(value) -> Optional[str]:
-    """str(value).strip() when non-empty and not None; else None."""
-    if value is not None and str(value).strip():
-        return str(value).strip()
-    return None
-
-
-def _apply_maintainer_feedback(cfg: Config, data: dict) -> None:
-    # 设置「开发者 · 维护会话」— optional config.yaml block; blank/absent
-    # values keep the defaults (app repo root / fresh session).
-    maint_block = _dict_or(data.get("maintainer"))
-    _mrp = _nonblank(maint_block.get("repo_path"))
-    if _mrp:
-        cfg.maintainer_repo_path = _mrp
-    _msid = _nonblank(maint_block.get("session_id"))
-    if _msid:
-        cfg.maintainer_session_id = _msid
-    # NB: feedback_publish_default is deliberately NOT read from yaml — it is
-    # the App-managed checkbox memory (override-only; see the dataclass field).
-    fsync = _dict_or(data.get("feedback_sync"))
-    _fs_repo = _nonblank_str(fsync.get("repo", cfg.feedback_sync_repo))
-    if _fs_repo:
-        cfg.feedback_sync_repo = _fs_repo
-    _fs_token = _nonblank_str(fsync.get("token_path", cfg.feedback_sync_token_path))
-    if _fs_token:
-        cfg.feedback_sync_token_path = _fs_token
-
-
-def _apply_language_format_features(cfg: Config, data: dict) -> None:
+def _apply_updates_recap_language(cfg: Config, data: dict) -> None:
+    updates = _dict_or(data.get("updates"))
+    cfg.updates_check_enabled = _bool_or(updates.get("check_enabled", cfg.updates_check_enabled),
+                                         cfg.updates_check_enabled)
+    cfg.updates_auto_install = _bool_or(updates.get("auto_install", cfg.updates_auto_install),
+                                        cfg.updates_auto_install)
+    recap = _dict_or(data.get("recap"))
+    cfg.recap_enabled = _bool_or(recap.get("enabled", cfg.recap_enabled), cfg.recap_enabled)
+    cfg.recap_default_language = coerce_recap_language(
+        recap.get("default_language", cfg.recap_default_language))
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
-    # §15 default output format — invalid/typo values degrade to markdown
-    # (the safe status-quo default), mirroring telemetry_level's fail-safe.
-    _of = str(data.get("default_output_format", cfg.default_output_format)
-              or "").strip().lower()
-    cfg.default_output_format = _of if _of in OUTPUT_FORMATS else "markdown"
-    _apply_features(cfg, data)
 
 
-def _apply_features(cfg: Config, data: dict) -> None:
-    for k, v in _dict_or(data.get("features")).items():
-        # 坏值保留原生效值（默认 on）——"false"/"no" 等字符串拼写照常关闭
-        cfg.features[str(k)] = _bool_or(v, cfg.features.get(str(k), True))
-
-
-# config.yaml 的块应用器——顺序即 load_config 历史上的赋值顺序（各块只写自己的
-# 字段，顺序只在 overrides / 派生目录两步上有意义，见 load_config）。
 _BLOCK_APPLIERS = (
-    _apply_owner,
     _apply_sources,
-    _apply_approval,
     _apply_execution,
-    _apply_retention,
-    _apply_digest_registry_server,
-    _apply_models_voice,
+    _apply_server_models,
     _apply_recording,
-    _apply_telemetry,
     _apply_redaction,
-    _apply_switch_blocks,
-    _apply_maintainer_feedback,
-    _apply_language_format_features,
-    _apply_self_improve_block,          # §65.1
+    _apply_updates_recap_language,
 )
 
 
 def load_config() -> Config:
     """Load ``config.yaml`` (falling back to ``config.example.yaml``).
 
-    Never raises on a missing file — returns a Config with defaults so the
-    daemon keeps running in a fresh checkout.
+    Never raises on a missing file — returns a Config with defaults.
     """
     data = _load_yaml_dict(_config_path())
     cfg = Config(raw=data)
@@ -1161,33 +479,24 @@ def load_config() -> Config:
     return cfg
 
 
-# §55 第五幕：the STABLE daemon copy of the claude binary. install.sh keeps a
-# copy of the login shell's claude at this fixed path (refreshed in place when
-# Claude Code updates). macOS keys Full Disk Access for bare executables by
-# PATH, and `~/.local/bin/claude` re-points to a new
-# `~/.local/share/claude/versions/<v>` on every update — so the owner's grant
-# on the versioned path died with every update (live 2026-09-02: 2.1.258 →
-# 2.1.259 turned doctor's `launchd claude` red again). A grant on THIS path
-# survives, because the path never changes and the refreshed copy still
-# satisfies the grant's code requirement (same Developer ID identifier).
-# Lives beside the §19 home pointer / §56.4 deploy mirror — $HOME is never
-# TCC-gated, so a launchd job can always read it. `AIASSISTANT_STABLE_CLAUDE`
-# relocates it (the test suite points it into the sandbox; install.sh honours
-# the same variable so both sides agree).
-STABLE_CLAUDE_BIN: Path = (Path.home() / "Library" / "Application Support"
-                           / "ZelinAIAssistant" / "bin" / "claude")
+# §55 第五幕：the STABLE copy of the claude binary. install.sh keeps a copy of the
+# login shell's claude at this fixed path (refreshed in place when Claude Code
+# updates). macOS keys Full Disk Access for bare executables by PATH, and
+# `~/.local/bin/claude` re-points to a new versioned directory on every update —
+# a grant on THIS path survives. It also keeps the app off the owner's CLI
+# upgrade cadence. `AIASSISTANT_STABLE_CLAUDE` relocates it (the test suite
+# points it into the sandbox; install.sh honours the same variable).
+STABLE_CLAUDE_BIN: Path = APP_SUPPORT_DIR / "bin" / "claude"
 
 
 def stable_claude_bin() -> Path:
-    """Where the stable daemon copy lives (env override, then the default)."""
+    """Where the stable copy lives (env override, then the default)."""
     override = os.environ.get("AIASSISTANT_STABLE_CLAUDE", "").strip()
     return Path(override).expanduser() if override else STABLE_CLAUDE_BIN
 
 
 def stable_claude_present(path: Optional[Path] = None) -> bool:
-    """True when the stable copy exists and is executable — the only test
-    resolution applies; validity (signature, runs) is install.sh's job at
-    copy time and doctor's at check time."""
+    """True when the stable copy exists and is executable."""
     p = path or stable_claude_bin()
     try:
         return p.is_file() and os.access(str(p), os.X_OK)
@@ -1196,18 +505,14 @@ def stable_claude_present(path: Optional[Path] = None) -> bool:
 
 
 def resolve_claude_bin(cfg: Optional[Config] = None) -> str:
-    """The claude CLI every subprocess site launches (executor/radar/ask/...).
+    """The claude CLI every subprocess site launches (recap here, ingest through
+    ``--print-value claude_bin``).
 
-    Order: execution.claude_bin (explicit pin) -> the stable daemon copy
+    Order: execution.claude_bin (explicit pin) -> the stable copy
     (:func:`stable_claude_bin`, when present) -> PATH -> ~/.local/bin/claude.
-    Daemon PATHs are hostile: cron's misses ~/.local/bin entirely (2026-07-08:
-    radar zero output), and a second, OUTDATED claude install ranked first on
-    launchd's PATH once broke every dispatch with "unknown option '--bg'"
-    (2026-07-08). install.sh now renders the login shell's claude dir first
-    into every plist; the pin covers machines where that still picks wrong.
-    The stable copy ranks above PATH because it is the one path the owner's
-    Full Disk Access grant is attached to (§55 第五幕) — PATH's claude is a
-    symlink into a per-version directory that changes under every update.
+    Daemon PATHs are hostile (cron's misses ~/.local/bin entirely); the stable
+    copy ranks above PATH because it is the one path a Full Disk Access grant
+    survives Claude Code updates on (§55 第五幕).
     """
     if cfg is None:
         cfg = load_config()
@@ -1221,8 +526,7 @@ def resolve_claude_bin(cfg: Optional[Config] = None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Obsidian pipeline dirs (v0.10.3 契约二) — derive the unset ones from the
-# vault root (= obsidian_raw's parent, or the built-in default vault).
+# Obsidian pipeline dirs (v0.10.3 契约二)
 # --------------------------------------------------------------------------- #
 _OBSIDIAN_DIR_NAMES: dict = {
     "obsidian_unprocessed": "1 - unprocessed",
@@ -1243,200 +547,60 @@ def _derive_obsidian_dirs(cfg: Config) -> None:
             setattr(cfg, attr, str(vault / name))
 
 
-def effective_obsidian_raw(cfg: Config) -> Optional[Path]:
-    """The raw-notes dir READERS should use (radar, weekly digest).
-
-    Vault-mirror mode (macOS claude-TCC isolation, ingest/vault-sync.sh): when
-    the ingest chain maintains a repo-local mirror of the vault, readers use
-    the mirror — no pipeline process then touches the TCC-protected
-    ~/Documents, so a claude/python update can never re-prompt or EPERM.
-    Active only when the chain's mode file says "mirror" AND the mirrored raw
-    dir exists; anything else (Linux/Windows, helper missing, grant missing,
-    chain never ran) falls back to the real vault — mirror mode is an
-    upgrade, never a requirement. Returns None when obsidian_raw is unset.
-    """
-    raw_dir = cfg.obsidian_raw
-    if not raw_dir:
-        return None
-    try:
-        mode = (STATE_DIR / "vault_sync_mode").read_text(encoding="utf-8").strip()
-    except OSError:
-        mode = ""
-    if mode == "mirror":
-        mirrored = STATE_DIR / "vault-mirror" / "2 - raw"
-        if mirrored.is_dir():
-            return mirrored
-    return Path(str(raw_dir)).expanduser()
-
-
 # --------------------------------------------------------------------------- #
-# settings_overrides.json overlay (§15) — Mac app writes it; highest priority.
+# settings_overrides.json overlay (§15) — highest priority
 # --------------------------------------------------------------------------- #
-def _coerce_output_format(value) -> str:
-    """§15 override coercion: normalise to a valid OUTPUT_FORMATS member,
-    fail-safe to markdown on any typo/unknown value (mirrors the yaml path)."""
-    v = str(value).strip().lower()
-    return v if v in OUTPUT_FORMATS else "markdown"
-
-
 def _coerce_language(value) -> str:
-    """§15 language 覆盖：与 yaml 路径一致——strip 后非空才生效；空/空白抛
-    ValueError（由 per-entry try 跳过，保留原生效值/默认 "zh"），否则双语
-    文案选择器会拿到既非 zh 也非 en 的空串。"""
+    """§15 language 覆盖：strip 后非空才生效；空/空白抛 ValueError（per-entry 跳过）。"""
     s = str(value).strip()
     if not s:
         raise ValueError("empty language")
     return s
 
 
-# Scalar cfg fields the app may override, with a coercion for each. 布尔键
-# 一律走 _coerce_bool：字符串 "false"/"no" 必须按语义生效（bool() 会反转成
-# True），完全无法解释的值抛异常 → 按 docstring「wrong types are silently
-# ignored」跳过。
+def _clean_str_list(value: list) -> list:
+    """字串表的清洗（去空白、丢空项与非字串）。"""
+    return [str(v).strip() for v in value
+            if isinstance(v, (str, int)) and str(v).strip()]
+
+
+# Scalar cfg fields the overrides file may set, with a coercion for each. Bad
+# values raise → that one entry is skipped (the effective value stays).
 _OVERRIDE_FIELDS: dict = {
     "obsidian_raw": str,
     "obsidian_unprocessed": str,
     "obsidian_change_summary": str,
     "obsidian_wiki": str,
-    "slack_token_path": str,
-    "gmail_address": str,
-    "gmail_app_password_path": str,
-    "gmail_enabled": _coerce_bool,
-    "gmail_fetch_command": str,
-    # §48 三源开关对齐 — App 侧未来的 slack/obsidian 面板写这两个扁平键
-    # （与 gmail_enabled 同款）。
-    "slack_enabled": _coerce_bool,
-    "obsidian_enabled": _coerce_bool,
-    "review_notify": str,
-    # §28 追记（issue #29）：通知偏好六把。两个 HH:MM 端点用 §70 同一个
-    # coerce_clock_time，坏值 → ValueError → per-entry 跳过（保留出厂值）。
-    "quiet_hours_enabled": _coerce_bool,
+    # §28 安静时段（三把）
+    "quiet_hours_enabled": coerce_bool,
     "quiet_hours_start": coerce_clock_time,
     "quiet_hours_end": coerce_clock_time,
-    "notify_proposals": _coerce_bool,
-    "notify_needs_input": _coerce_bool,
-    "notify_failures": _coerce_bool,
-    "fold_receipt_notices": _coerce_bool,   # §44.6 追记（issue #308）
-    "terminal_app": _coerce_terminal_app,
-    "weekly_digest_enabled": _coerce_bool,
-    # §17 (D19): digest cadence — the Settings UI writes this flat key
-    # (diff-write; "off" == product default so writing off deletes the key).
-    "digest_frequency": _coerce_digest_frequency,
-    "show_cost_above_usd": float,
-    "require_text_confirm_above_usd": float,
-    # §76.2（issue #313）被提 N 次仍未处理的升级阈值——设置页「审批 / 成本」区经
-    # PUT /api/settings/approval 写这个扁平键（diff-write 同款；0 = 关掉升级）。
-    # 负数 / 垃圾值 → ValueError → 该条 override 整条跳过（保留出厂值）。
-    "approval_mention_escalation": _nonneg_int,
-    "trash_retention_days": int,
-    # §72 screenpipe DB 保留期（设置页「录制数据与磁盘」区；0 = 永久保留）
+    # §72 / §72.4 录制数据保留期
     "screenpipe_retention_days": int,
-    # §72.4 原始媒体保留分钟数（同一区；cleanup 步经 --print-value 读同一层）
     "screenpipe_media_retention_minutes": coerce_media_retention_minutes,
     "language": _coerce_language,
-    "default_output_format": _coerce_output_format,
-    "redaction_enabled": _coerce_bool,
+    "redaction_enabled": coerce_bool,
     "redaction_terms_file": str,
-    "redaction_mask_secrets": _coerce_bool,
-    # v0.14 (§15.3 add-only): execution keys promoted to Settings controls —
-    # the app diff-writes them (key present only when it differs from the
-    # config.yaml/default effective value).
-    "default_target_repo": str,
-    "skip_permissions": _coerce_bool,
-    "create_github_repo": _coerce_bool,
-    # §26: in-app update check toggle (App 设置「自动检查新版本」, diff-write).
-    "updates_check_enabled": _coerce_bool,
-    # docs/VOICE.md: voice-profile injection master switch (App 设置「启用语气
-    # 注入」, diff-write vs config.yaml `voice.enabled`).
-    "voice_enabled": _coerce_bool,
-    # v0.14 (§15.3 add-only, Slack in-app setup): auth.test auto-fills the
-    # owner identity — the user never types a Uxxxx id by hand.
-    "owner_slack_user_id": str,
-    # 设置「开发者 · 维护会话」(App diff-write): repo the app opens a claude
-    # maintenance session in + the optional session id it resumes.
-    "maintainer_repo_path": str,
-    "maintainer_session_id": str,
-    # 建议公开跟踪表: the feedback dialog's remembered「同时公开到 GitHub」
-    # checkbox state (the app rewrites it after every send); repo/token_path
-    # mirror config.yaml feedback_sync.* for symmetric override coverage.
-    "feedback_publish_default": _coerce_bool,
-    "feedback_sync_repo": str,
-    "feedback_sync_token_path": str,
-    # §59 (D22): the two model knobs — web Settings「模型」writes these flat
-    # keys via server/settings.py (diff-write: a value equal to the
-    # config.yaml/default effective value deletes the key). Bad shapes raise
-    # → per-entry skip, the effective value stays.
-    "models_dispatch": coerce_model,
+    "redaction_mask_secrets": coerce_bool,
+    # §26 / §79
+    "updates_check_enabled": coerce_bool,
+    "updates_auto_install": coerce_bool,
+    # §59 模型旋钮（server/settings.py diff-write）
     "models_pipeline": coerce_model,
-    # §59 D53 (§15 add-only): the third knob — `--fallback-model` id or "off";
-    # same diff-write path as the two above (equal to the effective default
-    # `claude-opus-5[1m]` deletes the key). Bad shapes raise → per-entry skip.
     "models_fallback": coerce_fallback_model,
-    # §63 会议 recap：web Settings「会议纪要」经 server/recaps.py diff-write 这三个
-    # 扁平键；slack_draft 出厂 false（草稿投递是 opt-in，发送永远是人）。
-    "recap_enabled": _coerce_bool,
-    "recap_default_language": _coerce_recap_language,
-    "recap_slack_draft_enabled": _coerce_bool,
-    # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
-    "card_summary_enabled": _coerce_bool,
-    # §70 (D10): the daily self-improvement loop's knobs — web Settings「每日
-    # 整理」writes these flat keys via server/settings.py (diff-write, same
-    # semantics as the model knobs). Bad shapes raise → per-entry skip.
-    "daily_loop_enabled": _coerce_bool,
-    "daily_loop_time": coerce_clock_time,
-    "daily_loop_max_proposals_per_day": _nonneg_int,
-    "daily_loop_stale_days": _nonneg_int,
-    "daily_loop_trash_retention_days": _nonneg_int,
-    "daily_loop_review_stale_days": _nonneg_int,
-    # §65.1 (#307 / D57): 自动改进本软件的通道总开关——设置页「开发者」区经
-    # PUT /api/settings/maintainer 写这个扁平键（diff-write 同款；默认 false）。
-    "self_improve_enabled": _coerce_bool,
-    # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
-    # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
+    # §63 会议 recap（server/recaps.py diff-write）
+    "recap_enabled": coerce_bool,
+    "recap_default_language": coerce_recap_language,
 }
 
-# List-valued override keys (§15.3 add-only, Slack in-app setup) — the scalar
-# coercion table above can't express these. Shapes mirror config.yaml:
-#   slack_channels: [ {"id": "C…", "name": "…"} | "C…" ]   (name optional)
-#   watch_people:   [ "handle", … ]
-_OVERRIDE_LIST_FIELDS: tuple = ("slack_channels", "watch_people")
-
-
-def _channel_entry(it: dict) -> dict:
-    entry: dict = {"id": str(it["id"])}
-    if it.get("name"):
-        entry["name"] = str(it["name"])
-    return entry
-
-
-def _clean_slack_channel(it):
-    """One picker entry → {id[, name]} / bare id string / None (junk)."""
-    if isinstance(it, dict) and it.get("id"):
-        return _channel_entry(it)
-    if isinstance(it, str) and it.strip():
-        return it.strip()
-    return None
-
-
-def _clean_slack_channels(value: list) -> list:
-    return [c for c in map(_clean_slack_channel, value) if c is not None]
-
-
-def _clean_str_list(value: list) -> list:
-    """字串表的清洗（去空白、丢空项与非字串）——watch_people 与
-    `self_improve.owner_logins`（§15.3 §65.5 追记）共用一把。"""
-    return [str(v).strip() for v in value
-            if isinstance(v, (str, int)) and str(v).strip()]
-
-
-def _clean_watch_people(value: list) -> list:
-    return _clean_str_list(value)
+# List-valued override keys (add-only): the sensitive-app exclusion list the
+# Settings page edits (§15 追记 v2.0.0 `recording.ignored_apps`).
+_OVERRIDE_LIST_FIELDS: dict = {"recording_ignored_apps": _clean_str_list}
 
 
 def _read_overrides() -> Optional[dict]:
     """``STATE_DIR/settings_overrides.json`` as a dict; None when absent,
-    malformed or not an object (a broken overrides file must never take the
-    daemon down)."""
+    malformed or not an object."""
     try:
         if not SETTINGS_OVERRIDES_PATH.exists():
             return None
@@ -1450,253 +614,29 @@ def _apply_settings_overrides(cfg: Config) -> None:
     """Overlay ``STATE_DIR/settings_overrides.json`` onto ``cfg`` (§15).
 
     Only the fields the file names are touched. Malformed JSON, wrong types, or
-    unknown keys are silently ignored — a broken overrides file must never take
-    the daemon down.
+    unknown keys (including every key retired with the Act pipeline) are
+    silently ignored — a broken overrides file must never take a process down.
     """
     data = _read_overrides()
     if data is None:
         return
-    # features 的嵌套形 vs 平铺形同文件冲突（App 只写嵌套形、且不清理手写/
-    # 历史遗留的平铺 features.* 键）：嵌套形优先，且与 JSON 键序无关——镜像
-    # Swift Analytics.featureEnabled 的读取顺序（嵌套 → 平铺）。否则同一份
-    # overrides 两侧读出相反的 analytics gate（§16 隐私 gate 两个读者必须
-    # 给出同一个答案）。
-    nested_feats = data.get("features")
-    nested_feats = nested_feats if isinstance(nested_feats, dict) else {}
     for key, value in data.items():
         try:
-            _apply_override(cfg, key, value, nested_feats)
+            _apply_override(cfg, key, value)
         except Exception:  # noqa: BLE001 — skip just the bad entry
             continue
 
 
-def _apply_override(cfg: Config, key: str, value, nested_feats: dict) -> None:
-    """One overrides entry. Exact keys dispatch through _OVERRIDE_HANDLERS (a
-    type mismatch there is a silent no-op, as before); ``features.*`` and
-    ``sources.*`` are prefix families; anything else is a scalar field."""
-    handler = _OVERRIDE_HANDLERS.get(key)
-    if handler is not None:
-        handler(cfg, value, nested_feats)
-    elif key.startswith("features."):
-        _override_flat_feature(cfg, key, value, nested_feats)
-    elif key.startswith("sources."):
-        _override_sources_key(cfg, key, value)
-    else:
-        _override_scalar(cfg, key, value)
-
-
-def _override_scalar(cfg: Config, key: str, value) -> None:
-    """A flat key from the _OVERRIDE_FIELDS table (None never overrides)."""
+def _apply_override(cfg: Config, key: str, value) -> None:
+    """One overrides entry: ``sources.<field>`` dotted form, a list field, or a scalar."""
+    if key.startswith("sources."):
+        key = key.split(".", 1)[1]
+    if key in _OVERRIDE_LIST_FIELDS:
+        if isinstance(value, list):
+            setattr(cfg, key, _OVERRIDE_LIST_FIELDS[key](value))
+        return
     if key in _OVERRIDE_FIELDS and value is not None:
-        _override_field(cfg, key, value)
-
-
-def _override_field(cfg: Config, key: str, value) -> None:
-    """A scalar cfg field through its coercion (raises → entry skipped)."""
-    setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
-    if key == "default_target_repo":
-        cfg.default_target_repo_configured = True
-
-
-def _override_list_field(cfg: Config, sub: str, value: list) -> None:
-    setattr(cfg, sub,
-            _clean_slack_channels(value) if sub == "slack_channels"
-            else _clean_watch_people(value))
-
-
-def _override_sources_key(cfg: Config, key: str, value) -> None:
-    """dotted form mirroring config.yaml, e.g.
-    {"sources.obsidian_wiki": "/path/to/4 - wiki"}"""
-    sub = key.split(".", 1)[1]
-    if sub in _OVERRIDE_LIST_FIELDS and isinstance(value, list):
-        _override_list_field(cfg, sub, value)
-    else:
-        _override_scalar(cfg, sub, value)
-
-
-def _override_features(cfg: Config, value, _nested: dict) -> None:
-    if not isinstance(value, dict):
-        return
-    for fk, fv in value.items():
-        try:
-            cfg.features[str(fk)] = _coerce_bool(fv)
-        except (TypeError, ValueError):
-            continue  # 单个坏 flag 跳过，别拖累同 dict 的其它 flag
-
-
-def _override_flat_feature(cfg: Config, key: str, value, nested_feats: dict) -> None:
-    """flat form: {"features.digest": false}——嵌套 features 块里已有同名
-    flag 时让位（嵌套形优先，见 _apply_settings_overrides 的注释）"""
-    flag = key.split(".", 1)[1]
-    if flag not in nested_feats:
-        cfg.features[flag] = _coerce_bool(value)
-
-
-def _override_gmail(cfg: Config, value, _nested: dict) -> None:
-    """nested form mirroring config.yaml sources.gmail"""
-    if not isinstance(value, dict):
-        return
-    _set_str_if_present(cfg, "gmail_address", value, "address")
-    _set_str_if_present(cfg, "gmail_app_password_path", value, "app_password_path")
-    if value.get("enabled") is not None:
-        try:
-            cfg.gmail_enabled = _coerce_bool(value["enabled"])
-        except (TypeError, ValueError):
-            pass  # 坏 enabled 不能连累同 dict 的 address/path
-    _set_str_if_present(cfg, "gmail_fetch_command", value, "fetch_command")
-
-
-def _set_str_if_present(cfg: Config, attr: str, value: dict, key: str) -> None:
-    if value.get(key) is not None:
-        setattr(cfg, attr, str(value[key]))
-
-
-def _nonblank_str(value) -> str:
-    return str(value or "").strip()
-
-
-def _override_feedback_sync(cfg: Config, value, _nested: dict) -> None:
-    """nested form mirroring config.yaml feedback_sync (repo + token_path
-    only — the checkbox memory is the FLAT feedback_publish_default key the
-    App writes; a nested spelling has no writer and stays a non-key, like in
-    yaml)"""
-    if not isinstance(value, dict):
-        return
-    repo = _nonblank_str(value.get("repo"))
-    if repo:
-        cfg.feedback_sync_repo = repo
-    token_path = _nonblank_str(value.get("token_path"))
-    if token_path:
-        cfg.feedback_sync_token_path = token_path
-
-
-def _override_cost_thresholds(cfg: Config, value, _nested: dict) -> None:
-    """nested form mirroring config.yaml approval.cost_thresholds"""
-    if not isinstance(value, dict):
-        return
-    if value.get("show_cost_above_usd") is not None:
-        cfg.show_cost_above_usd = float(value["show_cost_above_usd"])
-    if value.get("require_text_confirm_above_usd") is not None:
-        cfg.require_text_confirm_above_usd = float(value["require_text_confirm_above_usd"])
-
-
-def _set_telemetry_level(cfg: Config, value) -> None:
-    """invalid explicit values degrade to "basic", mirroring the config.yaml
-    path (fail-private on typos)"""
-    lvl = str(value).strip().lower()
-    cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
-
-
-def _set_capture_input(cfg: Config, value) -> None:
-    cfg.telemetry_capture_input = _coerce_bool(value)
-    # 只有值有效才算「知情选择」过 v2 consent 门
-    cfg.telemetry_capture_input_explicit = True
-
-
-def _override_telemetry(cfg: Config, value, _nested: dict) -> None:
-    """v0.13 (§15 note): the app's first-run page opts OUT of anonymous usage
-    stats by writing {"telemetry": {"enabled": false}}. App-overridable:
-    enabled + level + capture_input ONLY — supabase_url / key_path stay
-    config.yaml-only."""
-    if not isinstance(value, dict):
-        return
-    if value.get("enabled") is not None:
-        _set_telemetry_enabled_soft(cfg, value["enabled"])
-    if value.get("level") is not None:
-        _set_telemetry_level(cfg, value["level"])
-    if value.get("capture_input") is not None:
-        _set_capture_input_soft(cfg, value["capture_input"])
-
-
-def _set_telemetry_enabled_soft(cfg: Config, value) -> None:
-    try:
-        cfg.telemetry_enabled = _coerce_bool(value)
-    except (TypeError, ValueError):
-        pass  # 坏值跳过——尤其不能把 "false" 转成 True
-
-
-def _set_capture_input_soft(cfg: Config, value) -> None:
-    try:
-        _set_capture_input(cfg, value)
-    except (TypeError, ValueError):
-        pass
-
-
-def _override_telemetry_enabled(cfg: Config, value, _nested: dict) -> None:
-    """flat form, same allowlist (§15 telemetry overrides)"""
-    if value is not None:
-        cfg.telemetry_enabled = _coerce_bool(value)
-
-
-def _override_telemetry_level(cfg: Config, value, _nested: dict) -> None:
-    if value is not None:
-        _set_telemetry_level(cfg, value)
-
-
-def _override_telemetry_capture_input(cfg: Config, value, _nested: dict) -> None:
-    if value is not None:
-        _set_capture_input(cfg, value)
-
-
-def _override_slack_channels(cfg: Config, value, _nested: dict) -> None:
-    """§15.3 add-only (Slack in-app setup): the app's channel picker writes the
-    whole list (entries {id,name} or bare id strings); an empty list is a
-    deliberate "watch none"."""
-    if isinstance(value, list):
-        cfg.slack_channels = _clean_slack_channels(value)
-
-
-def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
-    if isinstance(value, list):
-        cfg.watch_people = _clean_watch_people(value)
-
-
-def _set_self_improve_owner_logins(cfg: Config, value: list) -> None:
-    """落回 `cfg.raw["self_improve"]`——`policy.self_improve_config` 从 raw 现读
-    这一键（§15.3 §65.5 追记，issue #310）。空表 = 显式的「没有额外 login」。"""
-    block = cfg.raw.get("self_improve")
-    if not isinstance(block, dict):
-        block = {}
-        cfg.raw["self_improve"] = block
-    block["owner_logins"] = _clean_str_list(value)
-
-
-def _override_self_improve(cfg: Config, value, _nested: dict) -> None:
-    """nested form mirroring config.yaml self_improve —— 设置页「开发者」区的
-    list 字段就写这个形（`{"self_improve": {"owner_logins": [...]}}`）。**只认
-    `owner_logins` 一键**：总开关的唯一 override 拼法仍是扁平的
-    `self_improve_enabled`（§65.1 追记「没有第二套写入面」），其余三键不进
-    overrides（§65.8）。"""
-    if isinstance(value, dict) and isinstance(value.get("owner_logins"), list):
-        _set_self_improve_owner_logins(cfg, value["owner_logins"])
-
-
-def _override_self_improve_owner_logins(cfg: Config, value, _nested: dict) -> None:
-    """flat form: `{"self_improve.owner_logins": ["Wan-ZL"]}`（手写 overrides 的
-    拼法；嵌套形优先，同 telemetry 的两拼法）。"""
-    if isinstance(value, list):
-        _set_self_improve_owner_logins(cfg, value)
-
-
-# exact-key overrides → handler(cfg, value, nested_feats); prefix families and
-# scalar fields are resolved in _apply_override.
-_OVERRIDE_HANDLERS = {
-    "features": _override_features,
-    "gmail": _override_gmail,
-    "feedback_sync": _override_feedback_sync,
-    "cost_thresholds": _override_cost_thresholds,
-    "telemetry": _override_telemetry,
-    "telemetry.enabled": _override_telemetry_enabled,
-    "telemetry.level": _override_telemetry_level,
-    "telemetry.capture_input": _override_telemetry_capture_input,
-    "slack_channels": _override_slack_channels,
-    "watch_people": _override_watch_people,
-    # §15.3 §65.5 追记（issue #310）：两拼法都登记——`_apply_override` 按**精确
-    # 键**分派，只登记 "self_improve" 的话扁平点号键会掉进 `_override_scalar`
-    # 被静默丢掉（"self_improve.owner_logins" 不是 _OVERRIDE_FIELDS 的键）。
-    "self_improve": _override_self_improve,
-    "self_improve.owner_logins": _override_self_improve_owner_logins,
-}
+        setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
 
 
 # --------------------------------------------------------------------------- #
@@ -1704,16 +644,6 @@ _OVERRIDE_HANDLERS = {
 # one-line python call. One place builds the fragment so quoting/NULL handling
 # is testable and the shell never string-munges app names.
 # --------------------------------------------------------------------------- #
-def registry_backend_setting() -> str:
-    """§53：config 面的后端设定（auto|yaml|sqlite）。读 load_config（坏 config
-    回落 auto）；调用频度高的判定方（registry.backend）自带进程内 memo——
-    改 config.yaml 切换后端 = 重启守护进程生效（rollback 文档口径）。"""
-    try:
-        return load_config().registry_backend
-    except Exception:  # noqa: BLE001 - 坏 config 绝不让真源判定崩掉
-        return DEFAULT_REGISTRY_BACKEND
-
-
 def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
     """WHERE-clause fragment excluding frames whose app/window matches
     ``recording.ignored_apps``, mirroring the engine's --ignored-windows
@@ -1760,31 +690,41 @@ def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# CLI — `python3 -m act.lib.config --print-path <key>` (P1-6). Used by the
-# ingest shell scripts to resolve vault paths through the same config layer as
-# the daemon. Must never trace on a broken/missing config: cron consumers need
-# a usable path on stdout, so any load failure prints the built-in default.
+# CLI — `python3 -m act.lib.config --print-path <key>` / `--print-value <key>`.
+# Used by the ingest shell scripts to resolve paths through the same config layer.
+# Must never trace on a broken/missing config: cron consumers need a usable value
+# on stdout, so any load failure prints the built-in default.
 # --------------------------------------------------------------------------- #
 _CLI_PATH_KEYS: tuple = (
     "obsidian_raw",
     "obsidian_unprocessed",
     "obsidian_change_summary",
     "obsidian_wiki",
+    "claude_config_dir",   # §78
+    "headless_cwd",        # §78
 )
 
-
-# 标量设置的 shell 消费面（`--print-value`）：key → 读不出来时打的出厂值。
-# §72.4：ingest/screenpipe-cleanup.sh 读媒体保留分钟数（设置页改完下一轮 cron 即生效）。
+# 标量设置的 shell 消费面：key → 读不出来时打的出厂值（None = 由专门的函数算）。
 _CLI_VALUE_KEYS: dict = {
     "screenpipe_media_retention_minutes": DEFAULT_MEDIA_RETENTION_MINUTES,
+    "claude_bin": None,    # §78：ingest 与 recap 用同一个解析结果
 }
 
 
+def _fallback_claude_bin() -> str:
+    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+
+
 def _print_value(key: str) -> int:
-    """`--print-value <key>`：一个标量设置的生效值（overrides → config.yaml → 默认，
-    与守护进程同一层）打到 stdout 给 shell 消费方。与 `--print-path` 同一条纪律——
-    任何加载失败都打出厂值，绝不 traceback、绝不空行：cron 里的 prune 脚本拿它当
-    `find` 的参数。"""
+    """`--print-value <key>`：一个标量设置的生效值（overrides → config.yaml → 默认）。
+    任何加载失败都打出厂值，绝不 traceback、绝不空行。"""
+    if key == "claude_bin":
+        try:
+            value = resolve_claude_bin()
+        except Exception:  # noqa: BLE001 — silent-on-error: print the fallback
+            value = _fallback_claude_bin()
+        print(value)
+        return 0
     try:
         value = getattr(load_config(), key)
     except Exception:  # noqa: BLE001 — silent-on-error: print the default
@@ -1798,6 +738,31 @@ def _cli_default_path(key: str) -> str:
     if key == "obsidian_raw":
         return str(vault / "2 - raw")
     return str(vault / _OBSIDIAN_DIR_NAMES[key])
+
+
+# §78 的两个路径不经 load_config（不读 config.yaml，永远可用）
+_CLI_ISOLATION_PATHS: dict = {
+    "claude_config_dir": lambda: str(claude_config_dir()),
+    "headless_cwd": headless_cwd,
+}
+
+
+def _print_path(key: str) -> int:
+    if key in _CLI_ISOLATION_PATHS:
+        print(_CLI_ISOLATION_PATHS[key]())
+        return 0
+    try:
+        value = getattr(load_config(), key)
+    except Exception:  # noqa: BLE001 — silent-on-error: print the default
+        value = None
+    if not (value and str(value).strip()):
+        value = _cli_default_path(key)
+    resolved = Path(str(value)).expanduser()
+    if not resolved.is_absolute():
+        # 相对路径按 AIASSISTANT_HOME 锚定（cron 的 cwd 不定）。
+        resolved = HOME / resolved
+    print(resolved)
+    return 0
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -1823,21 +788,7 @@ def main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
     if args.print_value:
         return _print_value(args.print_value)
-    try:
-        value = getattr(load_config(), args.print_path)
-    except Exception:  # noqa: BLE001 — silent-on-error: print the default
-        value = None
-    if not (value and str(value).strip()):
-        value = _cli_default_path(args.print_path)
-    resolved = Path(str(value)).expanduser()
-    if not resolved.is_absolute():
-        # 相对路径按 AIASSISTANT_HOME 锚定（P1-6/§19：cron 消费方需要「拿来
-        # 就能用」的路径）——cron/shell 的 cwd 不定，原样打印会被各自的 cwd
-        # 解析到错误目录；daemon 侧 launchd WorkingDirectory 就是 HOME，
-        # 锚定后两边对同一份 config 的解析结果一致。
-        resolved = HOME / resolved
-    print(resolved)
-    return 0
+    return _print_path(args.print_path)
 
 
 if __name__ == "__main__":

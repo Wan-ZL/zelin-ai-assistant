@@ -1,21 +1,19 @@
-"""AI Doctor (CONTRACT §25) — failure classification, cron probe, AI-fix bundle.
+"""Doctor (CONTRACT §25) — failure classification and the cron probe.
 
 Covers:
 - act/lib/failures: catalog integrity, classify() precision (known raw error
   texts map to ids, unknown text honestly returns None), bilingual copy;
-- Swift drift guard: every failure id in FAILURES appears in
-  mac/Sources/Doctor.swift's FailureCatalog (same pattern as
-  tests/test_capture_exclusion.py);
-- dashboard projection: dispatch_error_id / last_error_id ride alongside the
-  raw error text;
+- v2.0.0 tombstones: ids only the Act pipeline produced stay in the catalog
+  (add-only) marked ``retired``, nothing classifies into them; the two §78 ids
+  are live;
+- mirror: server/failure_catalog.py (``GET /api/failures``) projects every id —
+  the web and the shell read the sentences from there (the mac/ Doctor.swift
+  mirror retired with the menu-bar app);
 - doctor: --json shape carries failure_id/action_id; the cron FDA probe check
   reads state/cron_probe.json honestly (missing / fresh-ok / fresh-blocked /
-  stale);
-- act/ai_fix: the generated .command embeds a SCRUBBED bundle (a planted
-  sk-ant- key must not survive), documents the safety posture, instructs the
-  GitHub-issue ending, and respects doctor.ai_fix_enabled: false;
-- notify builders: bilingual per the §15 language override, and every body
-  names a next step.
+  stale).
+(The dashboard projection, the AI-fix bundle and the card notification builders
+retired with the Act pipeline — full text in tag ``full``.)
 
 Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
@@ -32,9 +30,8 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 from tests.test_launchd_render import install_sh_prelude
 
-from act import ai_fix, doctor
-from act.lib import config, dashboard, failures
-from act.lib.registry import Requirement
+from act import doctor
+from act.lib import config, failures
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NOW = 1_700_000_000.0
@@ -55,22 +52,18 @@ class CatalogTestCase(unittest.TestCase):
 
     def test_plain_sentences_carry_a_consequence_or_next_step(self):
         # audit Theme 11: a bare problem statement is banned — every sentence
-        # names what breaks or what to do (the em-dash clause).
+        # names what breaks or what to do (the em-dash clause). Tombstones (§25
+        # v2.0.0) only say what they used to mean — nothing produces them.
         for fid, entry in failures.FAILURES.items():
+            if fid in failures.RETIRED:
+                continue
             self.assertIn("——", entry["plain_zh"], fid)
             self.assertIn("—", entry["plain_en"], fid)
 
     def test_describe_and_helpers_tolerate_unknown_ids(self):
         self.assertIsNone(failures.describe("no_such_id"))
         self.assertIsNone(failures.describe(None))
-        self.assertIsNone(failures.user_message("no_such_id"))
         self.assertIsNone(failures.action_id(None))
-
-    def test_user_message_is_bilingual(self):
-        self.assertEqual(failures.user_message("engine_dead", lang="zh"),
-                         failures.FAILURES["engine_dead"]["plain_zh"])
-        self.assertEqual(failures.user_message("engine_dead", lang="en"),
-                         failures.FAILURES["engine_dead"]["plain_en"])
 
 
 class ClassifyTestCase(unittest.TestCase):
@@ -93,14 +86,15 @@ class ClassifyTestCase(unittest.TestCase):
                     "env: node: No such file or directory"):
             self.assertEqual(failures.classify(raw), "node_missing", raw)
 
-    def test_outdated_cli_signatures(self):
-        # the 2026-07-08 incident text (old claude 2.1.16 behind launchd PATH)
+    def test_outdated_cli_signatures_no_longer_classify(self):
+        # v2.0.0: the --bg / --name / --resume / agents signatures belonged to the
+        # retired dispatch path (§25); the id itself lives on for the `daemon claude`
+        # version-mismatch row, which attaches it directly
         for raw in ("error: unknown option '--bg'",
-                    "error: unknown option '--bg'\n(Did you mean --debug?)",
                     'Error: Unknown option "--name"',
                     "error: unknown option '--resume'",
                     "error: unknown command 'agents'"):
-            self.assertEqual(failures.classify(raw), "claude_cli_outdated", raw)
+            self.assertIsNone(failures.classify(raw), raw)
 
     def test_generic_unknown_option_stays_unclassified(self):
         # precision contract: only the dispatch-critical flags/subcommands are
@@ -180,7 +174,7 @@ class EngineLogClassifyTestCase(unittest.TestCase):
         fid = failures.classify_engine_log(self.DOWNLOAD, engine_alive=True)
         self.assertEqual(fid, "engine_npm_download")
         # the catalog copy must read as calm progress, not as a failure
-        msg = failures.user_message(fid, lang="zh")
+        msg = failures.FAILURES[fid]["plain_zh"]
         self.assertIn("下载中", msg)
         for bad in ("失败", "错误", "崩溃"):
             self.assertNotIn(bad, msg)
@@ -284,45 +278,46 @@ class EngineLogClassifyTestCase(unittest.TestCase):
             "node_missing")
 
 
-class SwiftDriftTestCase(unittest.TestCase):
-    """FailureCatalog (Doctor.swift) must know every python-side id."""
+class CatalogMirrorTestCase(unittest.TestCase):
+    """server/failure_catalog.py (GET /api/failures) must project every id verbatim."""
 
-    def test_swift_catalog_covers_every_failure_id(self):
-        swift = (REPO_ROOT / "mac" / "Sources" / "Doctor.swift").read_text(
-            encoding="utf-8")
-        for fid in failures.FAILURES:
-            self.assertIn('"%s"' % fid, swift,
-                          "mac/Sources/Doctor.swift FailureCatalog is missing "
-                          "failure id %r (drift with act/lib/failures.py)" % fid)
+    def test_server_catalog_covers_every_failure_id(self):
+        from server import failure_catalog
+        doc = failure_catalog.catalog()["failures"]
+        self.assertEqual(set(doc), set(failures.FAILURES))
+        for fid, entry in failures.FAILURES.items():
+            self.assertEqual(doc[fid], {"zh": entry["plain_zh"], "en": entry["plain_en"],
+                                        "action_id": entry["action_id"]}, fid)
 
 
-class DashboardClassificationTestCase(unittest.TestCase):
-    def test_queued_item_carries_dispatch_error_id(self):
-        req = Requirement.from_dict({
-            "id": "R-900", "title": "t", "status": "approved",
-            "execution": {"last_error": "zsh:1: command not found: claude"},
-        })
-        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
-        item = dash["running"][0]
-        self.assertEqual(item["dispatch_error"], "zsh:1: command not found: claude")
-        self.assertEqual(item["dispatch_error_id"], "claude_cli_missing")
+class TombstoneTestCase(unittest.TestCase):
+    """§25 v2.0.0: retired ids stay (add-only) and say so; the §78 ids are live."""
 
-    def test_unknown_error_projects_null_id(self):
-        req = Requirement.from_dict({
-            "id": "R-901", "title": "t", "status": "approved",
-            "execution": {"last_error": "claude --bg exited 1 (no output)"},
-        })
-        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
-        self.assertIsNone(dash["running"][0]["dispatch_error_id"])
+    RETIRED = {"agent_unloaded", "dashboard_stale", "actd_stalled", "deploy_blind_tcc",
+               "fd_limit", "claude_bypass_disclaimer", "launchd_orphan"}
 
-    def test_queued_item_classifies_outdated_claude(self):
-        req = Requirement.from_dict({
-            "id": "R-902", "title": "t", "status": "approved",
-            "execution": {"last_error": "error: unknown option '--bg'"},
-        })
-        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
-        self.assertEqual(dash["running"][0]["dispatch_error_id"],
-                         "claude_cli_outdated")
+    def test_the_act_only_ids_are_tombstones(self):
+        self.assertLessEqual(self.RETIRED, failures.RETIRED)
+        for fid in failures.RETIRED:
+            entry = failures.FAILURES[fid]
+            self.assertEqual(entry["retired"], "v2.0.0", fid)
+            self.assertTrue(entry["plain_zh"].startswith("（已退役）"), fid)
+            self.assertTrue(entry["plain_en"].startswith("(retired)"), fid)
+            self.assertEqual(failures.row_class(fid), "", fid)
+
+    def test_the_isolation_ids_are_live(self):
+        for fid in ("claude_bare_unsupported", "isolation_footprint_violation"):
+            self.assertIn(fid, failures.FAILURES)
+            self.assertNotIn(fid, failures.RETIRED)
+            self.assertTrue(failures.FAILURES[fid]["plain_zh"])
+
+    def test_the_kept_lite_ids_are_live(self):
+        for fid in ("claude_cli_missing", "claude_auth_failed", "node_missing", "engine_dead",
+                    "screen_tcc_lost", "cron_missing", "cron_fda_blocked", "cron_tcc_blocked",
+                    "config_invalid", "network_error",
+                    # still produced by surviving server-agent / stable-copy rows
+                    "claude_blind", "interpreter_blind", "claude_cli_outdated"):
+            self.assertNotIn(fid, failures.RETIRED, fid)
 
 
 class RowClassTestCase(unittest.TestCase):
@@ -337,14 +332,14 @@ class RowClassTestCase(unittest.TestCase):
                      "show_engine_log", "open_settings_key"}
 
     def test_tcc_grant_ids_are_owner_action(self):
-        for fid in ("claude_blind", "deploy_blind_tcc", "cron_fda_blocked",
-                    "cron_tcc_blocked", "ui_build_tcc_blocked"):
+        for fid in ("claude_blind", "cron_fda_blocked", "cron_tcc_blocked", "ui_build_tcc_blocked",
+                    "screen_tcc_lost"):
             self.assertEqual(failures.row_class(fid), failures.OWNER_ACTION, fid)
 
     def test_code_fixable_ids_and_unknown_ids_have_no_class(self):
         for fid in ("dashboard_stale", "agent_unloaded", "claude_cli_missing",
-                    "claude_cli_outdated", "interpreter_blind", "config_invalid",
-                    "no_such_id", "", None):
+                    "claude_cli_outdated", "deploy_blind_tcc",
+                    "interpreter_blind", "config_invalid", "no_such_id", "", None):
             self.assertEqual(failures.row_class(fid), "", repr(fid))
 
     def test_every_owner_action_id_is_in_the_catalog_with_a_manual_remedy(self):
@@ -364,7 +359,7 @@ class RowClassTestCase(unittest.TestCase):
             self.assertEqual(failures.row_class(fid), "", fid)
 
     def test_with_failure_stamps_the_class_on_the_row(self):
-        owner = doctor.CheckResult("launchd claude", doctor.FAIL, "blind", "grant").with_failure("claude_blind")
+        owner = doctor.CheckResult("cron", doctor.FAIL, "blind", "grant").with_failure("cron_fda_blocked")
         code = doctor.CheckResult("dashboard", doctor.FAIL, "stale", "restart").with_failure("dashboard_stale")
         plain = doctor.CheckResult("dashboard", doctor.FAIL, "stale", "restart")
         self.assertEqual(owner.row_class, "owner_action")
@@ -377,8 +372,8 @@ class DoctorJSONTestCase(unittest.TestCase):
         rows = [doctor.CheckResult("claude CLI", doctor.FAIL, "not on PATH",
                                    "install it").with_failure("claude_cli_missing"),
                 doctor.CheckResult("state dirs", doctor.OK, "writable"),
-                doctor.CheckResult("launchd claude", doctor.FAIL, "blind",
-                                   "grant").with_failure("claude_blind")]
+                doctor.CheckResult("cron", doctor.FAIL, "blind",
+                                   "grant").with_failure("cron_fda_blocked")]
         data = json.loads(doctor.render_json(rows))
         self.assertEqual(data["checks"][0]["failure_id"], "claude_cli_missing")
         self.assertEqual(data["checks"][0]["action_id"], "install_claude")
@@ -386,7 +381,7 @@ class DoctorJSONTestCase(unittest.TestCase):
         self.assertEqual(data["checks"][1]["failure_id"], "")
         self.assertEqual(data["checks"][1]["row_class"], "")
         self.assertEqual(data["checks"][2]["row_class"], "owner_action",
-                         "auto-deploy.sh reads this key to skip owner-action FAILs (§56.3)")
+                         "§69 fresh-install summary buckets owner-action FAILs by this key")
         for key in ("name", "status", "detail", "fix", "row_class"):
             self.assertIn(key, data["checks"][0])
 
@@ -443,126 +438,6 @@ class CronProbeCheckTestCase(unittest.TestCase):
         self.assertEqual(res.status, doctor.WARN)
 
 
-class AIFixTestCase(unittest.TestCase):
-    def setUp(self):
-        config.ensure_state_dirs()
-        self.out_dir = Path(tempfile.mkdtemp(prefix="aifix-out-"))
-        self.log = config.STATE_DIR / "actd.log"
-        self.addCleanup(lambda: self.log.unlink(missing_ok=True))
-        self.results = [doctor.CheckResult(
-            "claude auth", doctor.FAIL, "live call failed",
-            "re-paste the key").with_failure("claude_auth_failed")]
-
-    def test_command_file_scrubs_secrets(self):
-        self.log.write_text(
-            "boom with key sk-ant-api03-SECRETSECRETSECRET123456\n" * 3,
-            encoding="utf-8")
-        path = ai_fix.build_command_file(results=self.results, out_dir=self.out_dir)
-        text = path.read_text(encoding="utf-8")
-        self.assertNotIn("sk-ant-api03-SECRETSECRETSECRET123456", text)
-        self.assertIn("[脱敏]", text)   # sanitize.MASK survived into the bundle
-
-    def test_command_file_is_executable_and_documents_safety(self):
-        path = ai_fix.build_command_file(results=self.results, out_dir=self.out_dir)
-        self.assertTrue(os.access(path, os.X_OK))
-        text = path.read_text(encoding="utf-8")
-        self.assertTrue(path.name.endswith(".command"))
-        self.assertIn("SAFETY", text)
-        self.assertIn("--dangerously-skip-permissions", text)  # stated as NOT used
-        self.assertIn(ai_fix.ISSUES_URL, text)                 # issue-ending instruction
-        self.assertIn(str(config.HOME), text)                  # cd into the repo
-
-    def test_extra_context_lands_in_bundle(self):
-        path = ai_fix.build_command_file(results=self.results,
-                                         extra_context="banner said: pipeline down",
-                                         out_dir=self.out_dir)
-        self.assertIn("banner said: pipeline down",
-                      path.read_text(encoding="utf-8"))
-
-    def test_disabled_flag_exits_2_without_writing(self):
-        cfg_path = config.CONFIG_PATH
-        existed = cfg_path.exists()
-        original = cfg_path.read_text(encoding="utf-8") if existed else None
-        cfg_path.write_text("doctor:\n  ai_fix_enabled: false\n", encoding="utf-8")
-        try:
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                rc = ai_fix.main([])
-            self.assertEqual(rc, 2)
-            self.assertIn("ai_fix_enabled", buf.getvalue())
-        finally:
-            if existed:
-                cfg_path.write_text(original, encoding="utf-8")
-            else:
-                cfg_path.unlink(missing_ok=True)
-
-
-class NotifyCopyTestCase(unittest.TestCase):
-    """§5 v0.14: builders follow the language override and name a next step."""
-
-    def setUp(self):
-        self.overrides = config.SETTINGS_OVERRIDES_PATH
-        self.addCleanup(lambda: self.overrides.unlink(missing_ok=True))
-
-    def _set_lang(self, lang: str):
-        config.ensure_state_dirs()
-        self.overrides.write_text(json.dumps({"language": lang}), encoding="utf-8")
-
-    def test_builders_follow_language_override(self):
-        from act.lib import notify
-        self._set_lang("en")
-        title, body = notify.msg_auto_resume_exhausted("Weekly report")
-        self.assertNotRegex(title + body, re.compile(r"[一-鿿]"),
-                            "English mode must not emit Chinese copy")
-        self._set_lang("zh")
-        title_zh, body_zh = notify.msg_auto_resume_exhausted("周报")
-        self.assertIn("自动恢复已放弃", title_zh)
-
-    def test_auto_resume_exhausted_names_existing_buttons(self):
-        # 审计 2026-07 判例的 v0.48.8 更新（#119）：放弃救活的卡收割进待验收，
-        # 文案必须指向待验收列现存动词（验收/丢弃/打回），不再指「回答…」或
-        # 需输入列（两者已退役），也不能再出现 v0.21 已删除的旧按钮。
-        from act.lib import notify
-        self._set_lang("zh")
-        _, body = notify.msg_auto_resume_exhausted("周报")
-        self.assertIn("待验收", body)
-        self.assertIn("「打回」", body)
-        self.assertNotIn("「回答", body, "#119：回答入口已退役")
-        self.assertNotIn("需输入", body, "#119：需输入列已退役")
-        self.assertNotIn("停止并退回", body, "v0.21 已删除的按钮不能再出现在文案里")
-        self.assertNotIn("「已办完」", body)
-        self._set_lang("en")
-        _, body_en = notify.msg_auto_resume_exhausted("Weekly report")
-        self.assertIn("Review", body_en)
-        self.assertIn("Send back", body_en)
-        self.assertNotIn("Answer", body_en)
-        self.assertNotIn("Stop & return", body_en)
-        self.assertNotIn("Done outside", body_en)
-
-    def test_every_builder_body_names_a_next_step(self):
-        from act.lib import notify
-        self._set_lang("zh")
-        builders = [notify.msg_new_card, notify.msg_done,
-                    notify.msg_review_interrupted,
-                    notify.msg_auth, notify.msg_review_ready,
-                    notify.msg_dispatch_failed, notify.msg_resuming,
-                    notify.msg_auto_resume_exhausted]
-        for fn in builders:
-            _, body = fn("X")
-            self.assertIn("——", body,
-                          "%s body must carry a next step" % fn.__name__)
-
-    def test_dispatch_failed_body_carries_classified_reason(self):
-        # 2026-07-08: "任务派发失败" with no reason left an outdated claude
-        # retrying for hours — a classified error now rides in the body.
-        from act.lib import notify
-        self._set_lang("zh")
-        reason = failures.user_message("claude_cli_outdated", lang="zh")
-        _, body = notify.msg_dispatch_failed("X", reason)
-        self.assertIn(reason, body)
-        self.assertIn("——", body)  # the catalog sentence carries the next step
-
-
 class CronChainProbeWiringTestCase(unittest.TestCase):
     """install.sh arms the probe; the export script writes it atomically."""
 
@@ -617,7 +492,7 @@ class ClaudePathRenderTestCase(unittest.TestCase):
             'RUNTIME_PY=/fake/py/bin/python3\n'
             + ("CLAUDE_LOGIN_BIN=%s\n" % claude_login_bin
                if claude_login_bin else "")
-            + 'render_launchd_plist act/launchd/com.zelin.aiassistant.actd.plist "$OUT"\n'
+            + 'render_launchd_plist act/launchd/com.zelin.aiassistant.server.plist "$OUT"\n'
         )
         proc = subprocess.run(
             ["bash", "-c", script], capture_output=True, text=True, timeout=30,

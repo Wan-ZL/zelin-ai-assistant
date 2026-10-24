@@ -1,17 +1,18 @@
-"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §48.1 / §49 / §68）。
+"""server/settings_catalog.py — 设置页的通用 section 目录（CONTRACT §15.3 / §49 / §68.1）。
 
-原生 Settings.swift 的 20 个区里，凡是「一把旋钮 = settings_overrides.json 的一个
-键」的都收进这一张 server-owned 目录：每个 section 一组 field，每个 field 说明
-自己的 wire 键、类型、可选值、默认值、config.yaml 落点、override 拼法与文案
-（zh/en 两键——防腐 #10：文案进 server-owned catalog，web 只逐字镜像、按 UI
-语言取键）。web 设置页据此**通用渲染**（bool → 开关、enum → 下拉、string /
+凡是「一把旋钮 = settings_overrides.json 的一个键」的设置都收进这一张 server-owned 目录：
+每个 section 一组 field，每个 field 说明自己的 wire 键、类型、可选值、默认值、config.yaml
+落点、override 拼法与文案（zh/en 两键——防腐 #10：文案进 server-owned catalog，web 只逐字
+镜像、按 UI 语言取键）。web 设置页据此**通用渲染**（bool → 开关、enum → 下拉、string /
 number → 输入框、list → 逗号分隔输入框），新增一个旋钮 = 目录里加一行，前端零改动。
-section 与 field 的**标签逐字镜像原生**（ui/parity/native-inventory.json 的 control:settings.*，
-§66.2）：区按原生分（general / notifications / obsidian / slack / gmail / telemetry / digest /
-approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不在此表（§68.3 / §68.2）。
-开发者区前两行是 web 才有的（原生没有）：`self_improve_enabled`（§65.1 / issue #307 / D57）自动改进本软件的通道总开关，默认关；
-`self_improve_owner_logins`（§65.5 / issue #310）额外算作 owner 本人的 GitHub login，默认空表（仓库 owner 与 gh 当前身份恒在集合里）。
-「审批 / 成本」区的 `approval_mention_escalation`（§76.2 / issue #313）也是 web 才有的一行：提案被提够多少次仍未处理就升级（0 = 关），actd 每 pass 现读。
+
+v2.0.0 的 section（§68.1 修订）：general（语言）/ recording（新增 add-only 字段
+``recording.ignored_apps``）/ storage（§72 两把保留期）/ obsidian / notifications（§28 安静
+时段）/ updates（§26 ``check_enabled`` + §79 ``auto_install``）/ redaction。凭证（§68.3）、
+会议纪要（§63）、模型（§59）各有自己的路由（``/api/secrets*``、``/api/settings/recap``、
+``/api/settings/models``）。退役（全文见 tag full）：slack / gmail / telemetry / digest /
+approval / flags / voice / maintainer 八个 section、§48.1 雷达源开关合取写、开发者区动态
+placeholder 与 ``terminal_app_name``、email / session_id 两种 check。
 
 读：``GET /api/settings`` 全目录 + 每 field 的 effective 值与来源
 （override / config / default，三层与 ``act/lib/config._apply_settings_overrides``
@@ -19,37 +20,20 @@ approval / flags / voice / redaction / maintainer），凭证行与桥旋钮不�
 写：``PUT /api/settings/{section}`` body = ``{key: value}`` 子集；未知键 400
 UNKNOWN_FIELD；类型/取值不合法 400 INVALID_FIELD；落盘按 §15.3 v0.14
 **diff-write**——新值等于「不含该 override 的 effective 值」就**删键**，不同才写；
-``write: "always"`` 的键（telemetry.capture_input——知情选择不可被静默 diff-drop；
-general.language——D37 §15 追记：语言的唯一开关，显式选择必须落键，python 侧无
-持久化值时回落的是 locale 而不是目录里那个占位 default）只要在 payload 里就落键。nested 拼法（``telemetry`` / ``features`` 块）写嵌套形并
-顺手清掉同义的扁平点号键（两种拼法 Python 都读，同文件出现两份会让读者各说各话）。
-雷达源开关（slack_enabled / gmail_enabled）翻 **开** = §48.1 合取写：同一笔连
-``features.<src>_radar`` 也写 true（override 压过 yaml 里关着的 flag）；关只写单键。
-数字字段可带 ``bounds``（闭区间 ``(min, max)``，§72.4 的 ``screenpipe_media_retention_minutes``）：PUT 越界 400（区间进 details），
-读到的越界值按缺席落到下一层——与 ``act/lib/config`` 的同名 coercer（越界抛 ValueError）同一条规则，
-保证「设置页显示的数 == 管线真用的数」；投影 add-only ``bounds{min,max}``，web 的 min / max 与「保存」闸逐字镜像。
-字段可带 ``check``（词表 truth = ``settings_catalog.CHECKS`` / ``_CHECKERS``，今日为 ``email`` /
-``session_id`` / ``clock_time``）：server 400 + 目录投影双语句，web 镜像同一条规则（``web/src/components/settings/draftRules.ts``
-的 ``checkReason`` 逐条对应，不合格 = aria-invalid + 就地那句 + 「保存」不放行）；一个 check 不止一句时
-（session_id：以 ``-`` 开头另有一句）分句登记在 ``CHECK_REASONS``，投影 ``check.reasons``、
-400 的 details 带 ``reason``（§68.7 追记）。过闸后还要**归一**的 kind 登记在 ``_NORMALIZERS``
-（clock_time：``9:30`` → ``09:30``，§28 追记 2026-09-12）——落进 overrides 的拼法必须与
-``act/lib/config`` 读到的逐字一致，否则同一把旋钮在文件与守护进程里两种写法。开发者区（maintainer）两行的 ``placeholder`` 是**动态**的（原生
-SettingsMaintainer 的灰字 = 生效默认：仓库路径 = config.yaml maintainer.repo_path 否则本 checkout；会话 id =
-config.yaml maintainer.session_id，没设才是示例），section 投影另带 add-only ``terminal_app_name``（「会在 <终端> 中打开」）。
-help 文案是 server-owned 的**披露句**，不只是提示：slack / gmail 两区的区首导语、``gmail_fetch_command`` 的
-§14bis 命令契约句（直接执行、``GMAIL_RADAR_LAST_UID``、stdout 一个 JSON 数组）、telemetry 三段知情披露
-（元数据字段表 / 500 字截断 + 密钥掩码 / 最上方开关停全部上传）逐字镜像原生段落——判例
-tests/test_server_settings_help_copy.py 钉住每一句。
+``write: "always"`` 的键（general.language——D37 §15 追记：语言的唯一开关，显式选择必须
+落键）只要在 payload 里就落键。数字字段可带 ``bounds``（闭区间，§72.4）：PUT 越界 400，
+读到的越界值按缺席落到下一层——与 ``act/lib/config`` 的同名 coercer 同一条规则。
+字段可带 ``check``（词表 truth = ``CHECKS``，今日只有 ``clock_time``）：server 400 + 目录投影
+双语句，web 镜像同一条规则；过闸后还要**归一**的 kind 登记在 ``_NORMALIZERS``（``9:30`` →
+``09:30``）——落进 overrides 的拼法必须与 ``act/lib/config`` 读到的逐字一致。
 
-server/ 不 import act（§49）：override 键名、config 路径与默认值镜像自
-act/lib/config.py，判例 tests/test_server_settings_catalog.py 钉住每个键都在
-``_OVERRIDE_FIELDS`` / 嵌套白名单里、默认值与 Config 数据类逐字一致。
+server/ 镜像 act/lib/config.py 的 override 键名、config 路径与默认值，判例
+tests/test_server_settings_catalog.py 钉住每个键都在 ``_OVERRIDE_FIELDS`` / list 白名单里、
+默认值与 Config 数据类逐字一致。
 """
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -68,40 +52,22 @@ LIST_MAX = 200          # list 字段：项数与每项长度的帽
 _TRUE_WORDS = frozenset({"true", "yes", "on", "1"})
 _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 
-# 字段校验词表（add-only，§68.1 追记）：kind → 不合格时的双语句。句子是 server-owned（防腐 #10）：目录投影
+# 字段校验词表（add-only，§68.1 追记）：kind → 不合格时的双语句（server-owned，防腐 #10）。目录投影
 # `check: {kind, message{zh,en}}`，web 保存前按同一条规则拦、显示同一句；server 侧 400 是非 web 客户端的兜底。
-# email = 原生 SettingsGmail.validateAddress 逐字（含 Workspace 提示）。
-# session_id = 原生 SettingsMaintainer.validateSessionID 逐字（§68.7 追记）：主句 = 字符白名单；以 - 开头另有一句
-# （CHECK_REASONS）——id 之后骑在 shell 命令行上，白名单兼作注入闸，首连字符检查防它被当成 CLI 选项。
+# v2.0.0：email（Gmail 地址）与 session_id（开发会话）随各自的 section 退役。
 CHECKS = {
-    "email": {"zh": "邮箱格式不对——例：you@gmail.com（公司 Google Workspace 邮箱也可以）",
-              "en": "That email doesn't look right — e.g. you@gmail.com (a Google Workspace address works too)"},
-    "session_id": {"zh": "会话 ID 只能包含字母、数字和连字符（-）——从 claude 里复制的会话 ID 就是这个样子。",
-                   "en": "A session id may only contain letters, digits, and hyphens (-) — the id you copy from claude is exactly that shape."},
     # §28 追记（issue #29）安静时段的两个端点；词法 = server.settings.CLOCK_TIME_RE
     # （act/lib/config.coerce_clock_time 同一正则，tests/test_server_paths_mirror.py 钉）。
     "clock_time": {"zh": "时间要写成 24 小时制的 HH:MM——例：22:00、08:30。",
                    "en": "Write the time as 24-hour HH:MM — e.g. 22:00, 08:30."},
 }
 
-# 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}；checker 返回的 reason 在表里就用那句，否则用
-# CHECKS 的主句。投影 ``check.reasons``，400 的 details 带 ``reason``——web 据此显示同一句。
-CHECK_REASONS = {
-    "session_id": {
-        "leading_hyphen": {"zh": "会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。",
-                           "en": "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id."},
-    },
-}
+# 一个 check 不止一句时的分句（add-only）：kind → {reason → 双语句}。今日无。
+CHECK_REASONS: dict = {}
 
-# 会话 id 的形状（保存与启动同一把，maintainer_launch 复用）：首字符字母 / 数字（首连字符 = CLI 选项的形状），其余
-# [A-Za-z0-9-]。原生同款**不设长度帽**——字符白名单本身就是注入闸，句子说的是字符，不合的只能是字符（PUT 的长度另有
-# STRING_MAX 那句兜着，两句不许混）。
-SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
-
-# §48.1 合取写：雷达源开关 → 合取的另一半（flags 区的 feature flag 键）。原生 SettingsGmail.setEnabled /
-# SettingsSlack.persistFlag：打开 = 用户显式动作，把两个键都写进 override（yaml 里 features.<src>_radar:false
-# 仍压着雷达的话，只写开关会「显示开启、雷达静默」）；关闭只写单键（合取，一票否决）。
-RADAR_SWITCH_FLAGS = {"slack_enabled": "features.slack_radar", "gmail_enabled": "features.gmail_radar"}
+# mirror of act/lib/config.DEFAULT_IGNORED_APPS（§15 追记 v2.0.0 `recording.ignored_apps` 的出厂值）
+DEFAULT_IGNORED_APPS = ["1Password", "Bitwarden", "LastPass", "KeePassXC", "Keychain Access",
+                        "Private Browsing", "Incognito"]
 
 
 def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
@@ -138,81 +104,68 @@ def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
 # --------------------------------------------------------------------------- #
 # 目录（顺序 = 设置页通用区的显示顺序）
 # --------------------------------------------------------------------------- #
-# 原生 Settings.swift featureFlagsGroup 的六条双语标签 + web 才有的两把（feedback_sync / auto_deploy）。
-# 键写全拼（"features.<flag>"，与 overrides 嵌套块的点号拼法一致）——设置键探针按字面量找（§66.2 setting:overrides:*）。
-_FLAGS = (
-    ("features.slack_radar", "Slack 需求雷达", "Slack demand radar"),
-    ("features.gmail_radar", "Gmail 捕获", "Gmail capture"),
-    ("features.obsidian_radar", "Obsidian 雷达", "Obsidian radar"),
-    ("features.digest", "状态摘要", "status digest"),
-    ("features.auto_resume", "后台任务自动拉起", "auto-resume background tasks"),
-    ("features.analytics", "用量统计", "usage stats"),
-    ("features.feedback_sync", "建议同步到 GitHub", "feedback sync to GitHub"),
-    ("features.auto_deploy", "自动部署", "auto-deploy"),
-)
-
 SECTIONS: tuple = (
     _section(
         "general", "通用", "General",
         [
-            # D37（§15 追记 2026-09-06）：语言只有一把开关——顶栏切换 / `/lang` / 向导 / 这里 都写这同一个键，看板与
-            # Python 侧文案（通知 / 修法句）都读它。`write="always"`：原生 Settings.persistLanguage「Language is an explicit
-            # user choice that must stick (the fallback is locale-dependent, not a config layer) — always written on change」——
-            # 目录里的 default "zh" 与 Config.language 的 dataclass 默认一样只是占位（python 侧 failures.ui_lang 没有持久化值时
-            # 回落到 locale，launchd 下无 LANG 即 en），diff-write 会把等于 "zh" 的显式选择删成「没选过」。
+            # D37（§15 追记 2026-09-06）：语言只有一把开关——顶栏切换 / 向导 / 这里 都写这同一个键。
+            # `write="always"`：显式选择必须落键（python 侧没有持久化值时回落到 locale，不是目录里的占位 default）。
             _f("language", "enum", "界面语言", "Interface language", default="zh",
                choices=("zh", "en"), config=("language",), write="always",
-               help_zh="看板、系统通知与修法句共用这一把开关：顶栏切换、/lang 与这里改的都是同一个值。",
-               help_en="One switch for the board, system notifications and fix sentences: the header toggle, /lang and this field all write the same value."),
-            _f("default_output_format", "enum", "交付物默认格式", "Deliverable format", default="markdown",
-               choices=("markdown", "html"), config=("default_output_format",),
-               help_zh="以你名义起草文档 / 报告时用哪种标记语言。",
-               help_en="Which markup drafts and reports written in your name use."),
-            _f("updates_check_enabled", "bool", "自动检查新版本（每天最多一次）",
-               "Check for updates automatically (at most once a day)", default=True,
-               config=("updates", "check_enabled"),
-               help_zh="至多每 24h 向 GitHub 查一次最新版本号（只暴露 IP + 当前版本号）。",
-               help_en="At most one GitHub version check per 24h (exposes only your IP + current version)."),
-            # 原生 UserDefaults terminalApp 的 server 侧落点（§66.2 setting:prefs:terminalApp；标签逐字镜像
-            # Settings.swift「终端应用」）：执行者是 server（open -a），所以偏好住 overrides 而非浏览器。
-            _f("terminal_app", "enum", "终端应用", "Terminal app", default="auto",
-               choices=("auto", "ghostty", "terminal", "iterm2"),
-               help_zh="「在终端打开」（接管会话）/ 开发会话 / 卸载 都在这个终端里新开窗口运行。自动 = 装了 Ghostty 就用 Ghostty，否则 Terminal；选了没装的会回落到系统默认终端。",
-               help_en="\"Open in terminal\" (take over a session) / development session / uninstall open a new window in this terminal. Auto = Ghostty when installed, else Terminal; a choice that is not installed falls back to the system default terminal."),
-            # 原生 AppDelegate.rememberFeedbackPublishDefault 的 override 键（§66.2 setting:overrides:feedback_publish_default）：
-            # 「提建议」弹窗里「同时公开到 GitHub」勾选的默认态 = 上次选择；web 弹窗读 effective、勾选即 PUT（§29bis）。
-            _f("feedback_publish_default", "bool", "提建议默认勾选「公开到 GitHub」", "Publish feedback by default",
-               default=False,
-               help_zh="「提建议」弹窗里「同时公开到 GitHub 建议跟踪表」的默认勾选态；弹窗里改一次就记住。",
-               help_en="Default state of the \"also publish to the GitHub feedback tracker\" checkbox in the feedback dialog; changing it there is remembered."),
+               help_zh="看板、系统通知与修法句共用这一把开关：顶栏切换与这里改的都是同一个值。",
+               help_en="One switch for the board, system notifications and fix sentences: the header toggle and this field write the same value."),
+        ],
+    ),
+    _section(
+        "recording", "录制", "Recording",
+        [
+            # §15 追记 v2.0.0（add-only）：敏感应用排除表。录制引擎启动时逐条传给 --ignored-windows（匹配的窗口
+            # 根本不落盘），导出脚本对已入库的帧再过一遍同一张表（act/lib/config.recording_exclusion_sql）。
+            _f("recording_ignored_apps", "list", "不录制的应用 / 窗口（逗号分隔）",
+               "Apps / windows never recorded (comma-separated)", default=list(DEFAULT_IGNORED_APPS),
+               config=("recording", "ignored_apps"),
+               help_zh="应用名或窗口标题里包含这些词的窗口不会被录制（不分大小写；「应用::标题」可同时限定两者）。清空 = 回到出厂表。改完下一次启动录制生效。",
+               help_en="Windows whose app name or title contains one of these terms are never recorded (case-insensitive; \"App::Title\" scopes both). Clearing the field restores the defaults. Takes effect the next time recording starts."),
+        ],
+    ),
+    _section(
+        "storage", "录制数据与磁盘", "Recording data & disk",
+        [
+            # §72.2（issue #28）：screenpipe DB 的保留期。0 = 永久保留 = 出厂默认；N ≥ 1 = cron 链的 cleanup 步删
+            # 「已导出进 vault 且早于 N 天」的行（act/lib/screenpipe_retention.py）。磁盘占用走 GET /api/screenpipe/disk。
+            _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
+               config=("recording", "retention_days"),
+               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。",
+               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below."),
+            # §72.4（issue #28）：原始 jpg / mp4 的保留期。区间外 400 而不是夹取：文件里写着的数必须就是 cron 用的数。
+            _f("screenpipe_media_retention_minutes", "int", "原始媒体保留分钟数", "Raw media retention (minutes)",
+               default=60, config=("recording", "media_retention_minutes"),
+               bounds=(5, 365 * 24 * 60),
+               help_zh="截图与音频片段（~/.screenpipe/data 里的 jpg / mp4）在本机留多少分钟——OCR 文本与转写此前已经导出，删的只是原始媒体。默认 60；最短 5 分钟（整理每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧），最长 525600（一年）。改完下一轮整理生效，无需重启。",
+               help_en="How many minutes raw screenshots and audio chunks (the jpg / mp4 files under ~/.screenpipe/data) stay on this machine — their OCR text and transcripts are already exported, so only the raw media goes. Default 60; minimum 5 (the tidy runs every 30 minutes, and anything shorter cuts into the frames being exported in the same round), maximum 525600 (one year). Takes effect on the next tidy, no restart."),
+        ],
+        help_zh="录制引擎把 OCR 文本与音频转写攒在 ~/.screenpipe/db.sqlite，原始 jpg / mp4 攒在 ~/.screenpipe/data；这里看它们占了多少盘、每月长多少，并各给一个保留期。",
+        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite and raw jpg / mp4 under ~/.screenpipe/data; see how much disk they take, how fast they grow, and give each a retention window.",
+    ),
+    _section(
+        "obsidian", "笔记库", "Notes vault",
+        [
+            # 键存的是 raw 目录（`<根>/2 - raw`，act/lib/config.py 由它的父目录派生另外三个管线目录），但用户面对的是
+            # **vault 根**（§68.1 追记）：web 显示父目录、落 `<根>/2 - raw`。
+            _f("obsidian_raw", "string", "Obsidian Vault 位置", "Obsidian Vault location", default="",
+               config=("sources", "obsidian_raw"), path="dir",
+               placeholder=("~/Documents/Obsidian Vault", "~/Documents/Obsidian Vault"),
+               help_zh="截图与录音整理成的笔记存这里。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw · 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。",
+               help_en="Notes made from your screen and audio captures live here. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault."),
         ],
     ),
     _section(
         "notifications", "通知", "Notifications",
         [
-            _f("review_notify", "enum", "任务完成提醒", "Task-done alert", default="sound",
-               choices=("off", "banner", "sound"),
-               help_zh="卡片进入「待验收」时的系统通知：关 / 横幅 / 横幅+声音（默认）。其余通知不受影响。",
-               help_en="System notification when a card reaches In review: off / banner / banner + sound (default). Other notifications are unaffected."),
-            # §28 追记（issue #29）分类开关：三把都默认开（新装机行为不变）。
-            # 「完成」一类的开关就是上面那三档，不另立第二把。
-            _f("notify_proposals", "bool", "新提案通知", "New-proposal alerts", default=True,
-               help_zh="雷达 / 捕获铸出新卡等你审批时（含回锅、含一次性批量汇总）。关掉不影响卡片本身，只是不弹横幅——看板上照样在等。",
-               help_en="When a radar or a capture files a new card for your approval (including returned cards and the batched \"N new cards\" summary). Turning it off changes nothing about the cards themselves — they still wait on the board, you just get no banner."),
-            _f("notify_needs_input", "bool", "任务停下来时通知", "Needs-input alerts", default=True,
-               help_zh="会话停在等你一句话时：受阻收割进「待验收」、反复中断暂停自动救活、派发连续失败后停止重试。",
-               help_en="When a session stops and waits on you: a blocked session harvested into In review, auto-recovery paused after repeated crashes, dispatch giving up after a streak of failures."),
-            _f("notify_failures", "bool", "失败通知", "Failure alerts", default=True,
-               help_zh="需要重新登录、雷达停摆、任务派发失败、会话没停住、registry 护栏告警。默认开，且不受安静时段管——凭证半夜过期也该当场知道；真要静音得在这里显式关掉。",
-               help_en="Login needed again, a radar gone quiet, a task that failed to launch, a session that would not stop, the registry guard. On by default, and quiet hours do not silence it — a credential that expires at 2am is still worth knowing about; silencing it takes an explicit switch here."),
-            # 安静时段：写方不入队（不是攒着早上再弹）——§28 的 10 分钟 stale
-            # 清扫让「压到早上」没法兑现；help 文案诚实写明这一点，并点名 §70
-            # 每日循环的出厂时刻（03:30，truth = act/lib/config.DEFAULT_DAILY_LOOP_TIME，
-            # 判例 tests/test_server_notify_preferences_settings.py 对着它比）正落在
-            # 出厂窗内——最大的一处交互，不写出来就是骗人。
+            # §28 v2.0.0：通知只剩两类——会议纪要已生成、录制 / ingest 坏到需要人修（后者穿透安静时段）。
             _f("quiet_hours_enabled", "bool", "安静时段", "Quiet hours", default=False,
-               help_zh="开启后，下面的时段内不弹任何横幅（三类除外：失败通知、你刚按下的按钮的回执、待验收卡归档前的最后一次告知）。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28），攒一夜只能是谎话。错过的事一件不少地在看板上等你。注意每日自我改进循环出厂就在 03:30 跑，正落在出厂窗（22:00 → 08:00）内——它铸的提案不会响，只在看板上等你。",
-               help_en="While on, no banner is posted inside the window below (three exceptions: failure alerts, the receipt for a button you just pressed, and the last call before a card in review is archived). Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28), so holding one overnight would be a lie. Nothing is lost — every item is still on the board when you get up. Note the daily self-improve loop runs at 03:30 out of the box, inside the default window (22:00 → 08:00): the proposals it files stay silent and wait for you on the board."),
+               help_zh="开启后，下面的时段内不弹「会议纪要已生成」横幅；录制 / 笔记整理坏掉的通知照常弹。这一段时间的通知是丢掉，不是攒到早上：通知队列本就只留 10 分钟（§28）。纪要本身一份不少地在「会议纪要」页等你。",
+               help_en="While on, no \"meeting recap ready\" banner is posted inside the window below; alerts that recording or note processing broke still post. Notifications in that window are dropped, not held until morning: the queue only keeps an entry for 10 minutes (§28). Every recap is still on the Meeting recaps page."),
             _f("quiet_hours_start", "string", "安静时段开始", "Quiet hours start", default="22:00",
                check="clock_time", placeholder=("22:00", "22:00"),
                help_zh="24 小时制 HH:MM，本机时间。开始晚于结束 = 跨午夜（例：22:00 → 08:00）。",
@@ -221,194 +174,24 @@ SECTIONS: tuple = (
                check="clock_time", placeholder=("08:00", "08:00"),
                help_zh="24 小时制 HH:MM，本机时间。两端相同 = 零长窗，等于没开安静时段。",
                help_en="24-hour HH:MM, local time. Both ends equal = a zero-length window, i.e. quiet hours are effectively off."),
-            # §44.6 追记（issue #308 / D64）：提案列顶那排绿色回执的总开关。自动
-            # 通道（雷达 / 每日整理）本就不再出回执，这把只管剩下的用户通道。
-            _f("fold_receipt_notices", "bool", "静默并入回执", "Silent-merge receipts", default=True,
-               help_zh="你自己捕获的一句话被并进已有卡（没有建新卡）时，提案列顶给一行绿色回执。只管你自己投进来的输入：雷达自动扫到的内容并进已有卡不出回执，它留在目标卡的并入记录和「已并入×N」章里。同一张卡的多次并入合成一条（×N）。",
-               help_en="When something you captured is merged into an existing card (no new card filed), a green notice appears atop the proposals lane. It only covers your own input: content the radar picked up on its own never raises one — that stays in the target card's fold notes and its \u201cFolded \u00d7N\u201d chip. Repeat merges into the same card collapse into one line (\u00d7N)."),
         ],
-        help_zh="系统通知由看板 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
-        help_en="System notifications are posted by the board app (§28); no app running = no banners. Permission status: Permissions checkup.",
+        help_zh="系统通知由 app（壳）投递（§28）；app 没开就没有系统通知。通知权限见「权限体检」。",
+        help_en="System notifications are posted by the app (§28); no app running = no banners. Permission status: Permissions checkup.",
     ),
     _section(
-        "storage", "录制数据与磁盘", "Recording data & disk",
+        "updates", "更新", "Updates",
         [
-            # §72.2（issue #28）：screenpipe DB 的保留期。0 = 永久保留 = 出厂默认（现状不变）；N ≥ 1 = cron 链的
-            # cleanup 步删「已导出进 vault 且早于 N 天」的 frames / OCR / 音频转写行（act/lib/screenpipe_retention.py）。
-            # 磁盘占用 / 增长估算 / 上次清理回执不是旋钮，走 GET /api/screenpipe/disk（web StorageStatus 渲在这一区的 lead 槽）。
-            _f("screenpipe_retention_days", "int", "录制数据保留天数", "Recording data retention (days)", default=0,
-               config=("recording", "retention_days"),
-               # 「一小时」曾是这句里的字面量；它成了旋钮之后只能指路（防腐 #5），zh / en 两句说同一件事
-               help_zh="早于此天数且已导出进笔记库的屏幕 OCR / 音频转写行会在下一次 30 分钟整理里删掉（分批、不 VACUUM：文件不立刻缩小，空间由新数据复用）；0 = 永久保留（默认）。原始 jpg / mp4 按下面那把「原始媒体保留分钟数」删，与此无关。",
-               help_en="Screen OCR / audio-transcript rows older than this that are already exported to the vault are deleted on the next 30-minute tidy (batched, no VACUUM: the file does not shrink at once, new data reuses the space); 0 = keep forever (default). Raw jpg / mp4 are deleted on their own schedule below."),
-            # §72.4（issue #28）：原始 jpg / mp4 的保留期。历来写死 60 分钟，现在是一把旋钮——
-            # 同一条 cleanup 链读它（`--print-value`），改完下一轮 cron 生效、无需重启。区间外 400
-            # 而不是夹取：文件里写着的数必须就是 cron 用的数（act coerce_media_retention_minutes 同规则）。
-            _f("screenpipe_media_retention_minutes", "int", "原始媒体保留分钟数", "Raw media retention (minutes)",
-               default=60, config=("recording", "media_retention_minutes"),
-               bounds=(5, 365 * 24 * 60),
-               help_zh="截图与音频片段（~/.screenpipe/data 里的 jpg / mp4）在本机留多少分钟——OCR 文本与转写此前已经导出，删的只是原始媒体。默认 60；最短 5 分钟（整理每 30 分钟一轮，比这更短会削到同一轮里正在导出的那批帧），最长 525600（一年）。改完下一轮整理生效，无需重启。",
-               help_en="How many minutes raw screenshots and audio chunks (the jpg / mp4 files under ~/.screenpipe/data) stay on this machine — their OCR text and transcripts are already exported, so only the raw media goes. Default 60; minimum 5 (the tidy runs every 30 minutes, and anything shorter cuts into the frames being exported in the same round), maximum 525600 (one year). Takes effect on the next tidy, no restart."),
-        ],
-        help_zh="录制引擎把 OCR 文本与音频转写永久攒在 ~/.screenpipe/db.sqlite，原始 jpg / mp4 攒在 ~/.screenpipe/data；这里看它们占了多少盘、每月长多少，并各给一个保留期。",
-        help_en="The recording engine keeps OCR text and audio transcripts in ~/.screenpipe/db.sqlite forever and raw jpg / mp4 under ~/.screenpipe/data; see how much disk they take, how fast they grow, and give each a retention window.",
-    ),
-    _section(
-        "obsidian", "笔记库", "Notes vault",
-        [
-            _f("obsidian_enabled", "bool", "启用 Obsidian 雷达", "Enable the Obsidian radar", default=True,
-               config=("sources", "obsidian", "enabled"),
-               help_zh="扫描笔记库 raw 目录里的新笔记（屏幕/会议 ingest 的落点）。",
-               help_en="Scans new notes in the vault's raw folder (where screen / meeting ingest lands)."),
-            # 键存的是 raw 目录（`<根>/2 - raw`，act/lib/config.py 由它的父目录派生另外三个管线目录），但用户面对的是
-            # **vault 根**（原生 Settings.swift:740-792 一格 vault 根字段；§68.1 追记）：web 显示父目录、落 `<根>/2 - raw`；
-            # 文案随之说 vault（原生 :750 副标题 + :787 页脚逐字），placeholder = 默认根（DEFAULT_OBSIDIAN_VAULT）。
-            _f("obsidian_raw", "string", "Obsidian Vault 位置", "Obsidian Vault location", default="",
-               config=("sources", "obsidian_raw"), path="dir",
-               placeholder=("~/Documents/Obsidian Vault", "~/Documents/Obsidian Vault"),
-               help_zh="笔记存这里，雷达也从这里发现待办。vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。",
-               help_en="Notes live here; the radar scans it for asks. Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault."),
-        ],
-        help_zh="每个源 = feature flag × 源开关（§48）；这里是源开关，flag 在「Feature flags」。真正生效的状态看下方健康摘要。",
-        help_en="Each source = feature flag × source switch (§48); this is the switch, the flag lives under \"Feature flags\". The health line below shows what is actually in effect.",
-    ),
-    _section(
-        "slack", "Slack 接入", "Slack",
-        [
-            _f("slack_enabled", "bool", "启用 Slack 雷达", "Enable the Slack radar", default=True,
-               config=("sources", "slack", "enabled"),
-               help_zh="扫描 DM / @提及 / 自发消息（手机端快速捕获入口）。凭证在下方 Slack user token。",
-               help_en="Scans DMs / @mentions / self-DMs (the phone capture inlet). Credential: the Slack user token below."),
-            _f("owner_slack_user_id", "string", "你的 Slack user id", "Your Slack user id", default="",
-               help_zh="验证 token 通过后自动填好（auth.test）；一般不用手改。",
-               help_en="Auto-filled when the token verifies (auth.test); rarely needs editing."),
-            _f("slack_channels", "list", "监控频道（channel id，逗号分隔）", "Watched channels (channel ids, comma-separated)",
-               default=[], config=("sources", "slack_channels"),
-               help_zh="雷达额外扫描的频道；留空 = 只看 DM / @提及 / 自发消息。",
-               help_en="Extra channels the radar scans; blank = DMs / @mentions / self-DMs only."),
-            _f("watch_people", "list", "关注的人（handle，逗号分隔）", "People to watch (handles, comma-separated)",
-               default=[], config=("sources", "watch_people"),
-               help_zh="这些人发的消息按需求候选提取。", help_en="Messages from these people are mined for asks."),
-        ],
-        # 区首导语逐字镜像原生 SettingsSlack.swift body 首段（parity 批 catalog-help-copy）
-        help_zh="把「别人在 Slack 上找你的事」（DM / 群 / @提及）自动变成提案卡。3 步全在这里完成，不用改任何文件；对外只出草稿，永远你自己发。此区改动即时生效。",
-        help_en="Turns \"people needing you on Slack\" (DMs / groups / @mentions) into proposal cards automatically. All 3 setup steps happen right here — no files to edit; outbound replies are drafts only, you always send them yourself. Changes apply immediately.",
-    ),
-    _section(
-        "gmail", "Gmail 接入", "Gmail",
-        [
-            _f("gmail_enabled", "bool", "启用 Gmail 雷达", "Enable the Gmail radar", default=True,
-               config=("sources", "gmail", "enabled"),
-               help_zh="读取收件箱未读邮件提炼需求卡（只读，不发信）。凭证在下方 Gmail 应用密码。",
-               help_en="Reads unread inbox mail into proposal cards (read-only, never sends). Credential: the Gmail app password below."),
-            _f("gmail_address", "string", "Gmail 地址", "Gmail address", default="",
-               config=("sources", "gmail", "address"), placeholder=("例：you@gmail.com", "e.g. you@gmail.com"),
-               check="email",
-               help_zh="IMAP 登录用的邮箱地址；留空 = 用 config.yaml 里的值。",
-               help_en="Address used for the IMAP login; blank = whatever config.yaml says."),
-            # §14bis 契约句逐字镜像原生 SettingsGmail.swift commandCard（此前的「stdout 一行一封」是错的——雷达
-            # fetch_via_command 要的是一个 JSON 数组，照旧文案写出来的命令只会得到 command_bad_output）
-            _f("gmail_fetch_command", "string", "自定义抓取命令（B 路径）", "Custom fetch command (path B)", default="",
-               config=("sources", "gmail", "fetch_command"), placeholder=("例：/Users/you/bin/gmail-fetch.sh", "e.g. /Users/you/bin/gmail-fetch.sh"),
-               help_zh="填了就走 B（留空 = A · 应用专用密码）。雷达每轮直接执行它（不走 shell），环境变量 GMAIL_RADAR_LAST_UID 带上次进度，命令在 stdout 打印一个 JSON 数组：{uid（单调递增）, from, subject, date, message_id, body}。Gmail API 脚本、MCP 客户端都可以。保存后下一轮起雷达改走这条命令抓邮件；跑没跑成看下面「运行状态」。",
-               help_en="Set = path B (blank = path A, the app password). The radar executes it directly each round (no shell). $GMAIL_RADAR_LAST_UID carries the progress marker; the command prints a JSON array to stdout: {uid (monotonic), from, subject, date, message_id, body}. A Gmail-API script or an MCP client both qualify. From the next round after saving the radar fetches mail via this command; see \"Run status\" below for the truth."),
-        ],
-        # 区首导语逐字镜像原生 SettingsGmail.swift body 首段（parity 批 catalog-help-copy）
-        help_zh="轮询收件箱里的未读邮件，需要你处理的自动变成提案卡（纯通知/营销直接过滤）。只读——邮件绝不会被标成已读。全部在这里配好，不用改任何文件；此区改动即时生效。",
-        help_en="Polls unread inbox mail and turns the ones needing you into proposal cards (notifications/marketing filtered out). Read-only — mail is never marked read. Everything is set up right here, no files to edit; changes apply immediately.",
-    ),
-    _section(
-        "telemetry", "产品改进计划", "Product improvement program",
-        [
-            _f("telemetry.enabled", "bool", "参与产品改进（默认开，仅事件元数据——输入文本需在下方单独勾选）",
-               "Product improvement (on by default; event metadata only — typed text needs the separate opt-in below)",
-               default=True, config=("telemetry", "enabled"),
-               help_zh="默认开：只上传事件元数据（事件名 / 耗时 / 计数）。关 = 完全不上传。",
-               help_en="On by default: uploads event metadata only (names / durations / counts). Off = nothing is uploaded."),
-            # 三段知情披露逐字镜像原生 Settings.swift telemetryGroup（§15 v0.18 的同意记录发生在这把开关旁，披露
-            # 不能比原生弱）：级别句列出元数据字段 + 随机设备号；文本句写明 500 字截断 + 密钥掩码 + 关前已记录行的去向；
-            # 区导语 = 「关掉最上方开关即完全停止全部上传」（web 的区导语渲染在区首，「最上方开关」仍是第一把）。
-            _f("telemetry.level", "enum", "行为事件级别", "Behavior-event level", default="detailed",
-               choices=("basic", "detailed"), config=("telemetry", "level"),
-               help_zh="基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。",
-               help_en="Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."),
-            _f("telemetry.capture_input", "bool",
-               "上传我输入的文本以更懂我（默认关，勾选即同意：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
-               "Upload the text I type, to know me better (off by default — checking is opting in: captures, questions, rework feedback, search terms; ≤500 chars each)",
-               default=False, config=("telemetry", "capture_input"), write="always",
-               help_zh="只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
-               help_en="Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."),
-        ],
-        help_zh="关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
-        help_en="Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md.",
-    ),
-    _section(
-        "digest", "每周摘要", "Weekly digest",
-        [
-            _f("weekly_digest_enabled", "bool", "每周自动生成「本周你都在忙什么」回顾卡（默认关）",
-               "Auto-generate a weekly \"what you were up to\" recap (default off)", default=False,
-               config=("sources", "weekly_digest", "enabled"),
-               help_zh="近 7 天 ingest 的回顾卡（待验收列）；没有新数据时自动跳过。",
-               help_en="A recap card over the last 7 days of ingest (In review lane); skipped when nothing new landed."),
-            _f("digest_frequency", "enum", "状态摘要频率", "Status digest cadence", default="off",
-               choices=("off", "daily", "every2days", "weekly"), config=("digest", "frequency"),
-               help_zh="待审批 / 待验收积压 + 卡住任务 + 欠账的一张摘要卡。默认 off（D19）。",
-               help_en="One card summarizing approvals / review backlog, stuck tasks and debts. Default off (D19)."),
-        ],
-    ),
-    _section(
-        "approval", "审批 / 成本", "Approval / Cost",
-        [
-            _f("default_target_repo", "string", "任务工作目录", "Task working folder",
-               default="~/Projects/your-workbench", config=("execution", "default_target_repo"), path="dir",
-               help_zh="卡片没指定落点时的兜底目录（文书 / 调研的家；绝不默认进你的代码 repo）。",
-               help_en="Fallback folder when a card names no target (home for paperwork / research; never your code repo by default)."),
-            _f("skip_permissions", "bool", "后台任务免确认执行（更快，默认开）",
-               "Run background tasks without per-action confirmations (faster, default on)", default=True,
-               config=("execution", "skip_permissions"),
-               help_zh="claude --bg 带 --dangerously-skip-permissions；关 = 被挡住的 agent 会等你确认。",
-               help_en="claude --bg passes --dangerously-skip-permissions; off = blocked agents wait for you."),
-            _f("create_github_repo", "bool", "允许自动创建 GitHub 私有仓库（默认关）",
-               "Allow auto-creating private GitHub repos (default off)", default=False,
-               config=("execution", "create_github_repo"),
-               help_zh="target_kind=new 的卡自动 gh repo create --private（draft PR 需要）。",
-               help_en="target_kind=new cards run gh repo create --private (needed for draft PRs)."),
-            _f("show_cost_above_usd", "number", "显示成本阈值（USD ≥）", "Show cost above (USD ≥)", default=5.0,
-               config=("approval", "cost_thresholds", "show_cost_above_usd"),
-               help_zh="低于此值卡片不显示预估费用。请输入不小于 0 的数字，如 5。",
-               help_en="Cards below this estimate hide the cost chip. Enter a number ≥ 0, e.g. 5."),
-            _f("require_text_confirm_above_usd", "number", "文字确认阈值（USD ≥）", "Typed confirm above (USD ≥)", default=50.0,
-               config=("approval", "cost_thresholds", "require_text_confirm_above_usd"),
-               help_zh="高于此值升 T2：批准要输入确认词。请输入不小于 0 的数字，如 50。",
-               help_en="Above this the card is T2: approval needs a typed confirmation. Enter a number ≥ 0, e.g. 50."),
-            # §76.2（issue #313）：被提 N 次仍未处理的升级阈值。默认值真源 =
-            # act/lib/config.DEFAULT_MENTION_ESCALATION（server 不 import act，
-            # 逐字相等由 tests/test_proposal_decision_signals.py 钉住）。
-            _f("approval_mention_escalation", "int", "被提 N 次仍未处理（升级阈值）",
-               "Raised N times, still unhandled (escalate at)", default=5,
-               config=("approval", "mention_escalation"),
-               help_zh="同一件事被提够这么多次还没批准 / 暂缓 / 拒绝 → 卡面「被提×N」章转红说「仍未处理」，并在翻红那一刻响一次通知（归「提案」分类）。0 = 关掉升级，计数照常累加。",
-               help_en="When the same thing has been raised this many times without being approved, deferred or rejected, the card's \"Raised ×N\" chip turns red and one notification fires at the flip (under the Proposals category). 0 = escalation off; the count still accumulates."),
-            _f("trash_retention_days", "int", "回收站保留天数", "Trash retention days", default=60,
-               config=("trash", "retention_days"),
-               help_zh="超期且未标永久的卡硬删；0 = 永不自动清。", help_en="Unpinned cards older than this are purged; 0 = never."),
-        ],
-    ),
-    _section(
-        "flags", "Feature flags（§16，默认全开）", "Feature flags (§16, all on by default)",
-        [_f(key, "bool", key.split(".", 1)[1] + " — " + zh, key.split(".", 1)[1] + " — " + en, default=True,
-            config=("features", key.split(".", 1)[1]))
-         for key, zh, en in _FLAGS],
-        help_zh="总开关层：关掉 analytics = 本机不再写任何行为事件；关掉 auto_deploy = install.sh 不再装自动部署 agent。",
-        help_en="Master switches: analytics off = no behavior events are written locally; auto_deploy off = install.sh stops installing the deploy agent.",
-    ),
-    _section(
-        "voice", "语气档案（以你的口吻起草）", "Voice profile (drafts in your voice)",
-        [
-            _f("voice_enabled", "bool", "启用语气注入（默认开）", "Voice injection (default on)", default=True,
-               config=("voice", "enabled"),
-               help_zh="以你的口吻起草 Slack 回复 / 邮件（docs/VOICE.md）。档案生成：下方「从我的消息生成/更新档案」（终端等价：python3 -m act.voice_gen）。",
-               help_en="Drafts Slack replies / mail in your voice (docs/VOICE.md). Generate the profile with \"Generate from my messages\" below (terminal equivalent: python3 -m act.voice_gen)."),
+            _f("updates_check_enabled", "bool", "自动检查新版本（每天最多一次）",
+               "Check for updates automatically (at most once a day)", default=True,
+               config=("updates", "check_enabled"),
+               help_zh="至多每 24h 向 GitHub 查一次最新版本号（只暴露 IP + 当前版本号）。这是本应用唯一一处不是模型调用的出网。",
+               help_en="At most one GitHub version check per 24h (exposes only your IP + current version). This is the app's only network call that is not a model call."),
+            # §79 add-only：发现带 tag 的新版本时自动升级（ff-only 到 origin/main 的 tag + install.sh；永不碰录制引擎）。默认关。
+            _f("updates_auto_install", "bool", "发现新版本时自动升级（默认关）",
+               "Install new versions automatically (default off)", default=False,
+               config=("updates", "auto_install"),
+               help_zh="开启后，每日检查发现新的 release 就自动升级（只快进到带版本号的 main，本地有改动或分叉时停下并告诉你手动命令；录制不会被打断）。关着时用「关于」页的「立即升级」。",
+               help_en="When on, a newer release found by the daily check is installed automatically (fast-forward only to a tagged main; it stops and tells you the manual command when the checkout has local changes or has diverged; recording is never interrupted). When off, use \"Upgrade now\" on the About page."),
         ],
     ),
     _section(
@@ -427,49 +210,13 @@ SECTIONS: tuple = (
                help_zh="无条件掩码；不依赖词表开关。", help_en="Masked regardless of the term-list switch."),
         ],
     ),
-    _section(
-        "maintainer", "开发者 · 开发会话", "Developer session",
-        [
-            # §65.1（issue #307 / D57）：自动改进本软件的通道总开关，**默认关**——开发者区的第一行。
-            # 落点 config.yaml `self_improve.enabled`，override 扁平键 `self_improve_enabled`（act/lib/config.py 同名字段）。
-            _f("self_improve_enabled", "bool",
-               "自动改进本软件（每日循环的 GitHub 提案 + 草稿 PR 通道）",
-               "Let this software improve itself (daily-loop GitHub proposals + draft-PR lane)",
-               default=False, config=("self_improve", "enabled"),
-               help_zh="维护者专用，默认关闭。打开后每日循环会读本仓库的 issue / 红 CI / 夜间变异报告并铸 🤖 提案卡，通过的卡免批派给 agent、交付草稿 PR 等你验收。关闭时这三个读取器不跑、不巡检已开的 PR、不再产生新卡；已经存在的卡也不再被自动推进——免批批准还没起跑的退回待审批列，agent 睡死 / 断网的不再自动续命，已在待验收列的卡原地不动。正在跑的会话不会被腰斩：它会跑完并交付一次。",
-               help_en="Maintainers only, off by default. When on, the daily loop reads this repo's issues / red CI / nightly mutation report, files 🤖 proposal cards, dispatches the eligible ones without approval and delivers draft PRs for you to accept. When off those three readers never run, open lane PRs are not polled and no new cards are filed; existing cards also stop being pushed along — ones approved automatically but not yet launched go back to the approval column, dead agents are no longer auto-resumed, and cards already waiting for acceptance stay put. A session that is still running is not cut off: it finishes and delivers once."),
-            # §65.5 追记（issue #310）：通道把谁的合并 / 关闭 / 评论当作 owner 本人的动作。出厂就认仓库 owner 与
-            # 这台机器 gh 当前登录的身份；这一行是第三份来源。落点 config.yaml `self_improve.owner_logins`，override
-            # 写嵌套形 `{"self_improve": {"owner_logins": [...]}}`（act/lib/config.py `_OVERRIDE_HANDLERS` 两拼法都认）。
-            _f("self_improve_owner_logins", "list",
-               "额外算作我本人的 GitHub 用户名（逗号分隔）",
-               "Extra GitHub logins that count as you (comma-separated)",
-               default=[], config=("self_improve", "owner_logins"),
-               override="self_improve.owner_logins",
-               help_zh="自动改进通道只把「你」的动作当数：你合并 PR = 验收，你关闭 = 拒绝，你的评论 = 下一轮任务。出厂就认两个身份——仓库地址前半段那个账号，以及这台机器上 gh 当前登录的账号；两者不同（个人号开仓库、工作号登 gh）时都算你本人。这里填第三个、第四个。大小写不敏感。改完下一轮巡检生效，不用重启。",
-               help_en="The self-improvement lane only counts YOUR actions: you merge a PR = accepted, you close it = rejected, your comments = the next round of work. Two identities count out of the box — the account in the first half of the repo slug, and whichever account gh is logged in as on this machine (they differ when the repo is on a personal account and gh is logged in with a work one). Add further logins here. Case-insensitive. Takes effect on the next poll, no restart."),
-            # 两行的 placeholder 动态（DYNAMIC_PLACEHOLDERS，§68.7 追记）：原生 SettingsMaintainer 的灰字是**生效默认**——
-            # 仓库路径 = config.yaml maintainer.repo_path（~ 展开）否则本 checkout（maintainer_launch.resolve 用的同一条）；
-            # 会话 id = config.yaml maintainer.session_id，没设才是下面这行示例。
-            _f("maintainer_repo_path", "string", "本软件的仓库路径", "This software's repo path", default="",
-               config=("maintainer", "repo_path"), path="dir",
-               help_zh="「让 AI 修」与开发会话打开的仓库；留空 = 当前 checkout。",
-               help_en="Repo opened by Fix with AI and developer sessions; blank = this checkout."),
-            _f("maintainer_session_id", "string", "续接的会话 id", "Session id to resume", default="",
-               config=("maintainer", "session_id"), placeholder=("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff", "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
-               check="session_id",
-               help_zh="填了就 claude --resume 这个会话，留空开新会话。",
-               help_en="When set the session is resumed with claude --resume; blank starts fresh."),
-        ],
-    ),
 )
 
 
 def expand_user_path(raw: str) -> Path:
     """``Path(raw).expanduser()``，但 ``~nosuchuser/x`` 不炸：Python 对查不到的用户名抛 RuntimeError（原生
     ``expandingTildeInPath`` 原样返回）——config.yaml 里一个坏路径不许把整份设置快照 / 开发会话启动打成 500
-    （§0 第 11 条），原样当路径用（随后的 is_dir 自然是 False）。目录字段的 ``path_exists``、开发者区的灰字与
-    ``maintainer_launch.resolve`` 同一把。"""
+    （§0 第 11 条），原样当路径用（随后的 is_dir 自然是 False）。目录字段的 ``path_exists`` 用它。"""
     path = Path(raw)
     try:
         return path.expanduser()
@@ -477,35 +224,11 @@ def expand_user_path(raw: str) -> Path:
         return path
 
 
-def _maintainer_repo_placeholder(field: dict, config_doc: dict) -> str:
-    """原生 defaultRepoPath：config.yaml maintainer.repo_path（~ 展开），否则本软件自己的 checkout（paths.repo_root()）。"""
-    base, _src = base_effective(field, config_doc)
-    raw = base.strip() if isinstance(base, str) else ""
-    return str(expand_user_path(raw)) if raw else str(paths.repo_root())
+# 动态 placeholder（add-only；key → fn(field, config_doc) → 一句或 None）。v2.0.0 起没有登记项（开发者区退役）。
+DYNAMIC_PLACEHOLDERS: "dict[str, Callable[[dict, dict], Optional[str]]]" = {}
 
-
-def _maintainer_session_placeholder(field: dict, config_doc: dict) -> Optional[str]:
-    """原生 defaultSessionID：config.yaml maintainer.session_id 设了就是它（灰字），没设 → None（保留目录里的示例句）。"""
-    base, src = base_effective(field, config_doc)
-    return base.strip() if src == "config" and isinstance(base, str) and base.strip() else None
-
-
-# 动态 placeholder（add-only；key → fn(field, config_doc) → 一句或 None = 用目录里的静态句）；两键同一句（路径 / id 不分语言）。
-DYNAMIC_PLACEHOLDERS: "dict[str, Callable[[dict, dict], Optional[str]]]" = {
-    "maintainer_repo_path": _maintainer_repo_placeholder,
-    "maintainer_session_id": _maintainer_session_placeholder,
-}
-
-
-def _maintainer_section_extras(home: Path) -> dict:
-    """开发者区投影的 add-only ``terminal_app_name``（§68.7 追记）：「会在 <终端> 中打开」要 resolved 的终端展示名——
-    ``auto`` 要看装没装 Ghostty，只有 server 知道（原生 ``TerminalLauncher.preferred.displayName``）。"""
-    from server import terminal_launch  # 惰性：terminal_launch import 本模块读 terminal_app，避免环
-    return {"terminal_app_name": terminal_launch.preferred_terminal_name(home)}
-
-
-# section 级 add-only 投影（id → fn(home) → 追加到 section 快照的键）
-SECTION_EXTRAS: "dict[str, Callable[[Path], dict]]" = {"maintainer": _maintainer_section_extras}
+# section 级 add-only 投影（id → fn(home) → 追加到 section 快照的键）。v2.0.0 起没有登记项。
+SECTION_EXTRAS: "dict[str, Callable[[Path], dict]]" = {}
 
 _BY_ID = {s["id"]: s for s in SECTIONS}
 
@@ -616,7 +339,7 @@ def _coerce_string(value) -> Optional[str]:
 
 
 def _list_item(item) -> Optional[str]:
-    """一个 list 元素的投影：{id, name} 字典取 id；字串 / 整数取 strip 后的字串；其余丢。"""
+    """一个 list 元素的投影：{id, ...} 字典取 id（旧形状兼容）；字串 / 整数取 strip 后的字串；其余丢。"""
     if isinstance(item, dict):
         return str(item["id"]) if item.get("id") else None
     if isinstance(item, (str, int)) and str(item).strip():
@@ -625,7 +348,7 @@ def _list_item(item) -> Optional[str]:
 
 
 def _coerce_list(value) -> Optional[list]:
-    """list 字段：文件里是字串表（slack_channels 允许 {id, name} 字典——投影取 id）；空表 = 缺席。"""
+    """list 字段：文件里是字串表；空表 = 缺席。"""
     if not isinstance(value, list):
         return None
     out = [text for text in (_list_item(item) for item in value) if text]
@@ -800,29 +523,8 @@ def _validate_string(value, key: str) -> Optional[str]:
     return value.strip() or None   # 空串 = 清掉 override
 
 
-def looks_like_email(text: str) -> bool:
-    """原生 SettingsGmail.validateAddress 的规则：恰好一个 ``@``、本地部分非空、域名含 ``.`` 且不以 ``.`` 起止；
-    另拒绝内嵌空白（原生 trim 两端、不查中间——邮箱地址里从来不该有空格）。"""
-    s = text.strip()
-    local, at, domain = s.partition("@")
-    if not at or not local or "@" in domain or any(ch.isspace() for ch in s):
-        return False
-    return "." in domain.strip(".") and domain == domain.strip(".")
-
-
-def session_id_problem(text: str) -> Optional[str]:
-    """原生 SettingsMaintainer.validateSessionID 的规则：以 ``-`` 开头 → ``leading_hyphen``（CLI 选项的形状——
-    ``--dangerously-skip-permissions`` 全是白名单字符）；其余不合 ``SESSION_ID_RE`` → ``charset``；合格 → None。"""
-    s = text.strip()
-    if s.startswith("-"):
-        return "leading_hyphen"
-    return None if SESSION_ID_RE.match(s) else "charset"
-
-
 # kind → checker(text) → None（合格）或 reason 词（在 CHECK_REASONS[kind] 里就用分句，否则用 CHECKS[kind] 主句）
 _CHECKERS: "dict[str, Callable[[str], Optional[str]]]" = {
-    "email": lambda text: None if looks_like_email(text) else "shape",
-    "session_id": session_id_problem,
     "clock_time": lambda text: None if settings.CLOCK_TIME_RE.match(text.strip()) else "shape",
 }
 
@@ -844,8 +546,7 @@ def normalize_check(field: dict, value: Optional[str]) -> Optional[str]:
 
 def run_check(field: dict, value: Optional[str], key: str) -> None:
     """``check`` 字段的形状校验（空值 = 清键，不查）；不合格 → 400，message 双语并列（server/settings.py 同款），
-    details 带 ``check`` 词（多句的 kind 再带 ``reason``）让客户端能对上目录里的那句。公开名：maintainer_launch 启动前
-    对 effective 的会话 id 再过同一道闸（原生 openSession 重跑 validateSessionID）。"""
+    details 带 ``check`` 词（多句的 kind 再带 ``reason``）让客户端能对上目录里的那句。"""
     kind = field.get("check")
     if kind is None or value is None:
         return
@@ -869,7 +570,7 @@ def _split_list_input(value) -> list:
 
 
 def _check_list_bounds(items: list, key: str) -> None:
-    """帽：≤200 项、每项 ≤200 字（频道 id / handle 都远小于此；防无界 payload）。"""
+    """帽：≤200 项、每项 ≤200 字（防无界 payload）。"""
     if len(items) > LIST_MAX or any(len(item) > LIST_MAX for item in items):
         raise InvalidFieldError("%s has too many / too long entries" % key, {"field": key})
 
@@ -881,7 +582,7 @@ def _validate_list(value, key: str) -> Optional[list]:
         raise InvalidFieldError("%s must be a list of strings" % key, {"field": key})
     items = [item.strip() for item in parts if item.strip()]
     _check_list_bounds(items, key)
-    return items or None
+    return items or None   # 空表 = 清掉 override（回到 config / 出厂表）
 
 
 def validate(field: dict, value):
@@ -953,25 +654,5 @@ def update_section(home: Path, section_id: str, payload: dict) -> dict:
     config_doc = load_config_doc(home)
     for key, value in wanted.items():
         apply_field(overrides, index[key], value, config_doc)
-    apply_radar_switch_conjunction(overrides, wanted, config_doc)
     write_overrides(home, overrides)
     return project_section(home, section)
-
-
-def apply_radar_switch_conjunction(overrides: dict, wanted: dict, config_doc: dict) -> None:
-    """§48.1：payload 里雷达源开关为 true 的，同一笔把 ``features.<src>_radar`` 也写 true（原生 setEnabled /
-    persistFlag 同款）。flag 走同一条 diff-write——yaml 本就 true 时不落键、effective 仍是 true；原生「显式写 true
-    不做 drop-when-default」是因为 app 读不到两级嵌套的 yaml，server 读得到。关（false）不碰 flag：合取一票否决，
-    单键足以关。agent 的装 / 卸不在这里（§48.7：install.sh 步 5 与「重新安装」按钮管 launchd）。"""
-    flags = field_index(_BY_ID["flags"])
-    for key, flag_key in RADAR_SWITCH_FLAGS.items():
-        if wanted.get(key) is True:
-            apply_field(overrides, flags[flag_key], True, config_doc)
-
-
-def set_flat_override(home: Path, key: str, value: str) -> None:
-    """其它 server 模块的窄写口（Slack auth.test 自动填 ``owner_slack_user_id``，§15.3
-    v0.14）：change-write 一个扁平 str 键，其余键原样保留。"""
-    overrides = read_overrides(home)
-    overrides[key] = value
-    write_overrides(home, overrides)

@@ -74,8 +74,8 @@ class SanitizeTestCase(unittest.TestCase):
         self.assertNotIn(SECRET, out)
         self.assertEqual(n, 2)
 
-    # -- 只记 count，绝不记内容 -------------------------------------------------- #
-    def test_analytics_logs_count_never_content(self):
+    # -- 零遥测（§78）：scrub 不记任何事件 --------------------------------------- #
+    def test_scrub_logs_nothing(self):
         events = []
         orig = analytics.log_event
         analytics.log_event = lambda name, **kw: events.append((name, kw))
@@ -83,7 +83,7 @@ class SanitizeTestCase(unittest.TestCase):
             sanitize.scrub(f"leak {SECRET}", self._cfg())
         finally:
             analytics.log_event = orig
-        self.assertEqual(events, [("redaction", {"masks": 1})])
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

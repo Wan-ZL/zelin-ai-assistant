@@ -1,36 +1,40 @@
 """Post-install diagnostics — ``python3 -m act.doctor`` (CONTRACT §25 行目录 +
-机器输出；§59 模型旋钮两行 + D53 回退模型入 `claude code model` 行；§55 / §56 的
-TCC 行由探针家族实现)。
+机器输出；§59 模型旋钮行；§55 的 TCC 行由探针家族实现；§78 隔离两行
+``claude bare supported`` / ``isolation footprint``)。
 
 Every failure mode a fresh install has hit is SILENT: a launchd agent that
 loads but never spawns, TCC blocking cron off the vault, a missing API key
 killing headless claude minutes later in a log nobody reads, the app polling
-the wrong AIASSISTANT_HOME. HANDOFF §2.15 requires "0 new cards" and
-"silently dead" to be distinguishable — this module is the user-facing tool
-for that.
+the wrong AIASSISTANT_HOME — this module is the user-facing tool that makes
+them visible.
 
-    python3 -m act.doctor          # full run (ends with one cheap live claude call)
-    python3 -m act.doctor --fast   # skip the live auth probe (spends no tokens)
+    python3 -m act.doctor          # full run (ends with cheap live claude calls)
+    python3 -m act.doctor --fast   # skip the live probes (spends no tokens)
     bash install.sh --check        # same as the full run
     python3 -m act.doctor --fresh-install   # §69: wired / needs-you / unwired / broken
 
 One line per check — symptom first, then the one-line fix:
 
-    [ ok ] actd: running (pid 4242)
-    [FAIL] dashboard: stale (generated 23 min ago) - actd is not writing; ...
-           fix: launchctl list | grep aiassistant; tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log
+    [ ok ] server: running (pid 4242)
+    [FAIL] anthropic key: no Anthropic API key - ...
+           fix: paste your API key in Settings > Credentials ...
 
-Never raises; exit code = number of FAILs (0 = healthy). Warnings cover
-optional or degraded-but-working states (no Obsidian vault, recording off,
-subscription-auth mode without a key file, ...).
+Never raises; exit code = number of FAILs (0 = healthy). Every touch of the
+machine goes through the :class:`Probes` dataclass so tests can inject fakes
+(tests/test_doctor.py). The checks live in ``act/lib/checks/`` by probe family
+(environment / launchd / cron / pipeline); this module composes them, keeps the
+``_check_*`` names the suite and the ``diagnostic crashed`` row derive from,
+and owns the rows that must go through ``act/llm.py`` (the lib layer may not
+import it): the live ``claude auth`` probe and the §59 model rows run with the
+§78 isolation — ``llm.runner_env`` (CLAUDE_CONFIG_DIR + API key), the
+ISOLATION_ARGV flags and ``config.headless_cwd()`` — so a probe never writes a
+session into the owner's Claude Code home or loads the repo's CLAUDE.md.
 
-Every touch of the machine goes through the :class:`Probes` dataclass so
-tests can inject fakes (tests/test_doctor.py); the real implementations are
-the defaults. The checks themselves live in ``act/lib/checks/`` by probe
-family (environment / launchd / services / cron / pipeline); this module
-composes them per OS, keeps the ``_check_*`` names the test suite and the
-``diagnostic crashed`` row derive from, and owns the two §59 model rows
-(they go through ``act/llm.py``, which the lib layer may not import).
+v2.0.0 (Act pipeline retired; full text in tag ``full``): the store2 /
+dashboard / actd heartbeat / auto-deploy / launchd volume access / launchd fd
+limit / gh CLI / power probe rows and the Linux / Windows service rows are gone;
+the ``claude code model`` row (which read the owner's Claude Code settings) is
+replaced by ``models`` (the app's own knobs only).
 """
 from __future__ import annotations
 
@@ -45,33 +49,24 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from act import llm
-from act.lib import (board_server, config, deploy_state, fresh_install, heartbeat,
-                     platform, power)
+from act.lib import board_server, config, failures, fresh_install, platform
 from act.lib import version as version_lib
-from act.lib.checks import core, cron, environment, launchd, pipeline, services
+from act.lib.checks import core, cron, environment, launchd, pipeline
 from act.lib.checks.core import FAIL, OK, WARN, CheckResult
 
 # -- re-exports the suite / sibling entrypoints address as doctor.<name> ------ #
-ACTD_LABEL = core.ACTD_LABEL
-SYNCD_LABEL = core.SYNCD_LABEL
 SERVER_LABEL = core.SERVER_LABEL
 RESIDENT_LABELS = core.RESIDENT_LABELS
-ACTD_UNIT = core.ACTD_UNIT
-SERVER_UNIT = core.SERVER_UNIT
-ACTD_TASK = core.ACTD_TASK
-SYSTEMD_RESIDENT = core.SYSTEMD_RESIDENT
 LABEL_PREFIX = core.LABEL_PREFIX
-AUTODEPLOY_LABEL = launchd.AUTODEPLOY_LABEL
 CRON_PROBE_FRESH_SECONDS = cron.CRON_PROBE_FRESH_SECONDS
 CRON_PROBE_PATH = cron.CRON_PROBE_PATH
-DASHBOARD_FRESH_SECONDS = pipeline.DASHBOARD_FRESH_SECONDS
 SCREENPIPE_STALE_SECONDS = environment.SCREENPIPE_STALE_SECONDS
 MIN_PYTHON = environment.MIN_PYTHON
 MISSING_ACT = launchd.MISSING_ACT
 MISSING_YAML = launchd.MISSING_YAML
 _PROBE_TIMEOUT = core.PROBE_TIMEOUT
-# §59 model liveness: one "ok" per explicit knob; a model that exists answers
-# in seconds, one that does not is rejected before any generation.
+# §59 model liveness: a model that exists answers in seconds, one that does
+# not is rejected before any generation.
 _MODEL_PROBE_TIMEOUT = 60
 
 _installer = core.installer
@@ -82,7 +77,6 @@ _launchd_log_paths = launchd.launchd_log_paths
 _launchd_log_tail = launchd.launchd_log_tail
 _launchd_log_mtime = launchd.launchd_log_mtime
 _launchd_claude_probe = launchd.claude_probe
-_plist_number_of_files = launchd.plist_number_of_files
 _row_from = core.row_from
 
 
@@ -98,46 +92,28 @@ class Probes:
     now: Callable[[], float] = time.time
     # None -> derive from act/launchd/*.plist basenames under AIASSISTANT_HOME
     launchd_labels: Optional[List[str]] = None
-    # None -> derive from act/systemd (resident services + *.timer); Linux only
-    systemd_units: Optional[List[str]] = None
-    # None -> derive from act/tasksched (full \ZelinAIAssistant\ names); Windows only
-    scheduled_tasks: Optional[List[str]] = None
     screenpipe_db: Path = field(
         default_factory=lambda: Path.home() / ".screenpipe" / "db.sqlite")
     legacy_key_path: Path = field(
         default_factory=lambda: Path("~/.config/anthropic-key.txt").expanduser())
-    # daemon-vs-shell claude comparison (the 2026-07-08 two-installs incident)
-    daemon_path_env: Callable[[], Optional[str]] = environment.installed_actd_path_env
+    # daemon-vs-shell claude comparison (the 2026-07-08 two-installs incident);
+    # the daemon is the server agent since v2.0.0
+    daemon_path_env: Callable[[], Optional[str]] = environment.installed_daemon_path_env
     login_shell_claude: Callable[[], Optional[str]] = environment.login_shell_claude
     # §55 迁移探测：label → 已安装 plist 原文（None = 没装）；tests 注入保持 hermetic
     installed_plist_text: Callable[[str], Optional[str]] = core.installed_plist_text
     # §55 日志归因：short name → 该 agent 自管日志的末尾（"" = 读不到）
     launchd_log_tail: Callable[[str], str] = launchd.launchd_log_tail
-    # §55 孤儿探测：~/Library/LaunchAgents 里带前缀的 plist label（文件面）
+    # §55 / §78 孤儿与足迹探测：~/Library/LaunchAgents 里带我们前缀的 plist label（文件面）
     installed_agent_labels: Callable[[], List[str]] = launchd.installed_agent_labels
-    # §55 孤儿探测（Linux 文件面）：~/.config/systemd/user 里带 zelin- 前缀的 unit
-    installed_user_units: Callable[[], List[str]] = services.installed_user_units
-    # §47.4 心跳：state/actd.heartbeat 的读取 + 进程探活（tests 注入保持 hermetic）
-    heartbeat_read: Callable[[], Optional[dict]] = heartbeat.read
-    pid_alive: Callable[[int], Optional[bool]] = pipeline.pid_alive
-    # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = 默认工作
-    # repo）——终端看不见的 TCC 失败只能这样问出来；tests 注入，绝不真起 launchd
+    # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = §78 中性目录）；
+    # tests 注入，绝不真起 launchd
     launchd_claude_probe: Callable[[str, str], dict] = launchd.claude_probe
-    # §59 (D22)：Claude Code 全局默认模型（~/.claude/settings.json `model`）——
-    # follow 模式继承的就是它；tests 注入，绝不读开发者的真文件
-    claude_code_settings: Callable[[], dict] = llm.read_claude_code_default_model
-    # §54 看板 server：回环 /api/health 探针（port → verdict dict）；tests 注入，
-    # 默认实现在 AIASSISTANT_HTTP_PROBE=0 下自报 unavailable（行不出）
+    # §54 看板 server：回环 /api/health 探针（port → verdict dict）；tests 注入
     board_health: Callable[[int], dict] = board_server.health_probe
-    # §56.4 HOME 镜像（auto-deploy 自己的真源，TCC 永不拦 $HOME）：`launchd volume
-    # access` 行读它的 unattended_* 三元组；tests 注入保持 hermetic
-    deploy_mirror_read: Callable[[], Optional[dict]] = deploy_state.read_mirror
-    # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
+    # §56.3 日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = launchd.launchd_log_mtime
-    version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe；tests 注入（沙箱非 git）
-    # §71.1 电源读数（`power probe` 行）：默认实现自带总闸 `AIASSISTANT_POWER_PROBE`
-    # 与「非 darwin 不起子进程」，套件里因此天然 hermetic（读数恒空 → unknown）
-    power_reading: Callable[[], dict] = power.read_power
+    version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe
 
 
 # --------------------------------------------------------------------------- #
@@ -193,32 +169,12 @@ def _check_launchd_orphans(probes: Probes):
     return launchd.check_orphans(probes)
 
 
-def _check_launchd_fd_limit(probes: Probes):
-    return launchd.check_fd_limit(probes)
-
-
 def _check_launchd_claude(probes: Probes):
     return launchd.check_claude(probes)
 
 
-def _check_launchd_volume_access(probes: Probes):
-    return launchd.check_volume_access(probes)
-
-
-def _check_systemd(probes: Probes):
-    return services.check_systemd(probes)
-
-
-def _check_systemd_orphans(probes: Probes):
-    return services.check_systemd_orphans(probes)
-
-
-def _check_scheduled_tasks(probes: Probes):
-    return services.check_scheduled_tasks(probes)
-
-
-def _check_task_orphans(probes: Probes):
-    return services.check_task_orphans(probes)
+def _check_isolation_footprint(probes: Probes):
+    return launchd.check_footprint(probes)
 
 
 def _check_cron(probes: Probes):
@@ -229,28 +185,12 @@ def _check_cron_probe(probes: Probes, cron_installed: bool):
     return cron.check_cron_probe(probes, cron_installed)
 
 
-def _check_store2(probes: Probes):
-    return pipeline.check_store2(probes)
-
-
-def _check_dashboard(probes: Probes):
-    return pipeline.check_dashboard(probes)
-
-
-def _check_heartbeat(probes: Probes):
-    return pipeline.check_heartbeat(probes)
-
-
 def _check_board_server(probes: Probes):
     return pipeline.check_board_server(probes)
 
 
 def _check_ui_build(probes: Probes):
     return pipeline.check_ui_build(probes)
-
-
-def _check_auto_deploy(probes: Probes):
-    return pipeline.check_auto_deploy(probes)
 
 
 def _check_obsidian(probes: Probes):
@@ -261,231 +201,174 @@ def _check_screenpipe(probes: Probes):
     return environment.check_screenpipe(probes)
 
 
-def _check_power(probes: Probes):
-    return environment.check_power(probes)
-
-
 def _check_npx(probes: Probes):
     return environment.check_npx(probes)
 
 
-def _check_gh(probes: Probes):
-    return environment.check_gh(probes)
-
-
-def _check_claude_auth(probes: Probes):
-    return environment.check_claude_auth(probes)
+# --------------------------------------------------------------------------- #
+# §78 isolation — does this claude know every flag the isolation relies on?
+# --------------------------------------------------------------------------- #
+def _check_claude_bare_supported(probes: Probes):
+    """Row ``claude bare supported`` (§78): ``claude --help`` must list every flag
+    in ``llm.ISOLATION_FLAGS``. Without one of them a headless run would read
+    the owner's own Claude Code configuration — FAIL ``claude_bare_unsupported``.
+    Side-effect free (``--help`` only); rides under --fast."""
+    if not probes.which("claude"):
+        return []   # the `claude CLI` row already FAILs
+    claude = config.resolve_claude_bin()
+    rc, out = probes.run([claude, "--help"], timeout=15)
+    if rc != 0 or not out.strip():
+        return CheckResult(
+            "claude bare supported", WARN,
+            _pick("`%s --help` 没有输出（exit %s）——确认不了隔离旗标",
+                  "`%s --help` gave no output (exit %s) - cannot verify the isolation flags") % (claude, rc),
+            _pick("重装 Claude Code 后重跑 doctor", "reinstall Claude Code, then re-run doctor"))
+    missing = [flag for flag in llm.ISOLATION_FLAGS if flag not in out]
+    if missing:
+        return CheckResult(
+            "claude bare supported", FAIL,
+            _pick("%s 不认识 %s——headless 调用无法与 Claude Code 的个人配置隔离",
+                  "%s does not know %s - headless calls cannot be isolated from the personal Claude Code setup")
+            % (claude, " ".join(missing)),
+            _pick("更新 Claude Code，再 bash install.sh 刷新稳定副本",
+                  "update Claude Code, then bash install.sh to refresh the stable copy"),
+        ).with_failure("claude_bare_unsupported")
+    return CheckResult("claude bare supported", OK,
+                       _pick("%s 支持全部隔离旗标（%s）", "%s supports every isolation flag (%s)")
+                       % (claude, " ".join(llm.ISOLATION_FLAGS)))
 
 
 # --------------------------------------------------------------------------- #
-# §59 (D22) model knobs — what "follow" inherits + does an explicit id answer
+# §59 model knobs — where they point + does the pipeline model answer
 # --------------------------------------------------------------------------- #
-def _model_knobs(cfg) -> dict:
-    """{"dispatch": id|None, "pipeline": id|None} — None = follow."""
-    return {mode: llm.model_for(mode, cfg) for mode in llm.MODES}
+def _knob_text(model: str, fallback: Optional[str]) -> str:
+    """``pipeline: <id> · fallback: <id>|off``."""
+    return "pipeline: %s · fallback: %s" % (model, fallback or llm.FALLBACK_OFF)
 
 
-def _knob_text(knobs: dict, fallback: Optional[str] = None) -> str:
-    """``dispatch: … · pipeline: … · fallback: <id>|off`` — the fallback (D53)
-    is always named so the row says which model the daemon will land on."""
-    parts = ["%s: %s" % (mode, knobs[mode] or "follow") for mode in llm.MODES]
-    parts.append("fallback: %s" % (fallback or llm.FALLBACK_OFF))
-    return " · ".join(parts)
-
-
-def _check_claude_code_model(probes: Probes):
-    """One row, file reads only (rides under --fast too): the Claude Code global
-    default every follow-mode call inherits, plus where the two knobs point and
-    which ``--fallback-model`` (D53) rides along.
-    Never FAIL — this row informs; §56's rollback verdict must not turn on it.
-    WARN when a knob follows a NON-canonical global default **and** the
-    fallback cannot catch it — off, or itself a non-canonical alias/suffix
-    (same rule as ``server/settings.py::fallback_warning``): that is exactly
-    the 2026 EAP-alias retirement that broke every dispatch silently. With the
-    D53 default or a canonical fallback on, the alias retiring means the CLI
-    switches to the named fallback for the rest of the session (Claude Code
-    ≥ 2.1.152 for -p; ≥ 2.1.166 for interactive / --bg; truth = Claude Code
-    CHANGELOG) — the row stays OK and names it."""
+def _check_models(probes: Probes):
+    """One row, config reads only (rides under --fast): the pipeline model and the
+    D53 fallback. WARN when the pipeline id is not canonical **and** the fallback
+    cannot catch it (off, or itself non-canonical) — an alias retiring would then
+    fail every recap silently. Never FAIL."""
     cfg = config.load_config()
-    info = probes.claude_code_settings() or {}
-    knobs = _model_knobs(cfg)
+    model = llm.model_for(llm.MODE_PIPELINE, cfg)
     fallback = llm.fallback_model(cfg)
-    knob_text = _knob_text(knobs, fallback)
-    if info.get("exists") and not info.get("parseable"):
-        return _unparseable_settings_row(knob_text)
-    global_model = info.get("model")
-    following = _following_modes(knobs)
-    if _alias_risk(global_model, following):
-        return _alias_risk_row(global_model, following, fallback, knob_text)
-    return _default_ok_row(global_model, knob_text)
-
-
-def _alias_risk_row(global_model: str, following: list, fallback: Optional[str],
-                    knob_text: str) -> CheckResult:
-    """A knob follows a non-canonical global default: OK naming the fallback
-    when it is a real net (D53 default or canonical id), WARN otherwise."""
-    if fallback and llm.fallback_is_canonical(fallback):
-        return _noncanonical_with_fallback_row(global_model, following, fallback, knob_text)
-    return _noncanonical_default_row(global_model, following, fallback, knob_text)
-
-
-def _following_modes(knobs: dict) -> list:
-    return [m for m in llm.MODES if knobs[m] is None]
-
-
-def _alias_risk(global_model, following: list) -> bool:
-    """A knob follows a global default that is not a canonical id."""
-    return bool(global_model and following and not llm.is_canonical(global_model))
-
-
-def _default_ok_row(global_model, knob_text: str) -> CheckResult:
-    shown = global_model or _pick("未设置（Claude Code 内置默认）", "unset (Claude Code built-in default)")
-    return CheckResult("claude code model", OK,
-                       _pick("全局默认 %s（%s）", "global default %s (%s)") % (shown, knob_text))
-
-
-def _unparseable_settings_row(knob_text: str) -> CheckResult:
+    text = _knob_text(model, fallback)
+    if llm.is_canonical(model) or (fallback and llm.fallback_is_canonical(fallback)):
+        return CheckResult("models", OK, text)
     return CheckResult(
-        "claude code model", WARN,
-        _pick("~/.claude/settings.json 不是合法 JSON——follow 模式继承的全局默认读不出来（%s）",
-              "~/.claude/settings.json is not valid JSON - the global default that follow mode inherits is unreadable (%s)") % knob_text,
-        _pick("手动修好那个文件（Claude Code 自己也读它）",
-              "fix that file by hand (Claude Code reads it too)"))
+        "models", WARN,
+        _pick("模型 `%s` 不是 canonical id，回退也接不住——别名下线那天会议纪要会静默全败（%s）",
+              "model `%s` is not a canonical id and the fallback cannot catch it - the day the alias "
+              "retires every recap fails silently (%s)") % (model, text),
+        _pick("设置页「模型」选一个 canonical id，或把「回退模型」设成 canonical id",
+              "Settings > Models: pick a canonical id, or set the fallback model to one"))
 
 
-def _noncanonical_default_row(global_model: str, following: list, fallback: Optional[str],
-                              knob_text: str) -> CheckResult:
-    """WARN: a knob follows a non-canonical global default and the fallback is
-    no net — ``None`` = off; a non-None value here is itself a non-canonical
-    alias/suffix (``llm.fallback_is_canonical`` said no), which can retire the
-    same day as the primary."""
-    if fallback:
-        why = _pick("且回退 `%s` 也不是 canonical id", "and the fallback `%s` is not a canonical id either") % fallback
-        way_out = _pick("或给「回退模型」选一个 canonical id", "or pick a canonical id for the fallback model")
-    else:
-        why = _pick("且回退已关", "and the fallback is off")
-        way_out = _pick("或把「回退模型」打开", "or turn the fallback model back on")
-    return CheckResult(
-        "claude code model", WARN,
-        _pick("全局默认 `%s` 不是 canonical id，%s 跟随它，%s——别名/后缀下线那天这些调用会静默全败（%s）",
-              "global default `%s` is not a canonical id, %s follow it %s - the day the alias/suffix retires those calls fail silently (%s)")
-        % (global_model, "/".join(following), why, knob_text),
-        _pick("设置页「模型」→「设为 <canonical id>」改全局默认、给旋钮选一个显式 canonical id，%s",
-              "Settings > Models > \"Set to <canonical id>\" for the global default, pick an explicit canonical id per knob, %s") % way_out)
-
-
-def _noncanonical_with_fallback_row(global_model: str, following: list, fallback: str,
-                                    knob_text: str) -> CheckResult:
-    """D53: the alias may still retire, but every headless launch carries
-    ``--fallback-model <fallback>`` and that fallback is the D53 default or a
-    canonical id — the session lands there instead of dying (or drifting to
-    the CLI's own Opus 4.8). Informational OK, fallback named."""
-    return CheckResult(
-        "claude code model", OK,
-        _pick("全局默认 `%s` 不是 canonical id，%s 跟随它；它不可用时 headless 调用回退到 %s（%s）",
-              "global default `%s` is not a canonical id and %s follow it; when it is unavailable headless calls fall back to %s (%s)")
-        % (global_model, "/".join(following), fallback, knob_text))
-
-
-def _model_failed_row(name: str, mode: str, model: str, rc: int, out) -> CheckResult:
+def _model_failed_row(model: str, rc: int, out) -> CheckResult:
     tail = " ".join(str(out).strip().split())[-120:] if str(out).strip() else "no output"
-    consequence = (_pick("派工会全部失败", "every dispatch will fail")
-                   if mode == llm.MODE_DISPATCH else
-                   _pick("雷达/分诊/判官/问答会全部失败",
-                         "radar / triage / judge / ask will all fail"))
     return CheckResult(
-        name, FAIL,
-        _pick("模型 %s 不可用，%s（exit %s: %s）",
-              "model %s is unavailable, %s (exit %s: %s)")
-        % (model, consequence, rc, tail),
-        _pick("设置页「模型」改回「跟随 Claude Code 全局」或换一个 canonical id",
-              "Settings > Models: switch back to \"follow Claude Code\" or pick a canonical id"),
+        "model pipeline", FAIL,
+        _pick("模型 %s 不可用，会议纪要会全部失败（exit %s: %s）",
+              "model %s is unavailable, every meeting recap will fail (exit %s: %s)")
+        % (model, rc, tail),
+        _pick("设置页「模型」换一个 canonical id", "Settings > Models: pick a canonical id"),
     ).with_failure("model_unavailable")
 
 
-def _model_row(probes: Probes, cfg, mode: str, model: Optional[str], probed: dict) -> CheckResult:
-    """One knob's row; ``probed`` caches {model: (rc, out)} so dispatch ==
-    pipeline is one live call, not two."""
-    name = "model %s" % mode
-    if model is None:
-        return CheckResult(name, OK, _pick("follow（继承 Claude Code 全局默认，不探）",
-                                           "follow (inherits the Claude Code default, not probed)"))
-    if not probes.which("claude"):
-        # the `claude CLI` row already FAILs; do not double-blame the model
-        return CheckResult(name, WARN, _pick("%s — 跳过（未找到 claude CLI）",
-                                             "%s - skipped (claude CLI not found)") % model)
-    if model not in probed:
-        probed[model] = probes.run(llm.probe_argv(model, cfg), env=llm.runner_env(cfg),
-                                   timeout=_MODEL_PROBE_TIMEOUT)
-    rc, out = probed[model]
-    if rc == 0:
-        return CheckResult(name, OK, _pick("%s — 活探针 ok", "%s - live probe ok") % model)
-    return _model_failed_row(name, mode, model, rc, out)
-
-
 def _check_model_liveness(probes: Probes):
-    """Per explicit knob: one minimal live call with that --model. follow =
-    skipped (nothing to probe; the auth row already covers the default).
-    FAIL speaks plainly: the model in Settings is unavailable, dispatch /
-    pipeline will fail wholesale."""
+    """One minimal live call with the pipeline ``--model`` under the §78 isolation
+    (env = ``llm.runner_env``, cwd = ``config.headless_cwd()``)."""
+    if not probes.which("claude"):
+        return CheckResult("model pipeline", WARN, _pick("跳过（未找到 claude CLI）",
+                                                         "skipped (claude CLI not found)"))
     cfg = config.load_config()
-    knobs = _model_knobs(cfg)
-    probed: dict = {}
-    return [_model_row(probes, cfg, mode, knobs[mode], probed) for mode in llm.MODES]
+    model = llm.model_for(llm.MODE_PIPELINE, cfg)
+    rc, out = probes.run(llm.probe_argv(model, cfg), env=llm.runner_env(cfg),
+                         timeout=_MODEL_PROBE_TIMEOUT, cwd=config.headless_cwd())
+    if rc == 0:
+        return CheckResult("model pipeline", OK, _pick("%s — 活探针 ok", "%s - live probe ok") % model)
+    return _model_failed_row(model, rc, out)
 
 
 # --------------------------------------------------------------------------- #
-# Composition per OS
+# live auth probe (spends tokens; not under --fast) — §78 isolated
 # --------------------------------------------------------------------------- #
-# Shared checks that run on every OS (pure Python / portable subprocess).
-_CHECKS_COMMON_HEAD = [
+def _auth_via(probes: Probes) -> str:
+    """Human label of where the key the probe will use comes from ("" = none)."""
+    _key, source = environment.resolve_key(probes)
+    return source
+
+
+def _check_claude_auth(probes: Probes):
+    """One cheap live call with exactly the credential + isolation every headless
+    run uses: ``llm.auth_probe_argv`` (ISOLATION_ARGV), ``llm.runner_env``
+    (CLAUDE_CONFIG_DIR + ANTHROPIC_API_KEY), cwd = ``config.headless_cwd()``.
+    No key → the ``anthropic key`` row already FAILs; this row says skipped."""
+    if not probes.which("claude"):
+        return CheckResult("claude auth", WARN,
+                           _pick("跳过（未找到 claude CLI）", "skipped (claude CLI not found)"))
+    cfg = config.load_config()
+    env = llm.runner_env(cfg)
+    if not env.get("ANTHROPIC_API_KEY"):
+        return CheckResult("claude auth", WARN,
+                           _pick("跳过（没有 API key——见 anthropic key 行）",
+                                 "skipped (no API key - see the anthropic key row)"))
+    via = _auth_via(probes) or "ANTHROPIC_API_KEY"
+    rc, out = probes.run(llm.auth_probe_argv(cfg), env=env, timeout=_PROBE_TIMEOUT,
+                         cwd=config.headless_cwd())
+    if rc == 0:
+        return CheckResult("claude auth", OK, "live call ok (API key from %s, isolated)" % via)
+    return _auth_failed_row(via, rc, out)
+
+
+def _auth_failed_row(via: str, rc: int, out: str) -> CheckResult:
+    tail = " ".join(out.strip().split())[-120:] if out.strip() else "no output"
+    return CheckResult(
+        "claude auth", FAIL,
+        "live call failed via API key from %s (exit %s: %s)" % (via, rc, tail),
+        "check the key (active? billing?) or re-paste it in Settings > Credentials",
+    ).with_failure(failures.classify(out) or "claude_auth_failed")
+
+
+# --------------------------------------------------------------------------- #
+# Composition (macOS; the launchd / cron / recording rows are darwin-only)
+# --------------------------------------------------------------------------- #
+_CHECKS_HEAD = [
     _check_home,
     _check_version,
     _check_claude,
     _check_stable_claude,   # §55 第五幕（darwin only; [] elsewhere）
     _check_daemon_claude,
+    _check_claude_bare_supported,   # §78
     _check_runtime_python,
     _check_config,
     _check_anthropic_key,
     _check_state_dirs,
 ]
 
+_CHECKS_DARWIN = [
+    _check_launchd,
+    _check_launchd_paths,
+    _check_launchd_claude,
+    _check_launchd_orphans,
+    _check_isolation_footprint,   # §78
+    _check_cron,
+]
 
-def _service_checks() -> "tuple[list, list]":
-    """(middle, tail_extra) for this OS: launchd (macOS) <-> systemd (Linux)
-    <-> Task Scheduler (Windows); the macOS-only screen-ingest checks ride
-    behind the shared tail. Every OS also gets its §55 orphan row (a retired
-    job whose template is gone is otherwise structurally invisible — the
-    expected sets are globbed from the template dirs)."""
-    if platform.is_darwin():
-        return ([_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
-                 _check_launchd_claude, _check_launchd_volume_access,
-                 _check_launchd_orphans, _check_cron],
-                [_check_screenpipe, _check_npx, _check_power])
-    if platform.is_windows():
-        return [_check_scheduled_tasks, _check_task_orphans], []
-    return [_check_systemd, _check_systemd_orphans], []
+_CHECKS_TAIL = [_check_board_server, _check_ui_build, _check_obsidian]
+_CHECKS_RECORDING = [_check_screenpipe, _check_npx]
 
 
 def _checks_for_platform() -> List:
-    """Compose the check list for the current OS.
-
-    Shared checks always run. The service check swaps launchd (macOS) <->
-    systemd (Linux) <-> Task Scheduler (Windows). The macOS-only screen-ingest /
-    crontab checks (cron chain + FDA probe, screenpipe db, node/npx) are
-    conditioned out off-macOS: Linux/Windows v1 defer screen ingest
-    (docs/LINUX.md, docs/WINDOWS.md) and drive radars via systemd timers /
-    scheduled tasks, so there is no crontab ingest chain to probe.
-    """
-    middle, tail_extra = _service_checks()
-    # §47.4 heartbeat rides right behind the dashboard freshness row on every
-    # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
-    # (pid alive, heartbeat stale).
-    return (_CHECKS_COMMON_HEAD + middle
-            + [_check_store2, _check_dashboard, _check_heartbeat,
-               _check_board_server, _check_ui_build, _check_auto_deploy,
-               _check_obsidian]
-            + tail_extra + [_check_gh, _check_claude_code_model])
+    """Compose the check list. v2.0.0 is macOS-only; off darwin (a CI runner, a
+    dev box) the launchd / cron / recording rows are left out instead of
+    reporting a machine that was never meant to run them."""
+    if platform.is_darwin():
+        return (_CHECKS_HEAD + _CHECKS_DARWIN + _CHECKS_TAIL + _CHECKS_RECORDING
+                + [_check_models])
+    return _CHECKS_HEAD + _CHECKS_TAIL + [_check_models]
 
 
 def _safe(fn, probes: Probes) -> List[CheckResult]:
@@ -504,7 +387,7 @@ def run_checks(probes: Optional[Probes] = None, fast: bool = False) -> List[Chec
     checks = _checks_for_platform()
     if not fast:
         checks.append(_check_claude_auth)
-        checks.append(_check_model_liveness)   # §59: spends tokens only for explicit knobs
+        checks.append(_check_model_liveness)   # §59: one live call for the pipeline model
     results: List[CheckResult] = []
     for fn in checks:
         results.extend(_safe(fn, probes))
@@ -534,7 +417,7 @@ def render(results: List[CheckResult]) -> str:
 
 def rows_of(results: List[CheckResult]) -> List[dict]:
     """§25 wire rows (one dict per check) — shared by --json and --fresh-install;
-    `row_class` is what the §56.3 deploy verdict reads to skip owner-action FAILs."""
+    `row_class` marks rows whose only fix is the owner's manual grant."""
     return [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
              "failure_id": r.failure_id, "action_id": r.action_id,
              "row_class": r.row_class}
@@ -571,7 +454,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="python3 -m act.doctor",
         description="Post-install diagnostics for Zelin's AI Assistant.")
     parser.add_argument("--fast", action="store_true",
-                        help="skip the live claude auth probe (spends no tokens)")
+                        help="skip the live claude probes (spends no tokens)")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="machine-readable output (one row per check, §25)")
     parser.add_argument("--fresh-install", action="store_true", dest="fresh",

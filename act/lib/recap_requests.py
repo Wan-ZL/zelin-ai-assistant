@@ -1,9 +1,9 @@
 """act/lib/recap_requests.py — 「重新生成 / 现在生成」的请求台账 + 行投影 ``generate_request``（CONTRACT §63.8）。
 
 issue #297：按「重新生成」只换来一条 toast，新版本落地前后面板看起来一模一样——
-一次 59 秒的成功被读成失败。§48.7 ``radar_rounds`` 的模式原样搬过来：
+一次 59 秒的成功被读成失败。v1 §48.7 ``radar_rounds`` 的模式（雷达随 v2.0.0 退役，全文见 tag full）原样搬过来：
 
-- ``state/recap_requests.json``（**actd 单写者**；``state/recap/`` 整目录仍归
+- ``state/recap_requests.json``（**server 单写者**——``POST /api/recaps/generate``；``state/recap/`` 整目录仍归
   act/recap.py，这里不碰它）：``{<meeting_key>: {"requested_at": iso, "launch":
   "running"|"noop", "note": null|"launch_failed"}}``——每键一条（同键再按 = 覆盖），
   写时剪掉超过 :data:`TTL_S` 的旧条、只留最新 :data:`CAP` 条（防腐 #4：出生即有界）。
@@ -14,9 +14,9 @@ issue #297：按「重新生成」只换来一条 toast，新版本落地前后�
   ``lost`` = 超过 :data:`LOST_AFTER_S` 仍无落笔（崩在 import / 被杀 / 锁等超时 / **模型调用
   本身出错**——claude 非零退出或超时时 ``act.recap.generate`` 不捕获、整次运行 crash 不落笔，
   原因只在 state/recap.log——诚实说丢了，不永远「生成中」）；``noop`` = 没起。
-  纯磁盘真值函数：dashboard 一次性构建同样算得出。
+  纯磁盘真值函数：``GET /api/recaps`` 每次现算。
 
-actd 在 **起子进程之前** 取 ``requested_at``（:func:`iso_now`），子进程的 ``generated_at``
+server 在 **起子进程之前** 取 ``requested_at``（:func:`iso_now`），子进程的 ``generated_at``
 取自它自己的启动时刻，同一台机器同一口钟、同为秒级 ISO-Z，字典序 = 时间序。
 """
 from __future__ import annotations
@@ -56,10 +56,11 @@ def _parse_iso(value) -> Optional[_dt.datetime]:
         return None
 
 
-def load() -> dict:
-    """整份台账；缺失 / 坏文件 → {}。Never raises。"""
+def load(path: Optional[Path] = None) -> dict:
+    """整份台账；缺失 / 坏文件 → {}。Never raises。``path``（add-only）= 别处的台账
+    （server 按自己的 home 读写，不依赖进程 env）。"""
     try:
-        data = json.loads(REQUESTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads((path or REQUESTS_PATH).read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - 台账坏了不许崩 pass / 投影
         return {}
     return data if isinstance(data, dict) else {}
@@ -86,18 +87,20 @@ def _prune(data: dict, now: _dt.datetime) -> dict:
 
 
 def record(key: str, launch: str, requested_at: Optional[str] = None,
-           now: Optional[_dt.datetime] = None) -> None:
-    """actd 单写者：原子写一条（tmp + replace），顺手剪台账。写失败只影响投影，不反噬 pass。"""
+           now: Optional[_dt.datetime] = None, path: Optional[Path] = None) -> None:
+    """server 单写者：原子写一条（tmp + replace），顺手剪台账。写失败只影响投影，不反噬请求。
+    ``path``（add-only）= 台账位置（缺省 :data:`REQUESTS_PATH`）。"""
     when = now if now is not None else _dt.datetime.now(_dt.timezone.utc)
+    target = path or REQUESTS_PATH
     try:
-        config.ensure_state_dirs()
-        data = load()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = load(target)
         data[key] = {"requested_at": requested_at or iso_now(when), "launch": launch,
                      "note": None if launch == RUNNING else "launch_failed"}
         data = _prune(data, when)
-        tmp = REQUESTS_PATH.with_suffix(".json.tmp")
+        tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, REQUESTS_PATH)
+        os.replace(tmp, target)
     except OSError:
         pass
 

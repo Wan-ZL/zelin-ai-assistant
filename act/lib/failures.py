@@ -1,17 +1,20 @@
 """Failure classification — the routing table the error UX hangs on (CONTRACT §25).
 
 Every known failure mode gets ONE stable id, a plain-language sentence in both
-UI languages, and an ``action_id`` the Mac app maps to a one-click repair (or a
-deep-link). Producers (executor dispatch errors, dashboard projection, doctor
-checks) attach the id ALONGSIDE the raw text — raw text is never replaced, only
-demoted to detail/tooltip.
+UI languages, and an ``action_id`` the shell / web maps to a one-click repair
+(or a deep-link). Producers (the recap run, doctor checks, the engine-log
+diagnosis) attach the id ALONGSIDE the raw text — raw text is never replaced,
+only demoted to detail/tooltip.
 
 Design law: fewer failure modes classified WELL beats full coverage. Anything
-:func:`classify` cannot match returns ``None`` and the UI falls back to the
-raw text plus the generic "让 AI 修 / Fix with AI" escape hatch (act/ai_fix.py).
+:func:`classify` cannot match returns ``None`` and the UI falls back to the raw
+text.
 
-The Swift side mirrors these ids in mac/Sources/Doctor.swift (FailureCatalog);
-tests/test_failures.py drift-guards the two lists.
+v2.0.0: ids that only the Act pipeline produced are **tombstones** (add-only,
+§25): the key stays in :data:`FAILURES` with ``"retired": "v2.0.0"`` and a short
+sentence, nothing produces it any more, and :data:`RETIRED` lists them. New:
+``claude_bare_unsupported`` and ``isolation_footprint_violation`` (§78). The
+web / shell read this table through ``server/failure_catalog.py``.
 """
 from __future__ import annotations
 
@@ -42,77 +45,42 @@ from typing import Optional
 # --------------------------------------------------------------------------- #
 FAILURES: dict = {
     "claude_cli_missing": {
-        "plain_zh": "claude 命令行没装好——助手无法研究或执行任何卡片",
-        "plain_en": "The claude CLI is not installed — the assistant cannot research or execute any card",
+        "plain_zh": "claude 命令行没装好——会议纪要和笔记整理都无法运行",
+        "plain_en": "The claude CLI is not installed — meeting recaps and note processing cannot run",
         "action_id": "install_claude",
     },
-    # a SECOND, older claude install shadowing the real one on the daemon's
-    # PATH (2026-07-08: /opt/homebrew/bin/claude 2.1.16 vs ~/.local/bin
-    # 2.1.206) — dispatch dies on "unknown option '--bg'" and retries forever.
+    # v2.0.0 re-scoped (still produced by the `daemon claude` row): the claude the
+    # server agent would launch is older than the one your login shell runs. The
+    # --bg / --name / --resume classify signatures retired with dispatch.
     "claude_cli_outdated": {
-        "plain_zh": "这台机器上有多个 claude 命令，后台服务在用过旧的那个——更新或删掉旧版，再重跑一次安装",
-        "plain_en": "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer",
+        "plain_zh": "这台机器上有多个 claude 命令，后台服务会用过旧的那个——更新或删掉旧版，再重跑一次安装",
+        "plain_en": "This Mac has more than one claude CLI and the background service would use an outdated copy — update or remove the old one, then re-run the installer",
         "action_id": "open_deps",
     },
-    # §55 第三幕（2026-08-31 storm, verified 2026-09-01 under a throwaway
-    # launchd job): the claude binary launched by the launchd-run actd gets
-    # EPERM on getcwd/readdir when the task folder sits on a TCC-gated path
-    # (external volume, ~/Documents, ~/Desktop, ~/Downloads). Bun renders that
-    # unmapped errno as "An unknown error occurred, possibly due to low max
-    # file descriptors (Unexpected)" — a GUESS, and a wrong one: the same job
-    # runs `claude --version` fine with cwd=$HOME at ulimit 256, and raising
-    # the fd ceiling to 8192 changed nothing (11 more failures, "Current
-    # limit: 8192"). macOS keys Full Disk Access per executable PATH, so the
-    # grant Terminal/python3 hold does not cover ~/.local/share/claude/
-    # versions/<v> — and every claude update is a new path. §55 第五幕 makes
-    # the subject of that grant a STABLE copy install.sh maintains (same path
-    # forever; doctor's `launchd claude` row names it). No one-click repair:
-    # it is the owner's TCC toggle (or moving the folder).
+    # §55 第三幕 / §78 (still produced by the `stable claude` and `launchd claude`
+    # rows): macOS grants Full Disk Access per executable path, and the claude the
+    # server agent launches has no grant yet. Owner action (a TCC toggle).
     "claude_blind": {
-        "plain_zh": "后台服务里的 claude 读不到任务目录（macOS 按可执行文件授磁盘权限，launchd 起的"
-                    " claude 没有「完全磁盘访问」，任务目录又在外置卷或 Documents/Desktop/Downloads"
-                    " 里；claude 自己报的「low max file descriptors」是猜错的）——系统设置 → 隐私与"
-                    "安全性 → 完全磁盘访问，加入 doctor `launchd claude` 行点名的那个 claude 路径"
-                    "（install.sh 维护的稳定副本，授一次即跨 claude 更新有效），或把任务目录搬到"
-                    "启动盘的家目录下；然后把卡「停止 → 退回提案」再批准",
-        "plain_en": "The claude binary the background service launches cannot read the task "
-                    "folder (macOS grants disk access per executable; launchd-spawned claude "
-                    "has no Full Disk Access and the folder sits on an external volume or in "
-                    "Documents/Desktop/Downloads — claude's own \"low max file descriptors\" "
-                    "guess is wrong) — System Settings → Privacy & Security → Full Disk "
-                    "Access: add the claude path named by doctor's `launchd claude` row (the "
-                    "stable copy install.sh maintains; one grant survives claude updates), or "
-                    "move the task folder under your home on the boot volume; then Stop → "
-                    "Discard & re-propose → approve the card again",
+        "plain_zh": "后台服务起的 claude 读不到它要用的文件夹（macOS 按可执行文件授磁盘权限，launchd 起的"
+                    " claude 没有「完全磁盘访问」）——系统设置 → 隐私与安全性 → 完全磁盘访问，加入 doctor"
+                    " `launchd claude` / `stable claude` 行点名的那个 claude 路径（install.sh 维护的稳定副本，"
+                    "授一次即跨 claude 更新有效）",
+        "plain_en": "The claude the background service launches cannot read the folder it needs (macOS "
+                    "grants disk access per executable, and a launchd-started claude has no Full Disk "
+                    "Access) — System Settings → Privacy & Security → Full Disk Access: add the claude "
+                    "path the doctor's `launchd claude` / `stable claude` row names (the stable copy "
+                    "install.sh maintains; one grant survives claude updates)",
         "action_id": "open_deps",
     },
-    # genuine fd exhaustion: EMFILE/ENFILE spellings, Bun's own
-    # ProcessFdQuotaExceeded / SystemFdQuotaExceeded ("bun ran out of file
-    # descriptors"). launchd's gui domain hands every job a soft `ulimit -n`
-    # of 256 (hard unlimited); the templates raise the SOFT limit (§55) and
-    # re-rendering the agents is the fix — same one-click path as a dead actd.
     "fd_limit": {
-        "plain_zh": "后台服务的打开文件数耗尽（launchd 默认软上限 256；错误里写着 EMFILE / too many"
-                    " open files）——重跑一次安装器（bash install.sh）让每个后台服务带上更高的软上限，"
-                    "再重新批准这张卡",
-        "plain_en": "The background service ran out of open files (launchd's default soft limit "
-                    "is 256; the error reads EMFILE / too many open files) — re-run the "
-                    "installer (bash install.sh) so every agent carries a higher soft limit, "
-                    "then approve the card again",
-        "action_id": "restart_actd",
+        "plain_zh": "（已退役）后台服务打开文件数耗尽",
+        "plain_en": "(retired) the background service ran out of open files",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
-    # issue #89: `claude --bg --dangerously-skip-permissions` refuses to start
-    # until the bypassPermissions disclaimer has been accepted ONCE
-    # interactively on this machine — a Task Scheduler / launchd session can
-    # never do that, so a fresh install dispatches into a wall (49 attempts
-    # in the report). One-time human step, same shape as claude_cli_outdated.
     "claude_bypass_disclaimer": {
-        "plain_zh": "claude 还没在这台机器上接受过「跳过权限确认」的免责声明——在终端里手动跑一次"
-                    " `claude --dangerously-skip-permissions` 并接受，后台派发才能启动",
-        "plain_en": "claude has not accepted the bypass-permissions disclaimer on this machine "
-                    "yet — run `claude --dangerously-skip-permissions` once in a terminal and "
-                    "accept it, then background dispatch can start",
-        "action_id": "open_deps",
+        "plain_zh": "（已退役）claude 未接受跳过权限确认的免责声明",
+        "plain_en": "(retired) claude had not accepted the bypass-permissions disclaimer",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
     "claude_auth_failed": {
         "plain_zh": "AI 的 API key 无效或过期——去设置页重新粘贴一个",
@@ -158,39 +126,28 @@ FAILURES: dict = {
         "action_id": "regrant_screen",
     },
     "agent_unloaded": {
-        "plain_zh": "一个后台服务没有装载——它负责的工作停了",
-        "plain_en": "A background service is not loaded — its work has stopped",
-        "action_id": "reload_agent",
+        "plain_zh": "（已退役）一个 Act 后台服务没有装载",
+        "plain_en": "(retired) an Act background service was not loaded",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
-    # §55 症状 4：解释器能 import yaml、plist 路径也对，但 macOS 按 binary 授
-    # 权文件访问，它在 launchd 下读不到 repo。重装 agent 没用（同一个解释器会
-    # 被再渲一遍）——要换解释器，所以动作是把人送到依赖页去重跑安装器。
+    # still produced by the `launchd python` row (the server agent's interpreter).
     "interpreter_blind": {
         "plain_zh": "后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，"
                     "后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
-        "plain_en": "The Python the background services run cannot read the project "
+        "plain_en": "The Python the background service runs cannot read the project "
                     "folder (macOS grants file access per program, and background jobs "
                     "do not inherit your terminal's grant) — re-running the installer "
                     "picks one that can",
         "action_id": "open_deps",
     },
-    # §56.3 第 1 步（v0.48.20；live 事故 2026-09-02）：launchd 起的自动部署任务
-    # 读不到外置卷上的 repo（TCC 按 responsible executable 授权、任务收不到弹
-    # 窗）。终端里跑绿了不算——它借的是终端的授权。修法是给 plist 里那个解释器
-    # 授「完全磁盘访问」，没有一键动作，把人送到依赖页看 doctor 的精确路径。
     "deploy_blind_tcc": {
-        "plain_zh": "后台自动部署任务读不到项目所在的外置盘（macOS 按程序单独授权，"
-                    "后台任务不继承终端的权限）——给它用的那个 Python 授「完全磁盘访问」，"
-                    "路径见 doctor 的 launchd volume access 行",
-        "plain_en": "The background auto-deploy job cannot read the external volume the "
-                    "project lives on (macOS grants file access per program, and background "
-                    "jobs do not inherit your terminal's grant) — grant Full Disk Access to the "
-                    "Python it runs; the exact path is in doctor's launchd volume access row",
-        "action_id": "open_deps",
+        "plain_zh": "（已退役）自动部署任务读不到项目所在的卷",
+        "plain_en": "(retired) the auto-deploy job could not read the project volume",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
     "cron_missing": {
-        "plain_zh": "定时任务没有安装——屏幕记录不会变成笔记和卡片",
-        "plain_en": "The scheduled jobs are not installed — screen captures never become notes or cards",
+        "plain_zh": "定时任务没有安装——屏幕记录不会变成笔记和会议纪要",
+        "plain_en": "The scheduled job is not installed — screen captures never become notes or meeting recaps",
         "action_id": "repair_cron",
     },
     "cron_fda_blocked": {
@@ -212,44 +169,26 @@ FAILURES: dict = {
         "action_id": "open_deps",
     },
     "dashboard_stale": {
-        "plain_zh": "后台服务停止更新数据——看板显示的是旧内容",
-        "plain_en": "The background service stopped updating data — the board shows old content",
-        "action_id": "restart_actd",
+        "plain_zh": "（已退役）看板数据停止更新",
+        "plain_en": "(retired) the board data stopped updating",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
-    # §47.4 heartbeat: the process is alive (launchctl shows a pid) but its
-    # per-pass heartbeat stopped — 2026-08-31 22:31 actd sat idle in
-    # time.sleep for 2.5h, no children, dashboard frozen, doctor green.
-    # Distinct from dashboard_stale (process dead / never started): the fix
-    # is a hard restart of the live process, not a reload.
     "actd_stalled": {
-        "plain_zh": "后台服务进程还活着，但已经停止心跳（不再跑循环）——强制重启它："
-                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
-        "plain_en": "The background service process is alive but its heartbeat stopped (the "
-                    "loop is no longer running) — force-restart it: "
-                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
-        "action_id": "restart_actd",
+        "plain_zh": "（已退役）actd 进程停止心跳",
+        "plain_en": "(retired) the actd process stopped its heartbeat",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
-    # a launchd agent with our label prefix but no template in act/launchd —
-    # a retired service the installer failed to unload. 2026-08-31 audit: the
-    # imessageradar agent (removed v0.21) kept running for 51 days, 23,613
-    # tracebacks, because install.sh swallowed the bootout failure.
     "launchd_orphan": {
-        "plain_zh": "有已退役的后台服务还在 launchd 里运行（仓库里已没有它的模板）——重跑一次安装器"
-                    "把它卸掉（bash install.sh），或手动 launchctl bootout",
-        "plain_en": "A retired background service is still loaded in launchd (the repo no "
-                    "longer ships its template) — re-run the installer to unload it "
-                    "(bash install.sh), or launchctl bootout it by hand",
-        "action_id": "open_deps",
+        "plain_zh": "（已退役）退役的后台服务仍在 launchd 里",
+        "plain_en": "(retired) a retired background service was still in launchd",
+        "action_id": "open_deps", "retired": "v2.0.0",
     },
-    # §59 (D22): an explicit model knob names an id claude cannot serve
-    # (alias/suffix retired, typo, no access). Only the doctor's liveness
-    # probe produces it — dispatch failures keep their raw text.
+    # §59: the model knob names an id claude cannot serve (alias/suffix retired,
+    # typo, no access). Only the doctor's liveness probe produces it.
     "model_unavailable": {
-        "plain_zh": "设置里选的模型不可用——派工会全部失败；去设置页「模型」改回"
-                    "「跟随 Claude Code 全局」或换一个 canonical id",
-        "plain_en": "The model chosen in Settings is unavailable — every dispatch will "
-                    "fail; in Settings → Models switch back to \"follow Claude Code\" "
-                    "or pick a canonical id",
+        "plain_zh": "设置里选的模型不可用——会议纪要会全部失败；去设置页「模型」换一个 canonical id",
+        "plain_en": "The model chosen in Settings is unavailable — every meeting recap will "
+                    "fail; in Settings → Models pick a canonical id",
         "action_id": "open_deps",
     },
     # §54 board server: nothing answers on the loopback port (launchd job
@@ -285,7 +224,31 @@ FAILURES: dict = {
         "plain_en": "Network trouble — it will retry automatically",
         "action_id": "retry",
     },
+    # §78: the installed claude lacks a flag the isolation depends on (--bare,
+    # --no-session-persistence, --setting-sources, --strict-mcp-config,
+    # --mcp-config) — running without it would read the owner's own Claude Code
+    # setup. Only the doctor's `claude bare supported` row produces it.
+    "claude_bare_unsupported": {
+        "plain_zh": "这台机器上的 claude 太旧，不支持本应用的隔离运行方式（--bare 等旗标）——"
+                    "更新 Claude Code 后重跑 bash install.sh",
+        "plain_en": "The claude on this Mac is too old for this app's isolated mode (--bare "
+                    "and related flags) — update Claude Code, then re-run bash install.sh",
+        "action_id": "install_claude",
+    },
+    # §78: something outside the closed resident footprint (one LaunchAgent, one
+    # cron line, the opt-in login item, the engine) is installed under our name.
+    "isolation_footprint_violation": {
+        "plain_zh": "发现本应用封闭清单之外的后台项（旧版留下的 LaunchAgent 或定时任务行）——"
+                    "重跑一次 bash install.sh 会把它们清掉",
+        "plain_en": "Found background items outside this app's closed footprint (a LaunchAgent "
+                    "or cron line left by an older version) — re-run bash install.sh to remove them",
+        "action_id": "open_deps",
+    },
 }
+
+# §25 tombstones (v2.0.0): ids nothing produces any more; the entries stay so an
+# old receipt that names one still renders a sentence (add-only).
+RETIRED: frozenset = frozenset(k for k, v in FAILURES.items() if v.get("retired"))
 
 # --------------------------------------------------------------------------- #
 # row class — WHO fixes it (§25; consumed by the §56.3 deploy verdict)
@@ -304,11 +267,9 @@ FAILURES: dict = {
 OWNER_ACTION = "owner_action"
 OWNER_ACTION_IDS: frozenset = frozenset({
     "claude_blind",             # FDA for the claude binary launchd runs
-    "deploy_blind_tcc",         # FDA for the autodeploy interpreter
     "cron_fda_blocked",         # FDA for /usr/sbin/cron
     "cron_tcc_blocked",         # FDA for the daemon python (crontab write)
     "ui_build_tcc_blocked",     # FDA for the node binary
-    "claude_bypass_disclaimer",  # accept the bypass disclaimer once, in a terminal
     "screen_tcc_lost",          # re-grant Screen Recording
 })
 
@@ -327,30 +288,6 @@ _RULES: list = [
         r"claude.{0,40}(command not found|no such file)|"
         r"(command not found|no such file or directory).{0,20}claude|"
         r"\[Errno 2\].*claude", re.IGNORECASE | re.DOTALL)),
-    # version-mismatch signatures only: the exact flags/subcommands dispatch
-    # relies on (--bg/--name/--resume, `claude agents`) rejected as unknown.
-    # A generic "unknown option" must NOT match — could be the task's own text.
-    ("claude_cli_outdated", re.compile(
-        r"unknown option.{0,10}['\"]?--(bg|name|resume)\b|"
-        r"unknown command.{0,10}['\"]?agents\b", re.IGNORECASE)),
-    # Bun's catch-all for an UNMAPPED errno ("An unknown error occurred,
-    # possibly due to low max file descriptors (Unexpected)"). It is NOT fd
-    # exhaustion — Bun spells that out separately (ProcessFdQuotaExceeded /
-    # SystemFdQuotaExceeded, below). On this product's launch path the errno
-    # is TCC's EPERM on the task cwd (§55 第三幕), so the sentence says so.
-    # Ranked before auth/network: the message carries no other signature,
-    # and a card text would not plausibly contain it.
-    ("claude_blind", re.compile(
-        r"possibly due to low max file descriptors", re.IGNORECASE)),
-    # genuine fd exhaustion: errno spellings + Bun's own quota messages.
-    ("fd_limit", re.compile(
-        r"\bEMFILE\b|\bENFILE\b|too many open files|"
-        r"ran out of file descriptors|FdQuotaExceeded",
-        re.IGNORECASE)),
-    # claude's exact refusal (issue #89); narrow on purpose — a card that merely
-    # talks about permissions or disclaimers must not classify.
-    ("claude_bypass_disclaimer", re.compile(
-        r"bypassPermissions requires accepting the disclaimer", re.IGNORECASE)),
     ("claude_auth_failed", re.compile(
         r"authentication_error|invalid (x-)?api[- _]?key|"
         r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"
@@ -535,15 +472,6 @@ def describe(failure_id: Optional[str]) -> Optional[dict]:
     if not failure_id:
         return None
     return FAILURES.get(str(failure_id))
-
-
-def user_message(failure_id: Optional[str], lang: Optional[str] = None) -> Optional[str]:
-    """Plain-language sentence for a failure id in the current UI language."""
-    entry = describe(failure_id)
-    if not entry:
-        return None
-    key = "plain_en" if (lang or ui_lang()) == "en" else "plain_zh"
-    return entry[key]
 
 
 def action_id(failure_id: Optional[str]) -> Optional[str]:

@@ -106,13 +106,13 @@ class SitesReceiveThePinTestCase(unittest.TestCase):
         # the one real launches get — a probe must not run in a foreign env
         calls = []
 
-        def run(cmd, env=None, timeout=None):
+        def run(cmd, env=None, timeout=None, cwd=None):
             calls.append((list(cmd), env))
             return 0, "ok"
 
-        probes = doctor.Probes(which=lambda name: "/fake/bin/claude", run=run,
-                               claude_code_settings=lambda: {})
-        doctor._model_row(probes, _cfg(), "dispatch", "claude-opus-5", {})
+        probes = doctor.Probes(which=lambda name: "/fake/bin/claude", run=run)
+        with mock.patch.object(doctor.config, "load_config", return_value=_cfg()):
+            doctor._check_model_liveness(probes)
         cmd, env = calls[0]
         self.assertNotIn("--fallback-model", cmd)
         self.assertEqual(env[ENV], DEFAULT)

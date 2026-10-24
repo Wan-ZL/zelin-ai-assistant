@@ -23,8 +23,10 @@ _WIN = sys.platform.startswith("win")
 
 DOCTOR_JSON = json.dumps({"home": "/x", "checks": [
     {"name": "claude CLI", "status": "OK", "detail": "", "fix": "", "failure_id": "", "action_id": ""},
-    {"name": "launchd volume access", "status": "FAIL", "detail": "EPERM", "fix": "grant FDA",
-     "failure_id": "deploy_blind_tcc", "action_id": ""},
+    {"name": "launchd claude", "status": "FAIL", "detail": "EPERM", "fix": "grant FDA",
+     "failure_id": "claude_blind", "action_id": ""},
+    {"name": "server", "status": "WARN", "detail": "", "fix": "", "failure_id": "board_server_down",
+     "action_id": ""},
     {"name": "cron write access", "status": "WARN", "detail": "", "fix": "", "failure_id": "cron_tcc_blocked",
      "action_id": ""},
     {"name": "board ui build", "status": "WARN", "detail": "", "fix": "", "failure_id": "", "action_id": ""},
@@ -102,7 +104,7 @@ class PermissionsTestCase(_ServerCase):
         self.patch_runner()
         _s, obj = get_json(self.port, "/api/permissions")
         self.assertEqual([r["name"] for r in obj["doctor"]],
-                         ["launchd volume access", "cron write access", "board ui build"])
+                         ["launchd claude", "cron write access", "board ui build"])
         self.assertTrue(obj["doctor_ok"])
         self.assertEqual(self.calls[0][1:], ["-m", "act.doctor", "--json", "--fast"])
 
@@ -154,12 +156,12 @@ class SetupTestCase(_ServerCase):
         self.assertTrue(obj["needed"])
         self.assertFalse(obj["done"])
         self.assertFalse(obj["config_exists"])
-        self.assertEqual(set(obj["secrets"]),
-                         {"anthropic-api-key.txt", "slack-user-token.txt", "gmail-app-password.txt"})
+        # v2.0.0: the Anthropic key is the only credential left (§19 / §78)
+        self.assertEqual(set(obj["secrets"]), {"anthropic-api-key.txt"})
 
     def test_config_plus_one_secret_means_not_needed(self):
         write_text(self.home / "config.yaml", "owner:\n  name: x\n")
-        write_text(self.home / "config" / "secrets" / "slack-user-token.txt", "xoxp-1\n")
+        write_text(self.home / "config" / "secrets" / "anthropic-api-key.txt", "sk-ant-1\n")
         _s, obj = get_json(self.port, "/api/setup")
         self.assertFalse(obj["needed"])
 
@@ -193,27 +195,15 @@ class SetupTestCase(_ServerCase):
         self.assertTrue(obj["setup"]["needed"])
 
     def test_unknown_fields_are_400(self):
-        for path in ("/api/setup/complete", "/api/setup/reset", "/api/setup/config-from-example",
-                     "/api/setup/seed-dashboard"):
+        for path in ("/api/setup/complete", "/api/setup/reset", "/api/setup/config-from-example"):
             with self.subTest(path=path):
                 status, obj = post_json(self.port, path, {"x": 1})
                 self.assertEqual(status, 400)
                 assert_envelope(self, obj, "UNKNOWN_FIELD")
 
-    def test_seed_dashboard_runs_the_dashboard_module_once(self):
-        self.patch_runner(out="{}\n")
-        status, obj = post_json(self.port, "/api/setup/seed-dashboard", {})
-        self.assertEqual(status, 200)
-        self.assertEqual(obj, {"ok": True, "rc": 0})
-        self.assertEqual(self.calls[0][1:], ["-m", "act.lib.dashboard"])
-
-    def test_seed_dashboard_failure_is_honest_not_500(self):
-        self.patch_runner(rc=1, out="", err="Traceback: boom")
-        status, obj = post_json(self.port, "/api/setup/seed-dashboard", {})
-        self.assertEqual(status, 200)
-        self.assertFalse(obj["ok"])
-        self.assertEqual(obj["rc"], 1)
-        self.assertIn("boom", obj["error"])
+    def test_seed_dashboard_is_retired(self):
+        status, _obj = post_json(self.port, "/api/setup/seed-dashboard", {})
+        self.assertEqual(status, 404)
 
 
 class EngineDetectTestCase(_ServerCase):
@@ -238,21 +228,20 @@ class EngineDetectTestCase(_ServerCase):
         self.assertIsNone(snap["version"])
         self.assertIsNone(snap["auth"])
         self.assertFalse(snap["ready"])
-        self.assertEqual(set(snap["auth_sources"]), {"oauth", "env_key", "secrets_file", "legacy_file"})
+        self.assertEqual(set(snap["auth_sources"]), {"env_key", "secrets_file", "legacy_file"})
         self.assertFalse(any(argv[-1] == "--version" for argv in seen))
 
-    def test_cli_with_keychain_login_is_ready_via_oauth(self):
+    def test_a_claude_code_login_never_counts(self):
+        """§78：~/.claude/.credentials.json 或钥匙串登录不是 headless 运行的凭证。"""
         cli = self.home / "bin" / "claude"
         write_text(cli, "#!/bin/sh\n")
         write_text(self.home / "config.yaml", "execution:\n  claude_bin: %s\n" % cli)
+        write_text(self.user_home / ".claude" / ".credentials.json", '{"claudeAiOauth": {}}')
         snap, seen = self._engine(calls_ok=("find-generic-password",))
-        self.assertEqual(snap["cli_path"], str(cli))
-        self.assertEqual(snap["version"], "1.0.99 (Claude Code)")
-        self.assertEqual(snap["auth"], "oauth")
-        self.assertTrue(snap["ready"])
-        # 钥匙串探针只问存在：永不带 -w
-        for argv in seen:
-            self.assertNotIn("-w", argv)
+        self.assertIsNone(snap["auth"])
+        self.assertFalse(snap["ready"])
+        self.assertNotIn("oauth", snap["auth_sources"])
+        self.assertFalse(any("security" in " ".join(argv) for argv in seen))
 
     def test_auth_ladder_order_and_sources(self):
         cli = self.home / "bin" / "claude"
@@ -262,20 +251,14 @@ class EngineDetectTestCase(_ServerCase):
         write_text(self.user_home / ".config" / "anthropic-key.txt", "sk-legacy\n")
         snap, _seen = self._engine(platform="linux", env={"ANTHROPIC_API_KEY": "sk-env"})
         self.assertEqual(snap["auth_sources"],
-                         {"oauth": False, "env_key": True, "secrets_file": True, "legacy_file": True})
-        self.assertEqual(snap["auth"], "env_key")   # 梯子顺序：oauth → env_key → secrets_file → legacy_file
+                         {"env_key": True, "secrets_file": True, "legacy_file": True})
+        # 梯子顺序：env_key → secrets_file → legacy_file（§78：--bare 不读 Claude Code 登录，oauth 档退役）
+        self.assertEqual(snap["auth"], "env_key")
         snap, _seen = self._engine(platform="linux", env={})
         self.assertEqual(snap["auth"], "secrets_file")
         (self.home / "config" / "secrets" / "anthropic-api-key.txt").unlink()
         snap, _seen = self._engine(platform="linux", env={})
         self.assertEqual(snap["auth"], "legacy_file")
-
-    def test_credentials_json_counts_as_oauth_without_keychain(self):
-        write_text(self.user_home / ".claude" / ".credentials.json", '{"claudeAiOauth": {}}')
-        with mock.patch("server.permissions.shutil.which", return_value=None):
-            snap, _seen = self._engine(platform="linux")
-        self.assertTrue(snap["auth_sources"]["oauth"])
-        self.assertFalse(snap["ready"])   # 有登录没 CLI 仍不算就绪
 
     def test_route_serves_the_snapshot(self):
         with mock.patch("server.setup.engine_snapshot", return_value={"cli_path": None, "version": None, "auth": None,
@@ -287,16 +270,14 @@ class EngineDetectTestCase(_ServerCase):
 
 class AboutTestCase(_ServerCase):
     def test_about_reports_version_and_update_fields(self):
-        write_text(self.home / "state" / "dashboard.json", json.dumps({
-            "generated_at": "x", "counts": {},
-            "update_available": {"current": "0.1", "latest": "0.2", "url": "https://r", "pkg_asset_url": None}}))
+        # v2.0.0: update_available is computed from the cache (no dashboard.json)
         write_text(self.home / "state" / "update_check.json", json.dumps({
-            "checked_at": "2026-09-02T00:00:00Z", "etag": "W/secret", "latest": "0.2", "url": "https://r"}))
+            "checked_at": "2026-09-02T00:00:00Z", "etag": "W/secret", "latest": "999.0.0", "url": "https://r"}))
         status, obj = get_json(self.port, "/api/about")
         self.assertEqual(status, 200)
         self.assertTrue(obj["version"] and obj["version"] != "unknown")
         self.assertEqual(obj["home"], str(self.home))
-        self.assertEqual(obj["update_available"]["latest"], "0.2")
+        self.assertEqual(obj["update_available"]["latest"], "999.0.0")
         self.assertEqual(obj["update_check"]["checked_at"], "2026-09-02T00:00:00Z")
         self.assertNotIn("etag", obj["update_check"])
 

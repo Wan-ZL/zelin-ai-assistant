@@ -2,10 +2,11 @@
 「打开档案」= NSWorkspace.open，在默认编辑器里打开 .md，不是访达定位）。
 
 钉住：缺省 = reveal（``open -R``，既有客户端零改动）；``mode:"open"`` 只对 ``voice_profile`` 放行——server 跑裸 ``open
-<path>``，回执 ``{"ok", "opened"}``；用在 config / skill / mcp_* / 交付物 reveal 上 → 400 INVALID_FIELD 且不 spawn；
-词表外的 mode（含非字串）→ 400；``mode:"reveal"`` 显式给出等于缺省；非 darwin 501。子进程走 files.subprocess.run 注入缝。
+<path>``，回执 ``{"ok", "opened"}``；用在 config 上 → 400 INVALID_FIELD 且不 spawn；词表外的 mode（含非字串）→ 400；
+``mode:"reveal"`` 显式给出等于缺省；非 darwin 501。v2.0.0：server/files.py 退役，路由在 server/folders.py 重建，
+target 词表收缩到 config / voice_profile（skill / mcp_* / 交付物随 Act 退役——词表外 = 400）。子进程走
+folders.subprocess.run 注入缝。
 """
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, post_json, start_server, write_text
 
-from server import files as files_mod
+from server import folders as files_mod
 
 
 class RevealOpenModeTestCase(unittest.TestCase):
@@ -35,9 +36,24 @@ class RevealOpenModeTestCase(unittest.TestCase):
 
     def test_vocabulary(self):
         self.assertEqual(files_mod.REVEAL_MODES, ("reveal", "open"))
-        self.assertEqual(files_mod.resolve_mode(None, "config"), "reveal")
-        self.assertEqual(files_mod.resolve_mode("reveal", None), "reveal")
-        self.assertEqual(files_mod.resolve_mode("open", "voice_profile"), "open")
+        self.assertEqual(files_mod.REVEAL_TARGETS, ("config", "voice_profile"))
+        self.assertEqual(files_mod._reveal_mode(None, "config"), "reveal")
+        self.assertEqual(files_mod._reveal_mode("reveal", "config"), "reveal")
+        self.assertEqual(files_mod._reveal_mode("open", "voice_profile"), "open")
+
+    def test_retired_targets_are_400(self):
+        for payload in ({"target": "mcp_project"}, {"target": "skill", "name": "board-agent"},
+                        {"card_id": "R-1"}):
+            with self.subTest(payload=payload):
+                status, obj, run = self._post(payload)
+                self.assertEqual(status, 400, obj)
+                run.assert_not_called()
+
+    def test_config_reveal_prefers_config_yaml(self):
+        status, obj, run = self._post({"target": "config"})
+        self.assertEqual(status, 200, obj)
+        self.assertEqual(obj, {"ok": True, "revealed": str(self.home / "config.yaml")})
+        self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.home / "config.yaml")])
 
     def test_open_mode_runs_bare_open_on_the_effective_profile(self):
         status, obj, run = self._post({"target": "voice_profile", "mode": "open"})
@@ -60,10 +76,7 @@ class RevealOpenModeTestCase(unittest.TestCase):
                 self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.profile)])
 
     def test_open_mode_is_rejected_for_every_other_target(self):
-        write_text(self.home / ".mcp.json", json.dumps({"mcpServers": {}}))
-        for payload in ({"target": "config", "mode": "open"}, {"target": "mcp_project", "mode": "open"},
-                        {"target": "skill", "name": "board-agent", "mode": "open"},
-                        {"card_id": "R-1", "mode": "open"}):
+        for payload in ({"target": "config", "mode": "open"},):
             with self.subTest(payload=payload):
                 status, obj, run = self._post(payload)
                 self.assertEqual(status, 400, obj)

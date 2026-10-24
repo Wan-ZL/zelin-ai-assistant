@@ -1,5 +1,5 @@
 """doctor 工具链/配置/凭证/目录家族的**非健康分支**（CONTRACT §25；§18 录制依赖；
-§19 凭证顺序；§71.1 电源探针可读性）。
+§19 凭证顺序）。
 
 tests/test_doctor.py 的健康基线（`test_healthy_setup_has_no_fails_and_exits_zero`）
 把这一族每一行的 **OK 分支**都走了一遍，剩下的 WARN / FAIL 分支大多没有任何断言——
@@ -16,7 +16,7 @@ tests/test_doctor.py 的健康基线（`test_healthy_setup_has_no_fails_and_exit
   YAML 解析器的异常、活探针的输出都是不可信长度的外部文本；detail 是**一行**。
 * **超时阶梯是 owner 要等的秒数**（同 tests/test_checks_core_mutation_kills_train.py
   的那一条）：登录 shell 探测 15 s、`claude --version` 15 s、守护 python 的
-  `import yaml` 20 s、`gh auth status` 15 s、一次真模型调用 90 s。
+  `import yaml` 20 s、一次真模型调用 90 s（v2.0.0：`gh auth status` 行随 Act 退役）。
 * **缺省构造是 fail-loud 的**：`py or "empty"`、`classify(out) or
   "claude_auth_failed"` 都是「宁可说一个笨答案，也不留一个空洞」。
 
@@ -38,7 +38,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env before any act import
 
 from act import doctor
-from act.lib import config, platform, secrets
+from act.lib import config, secrets
 from act.lib.checks import environment
 
 # 一段长度可数、逐位不同的外来文本（截断长度的判据要能分辨第 79/80/81 个字符）。
@@ -56,8 +56,8 @@ class _Run:
         self.result = result
         self.calls = []
 
-    def __call__(self, cmd, env=None, timeout=None):
-        self.calls.append({"cmd": cmd, "env": env, "timeout": timeout})
+    def __call__(self, cmd, env=None, timeout=None, cwd=None):
+        self.calls.append({"cmd": cmd, "env": env, "timeout": timeout, "cwd": cwd})
         return self.result
 
 
@@ -262,23 +262,15 @@ class AnthropicKeyRowTestCase(unittest.TestCase):
         self.key.chmod(0o600)
         self.assertEqual(self._row().status, doctor.OK)
 
-    def test_windows_skips_the_mode_check_and_says_why(self):
-        # NTFS 没有 POSIX mode 位，chmod 600 在那里是 no-op——查了就是恒 WARN。
-        with mock.patch.object(platform, "is_windows", return_value=True):
-            row = self._row()
-        self.assertEqual(row.name, "anthropic key")
-        self.assertEqual(row.status, doctor.OK)
-        self.assertIn("NTFS", row.detail)
-
 
 class StateDirsRowTestCase(unittest.TestCase):
     """`state dirs` 行：缺目录和不可写是两个不同的 FAIL，都必须有行。"""
 
     def setUp(self):
         self.root = _tmpdir("zai-state-")
-        self.dirs = (self.root / "state", self.root / "state" / "inbox",
-                     self.root / "state" / "logs")
-        for name, value in zip(("STATE_DIR", "INBOX_DIR", "LOG_DIR"), self.dirs):
+        # v2.0.0: state/inbox retired with actd — the row checks state/ + state/logs
+        self.dirs = (self.root / "state", self.root / "state" / "logs")
+        for name, value in zip(("STATE_DIR", "LOG_DIR"), self.dirs):
             p = mock.patch.object(config, name, value)
             p.start()
             self.addCleanup(p.stop)
@@ -404,49 +396,53 @@ class OptionalToolRowsTestCase(unittest.TestCase):
         self.assertEqual(row.status, doctor.WARN)
         self.assertEqual(row.failure_id, "node_missing")
 
-    def test_the_gh_auth_probe_is_capped_at_fifteen_seconds(self):
-        run = _Run((0, ""))
-        environment.check_gh(_probes(which=lambda n: "/fake/bin/gh", run=run))
-        self.assertEqual(run.calls[0]["cmd"], ["/fake/bin/gh", "auth", "status"])
-        self.assertEqual(run.calls[0]["timeout"], 15)
-
-    def test_an_unauthenticated_gh_is_a_warn_row_that_names_the_binary(self):
-        row = environment.check_gh(
-            _probes(which=lambda n: "/fake/bin/gh", run=_Run((1, "not logged in"))))
-        self.assertEqual(row.name, "gh CLI")
-        self.assertEqual(row.status, doctor.WARN)
-        self.assertIn("/fake/bin/gh", row.detail)
-        self.assertIn("gh auth login", row.fix)
-
 
 class ClaudeAuthRowTestCase(unittest.TestCase):
-    """`claude auth` 行（唯一花钱的活探针）：凭证解析与失败归类。"""
+    """`claude auth` 行（唯一花钱的活探针；v2.0.0 起住在 act/doctor.py，走 §78 隔离）。"""
 
     def setUp(self):
         self.dir = _tmpdir("zai-auth-secrets-")
         p = mock.patch.object(secrets, "SECRETS_DIR", self.dir)
         p.start()
         self.addCleanup(p.stop)
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        legacy = mock.patch.object(secrets, "LEGACY_ANTHROPIC_KEY_PATH",
+                                   str(self.dir / "no-such-legacy.txt"))
+        legacy.start()
+        self.addCleanup(legacy.stop)
 
     def _probes_for(self, result):
         return _probes(which=lambda n: "/fake/bin/claude", run=_Run(result),
                        legacy_key_path=self.dir / "no-such-legacy.txt")
 
-    def test_without_a_key_the_probe_runs_on_subscription_auth_and_says_so(self):
-        # 没有 key 文件时活探针走 CLI 的存储凭证——GUI 会话里能过，
-        # cron/launchd 里常常过不去。那句提醒必须在。
+    def _with_key(self):
+        (self.dir / secrets.ANTHROPIC_API_KEY_FILE).write_text("sk-ant-test\n", encoding="utf-8")
+
+    def test_without_a_key_the_row_is_an_honest_skip_and_spends_nothing(self):
+        # §78: --bare never falls back to the Claude Code login — no key, no call
         probes = self._probes_for((0, "ok"))
-        row = environment.check_claude_auth(probes)
+        row = doctor._check_claude_auth(probes)
         self.assertEqual(row.name, "claude auth")
+        self.assertEqual(row.status, doctor.WARN)
+        self.assertIn("anthropic key", row.detail)
+        self.assertEqual(probes.run.calls, [])
+
+    def test_an_ok_call_says_it_was_isolated(self):
+        self._with_key()
+        probes = self._probes_for((0, "ok"))
+        row = doctor._check_claude_auth(probes)
         self.assertEqual(row.status, doctor.OK)
-        self.assertIn("subscription auth", row.detail)
-        self.assertIn("headless", row.detail)
-        self.assertNotIn("ANTHROPIC_API_KEY", probes.run.calls[0]["env"])
+        self.assertIn("isolated", row.detail)
+        self.assertEqual(probes.run.calls[0]["env"]["ANTHROPIC_API_KEY"], "sk-ant-test")
 
     def test_a_failed_live_call_keeps_the_last_120_chars_of_the_output(self):
         # 模型/网关的错误正文长度不可信；detail 是一行，留**尾部**（尾巴上
         # 才是原因，开头是重复的样板）。
-        row = environment.check_claude_auth(self._probes_for((1, NOISE)))
+        self._with_key()
+        row = doctor._check_claude_auth(self._probes_for((1, NOISE)))
         self.assertEqual(row.status, doctor.FAIL)
         self.assertIn(NOISE[-120:], row.detail)
         self.assertNotIn(NOISE[-121:], row.detail)
@@ -454,11 +450,12 @@ class ClaudeAuthRowTestCase(unittest.TestCase):
     def test_an_unclassifiable_failure_still_gets_the_generic_id(self):
         # 分类器认不出来 ≠ 没毛病：这一行必须带一个 failure id，
         # 否则 App 上它连一个「怎么修」的按钮都没有（§25 分类目录）。
-        row = environment.check_claude_auth(self._probes_for((1, NOISE)))
+        self._with_key()
+        row = doctor._check_claude_auth(self._probes_for((1, NOISE)))
         self.assertEqual(row.failure_id, "claude_auth_failed")
 
     def test_without_a_claude_binary_the_row_is_an_honest_skip(self):
-        row = environment.check_claude_auth(_probes())
+        row = doctor._check_claude_auth(_probes())
         self.assertEqual(row.name, "claude auth")
         self.assertEqual(row.status, doctor.WARN)
 

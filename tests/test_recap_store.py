@@ -1,8 +1,10 @@
-"""§63 recap store: settings from config, the inbox special-form argv, the
-add-only ``recaps[]`` board projection with server-owned marks, the §63.5 追记
-filing axis (已归档 / 已忽略 budgets + the dismissed retention window) and the
-actd detached spawn table (act/lib/recap_store.py, act/lib/detached.py,
-act/actd.py).
+"""§63 recap store: settings from config, the request-form argv the server
+spawns with, the ``GET /api/recaps`` snapshot (projection with server-owned
+marks + true per-lane counts), the §63.5 追记 filing axis (已归档 / 已忽略
+budgets + the dismissed retention window) and the detached spawn helper
+(act/lib/recap_store.py, act/lib/detached.py). Constitution art.1 (v2.0) cites
+this file: ``state/recap/recaps/`` + ``sessions.json`` have act.recap as their
+single writer; marks.json and recap_requests.json have the server.
 """
 import datetime as _dt
 import json
@@ -13,7 +15,6 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from act import actd
 from act.lib import config, detached
 from act.lib import recap_sessions as rs
 from act.lib import recap_store as store
@@ -31,8 +32,7 @@ class SettingsTestCase(unittest.TestCase):
         st = store.settings(config.Config())
         self.assertTrue(st["enabled"])
         self.assertEqual(st["default_language"], "auto")
-        self.assertFalse(st["slack_draft_enabled"])          # default OFF (owner)
-        self.assertEqual(st["slack_targets"], {})
+        self.assertNotIn("slack_draft_enabled", st)          # §63.4 retired v2.0.0
         self.assertEqual((st["max_per_run"], st["max_per_day"], st["retention_days"]), (2, 8, 90))
         self.assertEqual(st["dismissed_retention_days"], 14)     # §63.3 追记：已忽略的短窗
         self.assertIsNone(st["db_path"])
@@ -41,48 +41,46 @@ class SettingsTestCase(unittest.TestCase):
     def test_yaml_block_and_overrides_reach_the_knobs(self):
         cfg = config.Config(raw={"recap": {
             "enabled": "false", "default_language": "EN", "slack_draft": {"enabled": "yes",
-            "targets": {"Zoom": "C0123456789", "teams": "not-an-id", "meet": 12}},
+            "targets": {"Zoom": "C0123456789"}},
             "max_per_run": "3", "max_per_day": 0, "retention_days": "x",
             "dismissed_retention_days": 0, "db_path": " /tmp/x.sqlite "}})
-        config._apply_recap_block(cfg, cfg.raw)
+        config._apply_updates_recap_language(cfg, cfg.raw)
         st = store.settings(cfg)
         self.assertFalse(st["enabled"])
         self.assertEqual(st["default_language"], "en")
-        self.assertTrue(st["slack_draft_enabled"])
-        self.assertEqual(st["slack_targets"], {"zoom": "C0123456789"})
+        self.assertNotIn("slack_targets", st)                # an old slack_draft block is ignored
         self.assertEqual((st["max_per_run"], st["max_per_day"], st["retention_days"]), (3, 1, 90))
         self.assertEqual(st["dismissed_retention_days"], 1)      # 0 / 坏值 → 下限 1 天，永不「立刻删」
         self.assertEqual(st["db_path"], "/tmp/x.sqlite")
 
     def test_override_fields_are_registered_with_coercions(self):
-        for key in ("recap_enabled", "recap_default_language", "recap_slack_draft_enabled"):
+        for key in ("recap_enabled", "recap_default_language"):
             self.assertIn(key, config._OVERRIDE_FIELDS)
+        self.assertNotIn("recap_slack_draft_enabled", config._OVERRIDE_FIELDS)
         self.assertEqual(config._OVERRIDE_FIELDS["recap_default_language"]("ZH"), "zh")
         self.assertEqual(config._OVERRIDE_FIELDS["recap_default_language"]("klingon"), "auto")
-        self.assertFalse(config._OVERRIDE_FIELDS["recap_slack_draft_enabled"]("false"))
         self.assertEqual(config.RECAP_LANGUAGES, store.LANGUAGES)
 
     def test_bad_yaml_shapes_keep_defaults(self):
         cfg = config.Config(raw={"recap": "nonsense"})
-        config._apply_recap_block(cfg, cfg.raw)
+        config._apply_updates_recap_language(cfg, cfg.raw)
         self.assertTrue(cfg.recap_enabled)
         self.assertEqual(store.settings(cfg)["options"].gap_s, 300)
 
 
-class InboxArgvTestCase(unittest.TestCase):
+class RequestArgvTestCase(unittest.TestCase):
     def test_generate_forms(self):
-        self.assertEqual(store.inbox_argv({"action": "recap_generate", "meeting_key": KEY}),
+        self.assertEqual(store.request_argv({"action": "recap_generate", "meeting_key": KEY}),
                          ["--generate", KEY])
-        self.assertEqual(store.inbox_argv({"action": "recap_generate", "meeting_key": KEY,
+        self.assertEqual(store.request_argv({"action": "recap_generate", "meeting_key": KEY,
                                            "note": "fix", "partial": True}),
                          ["--generate", KEY, "--note", "fix", "--partial"])
-        self.assertEqual(store.inbox_argv({"action": "recap_generate", "meeting_key": KEY,
+        self.assertEqual(store.request_argv({"action": "recap_generate", "meeting_key": KEY,
                                            "partial": "yes"}), ["--generate", KEY])   # only literal true
 
-    def test_slack_draft_form(self):
-        self.assertEqual(store.inbox_argv({"action": "recap_slack_draft", "meeting_key": KEY,
-                                           "channel_id": "D0ABCDEF12"}),
-                         ["--slack-draft", KEY, "--channel-id", "D0ABCDEF12"])
+    def test_slack_draft_form_is_retired(self):
+        self.assertIsNone(store.request_argv({"action": "recap_slack_draft", "meeting_key": KEY,
+                                              "channel_id": "D0ABCDEF12"}))
 
     def test_malformed_is_none(self):
         bad = [
@@ -92,13 +90,11 @@ class InboxArgvTestCase(unittest.TestCase):
             {"action": "recap_generate", "meeting_key": KEY, "note": 5},
             {"action": "recap_generate", "meeting_key": KEY, "note": "n" * 501},
             {"action": "recap_slack_draft", "meeting_key": KEY},
-            {"action": "recap_slack_draft", "meeting_key": KEY, "channel_id": "lowercase"},
-            {"action": "recap_slack_draft", "meeting_key": KEY, "channel_id": "C123 --bg"},
             {"action": "approve", "meeting_key": KEY},
         ]
         for decision in bad:
             with self.subTest(decision=decision):
-                self.assertIsNone(store.inbox_argv(decision))
+                self.assertIsNone(store.request_argv(decision))
 
     def test_key_shape(self):
         self.assertTrue(store.valid_key(KEY))
@@ -120,15 +116,22 @@ class ProjectionTestCase(unittest.TestCase):
     def _session(self, start=1756669000.0, app="zoom"):
         return rs.Session(start=start, end=start + 1200, frames=40, audio_rows=30, app=app, events=[])
 
-    def test_attach_is_add_only_and_never_raises(self):
-        dash = {"counts": {}}
-        self.assertEqual(store.attach(dash)["recaps"], [])          # no state/recap at all
+    def test_snapshot_never_raises_on_an_absent_or_corrupt_layer(self):
+        empty = {"recaps": [], "recap_counts": {"active": 0, "archived": 0, "dismissed": 0}}
+        self.assertEqual(store.snapshot(), empty)                    # no state/recap at all
         store.ensure_dirs()
         store.recap_path(KEY).write_text("{not json", encoding="utf-8")
-        self.assertEqual(store.attach(dash)["recaps"], [])          # corrupt file skipped
-        with mock.patch.object(store, "projection", side_effect=RuntimeError("x")):
-            out = store.attach({"a": 1})
-        self.assertEqual(out, {"a": 1})                              # failure = key absent
+        self.assertEqual(store.snapshot(), empty)                    # corrupt file skipped
+
+    def test_snapshot_reads_an_explicit_state_dir(self):
+        """server 按自己的 home 读（``state_dir`` add-only），不依赖进程 env。"""
+        other = Path(self.tmp.name) / "elsewhere"
+        rec = store.new_record(self._session(), KEY, rs.CLOSED)
+        target = store.recap_path(KEY, other)
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps(rec), encoding="utf-8")
+        self.assertEqual(store.snapshot()["recaps"], [])
+        self.assertEqual([r["key"] for r in store.snapshot(other)["recaps"]], [KEY])
 
     def test_projection_merges_marks_strips_history_and_dedupes(self):
         rec = store.new_record(self._session(), KEY, rs.CLOSED)
@@ -213,10 +216,10 @@ class ProjectionTestCase(unittest.TestCase):
             filed_keys[0]: {"sent_at": _iso(base)},
             filed_keys[1]: {"dismissed_at": _iso(base)},
         })
-        dash = store.attach({"counts": {}})
-        self.assertEqual(dash["recap_counts"],
+        snap = store.snapshot()
+        self.assertEqual(snap["recap_counts"],
                          {"active": store.PROJECTION_CAP + 3, "archived": 1, "dismissed": 1})
-        active_rows = [r for r in dash["recaps"] if not store.filed(r)]
+        active_rows = [r for r in snap["recaps"] if not store.filed(r)]
         self.assertEqual(len(active_rows), store.PROJECTION_CAP)   # 行被切了，计数没被切
         self.assertEqual(store.lane_counts([]), {"active": 0, "archived": 0, "dismissed": 0})
 
@@ -264,56 +267,15 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertEqual(store.prune(base, retention_days=15), 1)
         self.assertEqual(len(store.list_recaps()), 3)
 
-    def test_dashboard_carries_recaps(self):
-        from act.lib import dashboard
+    def test_snapshot_carries_recaps(self):
         rec = store.new_record(self._session(), KEY, rs.CLOSED)
         store.save_recap(rec)
-        dash = dashboard.build_dashboard(reqs=[], archived=[])
-        self.assertEqual([r["key"] for r in dash["recaps"]], [KEY])
+        self.assertEqual([r["key"] for r in store.snapshot()["recaps"]], [KEY])
 
 
 class DetachedSpawnTestCase(unittest.TestCase):
-    def setUp(self):
-        config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _drop(self, name, decision):
-        path = config.INBOX_DIR / name
-        path.write_text(json.dumps(decision), encoding="utf-8")
-        return path
-
-    def test_recap_generate_spawns_the_recap_module_detached(self):
-        path = self._drop("recap-gen.json", {"action": "recap_generate", "meeting_key": KEY,
-                                             "note": "fix the deadline", "ts": "2026-09-01T00:00:00Z"})
-        with mock.patch.object(detached, "spawn") as spawn:
-            n = actd.process_inbox()
-        self.assertEqual(n, 1)
-        spawn.assert_called_once_with(["act.recap", "--generate", KEY, "--note", "fix the deadline"], "recap.log")
-        self.assertFalse(path.exists())
-
-    def test_recap_slack_draft_spawns_with_channel(self):
-        path = self._drop("recap-draft.json", {"action": "recap_slack_draft", "meeting_key": KEY,
-                                               "channel_id": "C0123456789", "ts": "2026-09-01T00:00:00Z"})
-        with mock.patch.object(detached, "spawn") as spawn:
-            actd.process_inbox()
-        spawn.assert_called_once_with(["act.recap", "--slack-draft", KEY, "--channel-id", "C0123456789"],
-                                      "recap.log")
-        self.assertFalse(path.exists())
-
-    def test_malformed_recap_decision_is_a_noop_without_spawn(self):
-        path = self._drop("recap-bad.json", {"action": "recap_generate", "meeting_key": "R-101",
-                                             "ts": "2026-09-01T00:00:00Z"})
-        with mock.patch.object(detached, "spawn") as spawn, \
-                mock.patch.object(actd, "_write_applied_ack") as ack:
-            actd.process_inbox()
-        spawn.assert_not_called()
-        ack.assert_called_once_with("recap-bad", "noop")
-        self.assertFalse(path.exists())
-
-    def test_weekly_digest_still_routes_through_the_table(self):
-        self._drop("wd.json", {"action": "weekly_digest_now", "ts": "2026-09-01T00:00:00Z"})
-        with mock.patch.object(detached, "spawn") as spawn:
-            actd.process_inbox()
-        spawn.assert_called_once_with(["act.weekly_digest", "--now"], "weekly_digest.log")
+    """The spawn helper the server's generate / revert routes use (the v1 actd
+    detached table and its inbox routing retired — full text in tag ``full``)."""
 
     def test_launch_translates_failures_to_noop(self):
         said = []
@@ -330,6 +292,17 @@ class DetachedSpawnTestCase(unittest.TestCase):
         self.assertEqual(argv[1:], ["-m", "act.recap", "--once"])
         self.assertTrue(popen.call_args[1]["start_new_session"])
         self.assertEqual(popen.call_args[1]["cwd"], str(config.HOME))
+        self.assertIsNone(popen.call_args[1]["env"])
+
+    def test_spawn_with_a_home_pins_the_child_to_it(self):
+        """server 派生时传自己的 home：子进程的 cwd 与 AIASSISTANT_HOME 都指向它。"""
+        home = Path(tempfile.mkdtemp(prefix="zai-detached-"))
+        with mock.patch.object(detached.subprocess, "Popen") as popen:
+            detached.spawn(["act.recap", "--generate", KEY], "recap.log", home=home)
+        kwargs = popen.call_args[1]
+        self.assertEqual(kwargs["cwd"], str(home))
+        self.assertEqual(kwargs["env"]["AIASSISTANT_HOME"], str(home))
+        self.assertTrue((home / "state" / "recap.log").exists())
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
-"""server/diagnostics.py — 「诊断」页的只读数据面（§23 / §25 / §47.4 / §56 / §68.4）。
+"""server/diagnostics.py — 「诊断」页的只读数据面（§23 / §25 / §68.4）。
 
-原生主窗口的 依赖检查 + 录制与 ingest + 关于 三页里凡是「读文件、看状态」的部分
-合成一页：``GET /api/diagnostics`` = doctor 报告（server/doctor_run，缓存）+
-管线活性（server/health）+ ``deploy_state``（dashboard.json 顶层键，§56）+
-``install_report``（§23 每步回执）+ ``radar_sources``（§48 投影）+ 可看的日志清单；
+依赖检查 + 录制与 ingest 两页里凡是「读文件、看状态」的部分合成一页：
+``GET /api/diagnostics`` = doctor 报告（server/doctor_run，缓存）+ 活性（server/health）+
+``install_report``（§23 每步回执）+ 可看的日志清单；
 ``GET /api/logs/{name}?lines=N`` 回一个日志的尾巴（只读、size-cap：最多读末尾
 64 KiB、最多 1000 行）。
 
@@ -16,17 +15,18 @@
 2026-09-03 追记（add-only，§15.1 / §15.2 原生依赖检查 + 录制页的「读文件」部分）：
 ``cron_probe`` = ``state/cron_probe.json`` 的公开子集（ts / read_ok / protected_path；
 原生 CronProbe.read，「定时任务磁盘权限」行的四态由页面按原生规则判）；``activity`` =
-原生 IngestModel.refreshLabels 的三个时间戳（``screenpipe_db`` / ``actd_log`` / vault
-``unprocessed`` 最新文件）。**server 永不读 ~/Documents**（§68.3）：unprocessed 目录在
+三个时间戳（``screenpipe_db`` / ``recap_log`` / vault ``unprocessed`` 最新文件）。**server 永不读 ~/Documents**（§68.3）：unprocessed 目录在
 mirror 模式看 ``state/vault-mirror``，直连模式只在它不住 TCC 保护位置时列目录，
 否则如实 ``readable:false``。
 
-2026-09-05 追记（add-only，§68.4 追记；原生 Doctor.swift ``AIFix.enabled`` / Pages.swift revealIngestLog）：
-``ai_fix_enabled`` = config.yaml ``doctor.ai_fix_enabled``（act.lib.config ``doctor_ai_fix_enabled`` 的
-只读镜像；缺席 / 坏值 = true）——页面据此**隐藏**「让 AI 修」而不是点了才吃 501；日志清单多一条显式
+2026-09-05 追记（add-only，§68.4 追记）：日志清单多一条显式
 项 ``screenpipe-auto.log``（``paths.ingest_log_path()``，文件存在才列；探不到——含父目录 EACCES——当不在，
 不许 500 整页）——手动 ingest 失败后「查看日志」的落点，ingest 脚本完整的 claude 输出只在那里。
 ``?lang=zh|en`` 透传给 doctor 子进程（server/doctor_run）。
+
+v2.0.0 退役（全文见 tag full）：``deploy_state`` / ``radar_sources``（dashboard.json 投影）、
+``registry_backend``、``ai_fix_enabled``（「让 AI 修」）与 ``activity.actd_log``；新增 add-only
+``activity.recap_log``。
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from server import board_source, doctor_run, health, paths, permissions, settings
+from server import doctor_run, health, paths, permissions
 from server.errors import InvalidFieldError, NotFoundError
 
 LOG_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.log$")
@@ -160,41 +160,25 @@ def unprocessed_activity(home: Path) -> dict:
 
 
 def activity(home: Path) -> dict:
-    """原生 IngestModel.refreshLabels 的三个时间戳（epoch 秒；缺席 = null）。"""
+    """三个时间戳（epoch 秒；缺席 = null）。"""
     db = paths.screenpipe_dir() / "db.sqlite"
-    log = paths.actd_log_path(home)
+    log = paths.recap_log_path(home)
     return {
         "screenpipe_db": {"path": str(db), "mtime": _mtime(db)},
-        "actd_log": {"path": str(log), "mtime": _mtime(log)},
+        "recap_log": {"path": str(log), "mtime": _mtime(log)},
         "unprocessed": unprocessed_activity(home),
     }
 
 
-def ai_fix_enabled(home: Path) -> bool:
-    """config.yaml ``doctor.ai_fix_enabled``（原生 ``AIFix.enabled``；act.lib.config 的 ``_bool_or`` 同款宽容：
-    缺席 / 非映射块 / 坏值 = True——只有明确的 false 才隐藏按钮）。"""
-    blk = settings.config_yaml_doc(home).get("doctor")
-    raw = blk.get("ai_fix_enabled", True) if isinstance(blk, dict) else True
-    try:
-        return settings.coerce_bool(raw)
-    except ValueError:
-        return True
-
-
 def snapshot(home: Path, *, refresh: bool = False, runner=None, lang: Optional[str] = None) -> dict:
     """``GET /api/diagnostics[?refresh=1][&lang=zh|en]``。"""
-    board = _read_json(paths.dashboard_path(home)) or {}
     return {
         "doctor": doctor_run.report(home, fast=True, refresh=refresh, runner=runner, lang=lang),
         "health": health.snapshot(home),
-        "deploy_state": board.get("deploy_state") if isinstance(board.get("deploy_state"), dict) else None,
-        "radar_sources": board.get("radar_sources") if isinstance(board.get("radar_sources"), dict) else None,
         "install_report": install_report(home),
-        "registry_backend": board_source.registry_backend(home),
         "logs": _log_entries(home),
         "cron_probe": cron_probe(home),
         "activity": activity(home),
-        "ai_fix_enabled": ai_fix_enabled(home),
     }
 
 

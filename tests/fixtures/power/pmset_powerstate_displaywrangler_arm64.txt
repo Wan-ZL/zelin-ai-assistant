@@ -1,3 +1,0 @@
-
-      Driver ID  Current State  Max State  Current State Description
-Internal failure: Failed to get power state information

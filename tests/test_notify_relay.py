@@ -66,7 +66,7 @@ class NativeNotifyRoutingTestCase(unittest.TestCase):
         """The queue is THE native path — no timer, no pgrep, no osascript."""
         with mock.patch("sys.platform", "darwin"), \
              mock.patch("act.lib.platform.notify_user") as nu:
-            self.assertTrue(notify._native_notify("t", "b", "s"))
+            self.assertTrue(notify.notify("t", "b", "s"))
         nu.assert_not_called()
         files = list(config.NOTIFY_QUEUE_DIR.glob("*.json"))
         self.assertEqual(len(files), 1)
@@ -77,32 +77,33 @@ class NativeNotifyRoutingTestCase(unittest.TestCase):
         with mock.patch("sys.platform", "darwin"), \
              mock.patch("act.lib.notify._queue_write", return_value=None), \
              mock.patch("act.lib.platform.notify_user") as nu:
-            self.assertFalse(notify._native_notify("t", "b"))
+            self.assertFalse(notify.notify("t", "b"))
         nu.assert_not_called()
 
     def test_non_darwin_skips_the_queue(self):
         with mock.patch("sys.platform", "linux"), \
              mock.patch("act.lib.platform.notify_user", return_value=True) as nu:
-            self.assertTrue(notify._native_notify("t", "b"))
+            self.assertTrue(notify.notify("t", "b"))
         nu.assert_called_once_with("t", "b", None)
         self.assertEqual(list(config.NOTIFY_QUEUE_DIR.glob("*.json")), [])
 
     def test_notify_routes_through_relay(self):
-        with mock.patch("act.lib.notify._native_notify", return_value=True) as nn:
+        with mock.patch("sys.platform", "darwin"), \
+             mock.patch("act.lib.notify._queue_write", return_value=object()) as qw:
             self.assertTrue(notify.notify("t", "b", subtitle="s"))
-        nn.assert_called_once_with("t", "b", "s", kind=None)
+        qw.assert_called_once_with("t", "b", "s", kind=None)
 
     def test_kind_rides_into_the_queue_entry(self):
-        # v0.46 完成提醒: the writer-side tag the app relay filters/rings on.
+        # The writer-side tag the app relay filters/rings on (§28; v2.0 kinds = recap_ready / failure).
         # Untagged entries must NOT grow a kind key (old-reader compatibility).
         with mock.patch("sys.platform", "darwin"), \
              mock.patch("act.lib.platform.notify_user"):
-            self.assertTrue(notify.notify("t", "b", kind="review_ready"))
+            self.assertTrue(notify.notify("t", "b", kind="recap_ready"))
             self.assertTrue(notify.notify("t2", "b2"))
         entries = [json.loads(p.read_text(encoding="utf-8"))
                    for p in config.NOTIFY_QUEUE_DIR.glob("*.json")]
         kinds = {e["title"]: e.get("kind") for e in entries}
-        self.assertEqual(kinds, {"t": "review_ready", "t2": None})
+        self.assertEqual(kinds, {"t": "recap_ready", "t2": None})
 
 
 class StaleSweepTestCase(unittest.TestCase):

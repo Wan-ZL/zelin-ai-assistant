@@ -332,10 +332,10 @@ class IntentAnswerTestCase(unittest.TestCase):
         self.assertNotIn("[", block)
 
     def test_a_tag_answer_reaches_the_daemon_as_one_argv_tail(self):
-        argv = store.inbox_argv({"action": "recap_generate", "meeting_key": KEY,
+        argv = store.request_argv({"action": "recap_generate", "meeting_key": KEY,
                                  "answers": ["s2=drop"]})
         self.assertEqual(argv, ["--generate", KEY, "--answers", '["s2=drop"]'])
-        self.assertIsNone(store.inbox_argv({"action": "recap_generate", "meeting_key": KEY,
+        self.assertIsNone(store.request_argv({"action": "recap_generate", "meeting_key": KEY,
                                             "answers": ["s2=drop", "x9=drop"]}))
 
 

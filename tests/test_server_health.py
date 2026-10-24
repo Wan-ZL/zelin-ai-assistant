@@ -1,126 +1,104 @@
-"""GET /api/health — pipeline liveness for the web banner (CONTRACT §47.4 / §49).
+"""GET /api/health — the liveness line the web shows as a banner (CONTRACT §49; v2.0.0).
 
-The Mac app's staleness banner was the ONLY detector of the 2026-08-31 silent
-stall and it is retiring (D3); this endpoint is its replacement. Pinned:
+The server answering is the first half of liveness (the shell's connection
+probe hits this route); the other two are read-only files:
 
-- token-light GET (same read discipline as /api/board), JSON, no-store;
-- verdict ladder: fresh heartbeat → ok; heartbeat older than the WRITER's
-  stale_after_s → stalled; loop_health ≥ 3 crashes → failing; no heartbeat +
-  stale/missing dashboard → stale; no heartbeat + fresh dashboard → unknown
-  (pre-v0.48.4 daemon still writing);
-- the threshold comes from the heartbeat body, never re-derived here;
-- torn/missing files never 500 — they read as absent.
+- ``state/cron_probe.json`` ``ts`` (§25) — when the §18 cron ingest chain last fired;
+- ``state/recap/sessions.json`` ``updated_at`` (§63) — when ``act.recap`` last
+  finished a round.
+
+Pinned: token-light GET, JSON, no-store; body = ``{verdict, server, cron, recap,
+checked_at}``; ladder = cron probe older than CRON_FRESH_SECONDS → ``stale``, no
+probe yet → ``unknown``, fresh → ``ok``; the probe ``ts`` may be epoch seconds or
+ISO-Z; torn / missing files never 500 — they read as absent. (The v1 actd
+heartbeat / dashboard freshness / loop-health ladder retired with actd — full text
+in tag ``full``; tests/test_server_health_verdict_ladder.py went with it.)
 
 Real server on a random port (tests/test_server_common.py), tmp home per case.
 """
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
-from tests.test_server_common import (get_json, http_request, start_server,
-                                      write_text)
+from tests.test_server_common import get_json, http_request, start_server, write_text
 
 from server import health
 
 
 def _iso(ts: float) -> str:
     import datetime as _dt
-    return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ")
+    return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class HealthSnapshotTestCase(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-health-"))
         (self.home / "state").mkdir()
-        self.now = time.time()
+        self.now = float(int(time.time()))   # whole seconds: ISO-Z stamps carry no fraction
 
-    def _heartbeat(self, age_s: float, phase="idle", stale_after=90, body=True):
-        p = self.home / "state" / "actd.heartbeat"
-        if body:
-            p.write_text(json.dumps({"ts": _iso(self.now - age_s), "phase": phase,
-                                     "pid": 4242, "interval": 10,
-                                     "stale_after_s": stale_after}),
-                         encoding="utf-8")
-        else:
-            p.write_text("{torn", encoding="utf-8")
-        os.utime(p, (self.now - age_s, self.now - age_s))
+    def _probe(self, ts, read_ok=True):
+        write_text(self.home / "state" / "cron_probe.json", json.dumps({"ts": ts, "read_ok": read_ok}))
 
-    def _dashboard(self, age_s: float):
-        write_text(self.home / "state" / "dashboard.json",
-                   json.dumps({"generated_at": _iso(self.now - age_s)}))
+    def _sessions(self, age_s: float):
+        write_text(self.home / "state" / "recap" / "sessions.json",
+                   json.dumps({"updated_at": _iso(self.now - age_s), "cursor": {}}))
 
-    def _loop_health(self, n: int):
-        write_text(self.home / "state" / "loop_health.json",
-                   json.dumps({"consecutive_failures": n, "last_error": "NameError: x"}))
-
-    def test_fresh_heartbeat_is_ok(self):
-        self._heartbeat(4)
-        self._dashboard(5)
+    def test_fresh_cron_probe_is_ok(self):
+        self._probe(_iso(self.now - 600))
         snap = health.snapshot(self.home, now=self.now)
         self.assertEqual(snap["verdict"], "ok")
-        self.assertEqual(snap["heartbeat"]["phase"], "idle")
-        self.assertFalse(snap["heartbeat"]["stale"])
-        self.assertAlmostEqual(snap["heartbeat"]["age_s"], 4, delta=1)
-        self.assertFalse(snap["dashboard"]["stale"])
-        self.assertEqual(snap["loop_health"]["consecutive_failures"], 0)
+        self.assertEqual(snap["server"], {"ok": True})
+        self.assertEqual(snap["cron"], {"age_s": 600.0, "read_ok": True, "stale": False})
+        self.assertEqual(set(snap), {"verdict", "server", "cron", "recap", "checked_at"})
 
-    def test_stale_heartbeat_is_stalled_even_with_a_fresh_looking_body(self):
-        # 2026-08-31 22:31: the body says "idle", the mtime says 150 min ago
-        self._heartbeat(150 * 60, phase="reconcile")
-        self._dashboard(150 * 60)
-        snap = health.snapshot(self.home, now=self.now)
-        self.assertEqual(snap["verdict"], "stalled")
-        self.assertTrue(snap["heartbeat"]["stale"])
-        self.assertEqual(snap["heartbeat"]["phase"], "reconcile")
-
-    def test_threshold_comes_from_the_writer(self):
-        self._heartbeat(120, stale_after=180)      # a 60 s-interval daemon
-        self._dashboard(5)
+    def test_epoch_stamp_reads_too(self):
+        self._probe(self.now - 60)
         self.assertEqual(health.snapshot(self.home, now=self.now)["verdict"], "ok")
-        self._heartbeat(120, stale_after=90)
-        self.assertEqual(health.snapshot(self.home, now=self.now)["verdict"], "stalled")
 
-    def test_loop_crashes_outrank_a_fresh_heartbeat(self):
-        self._heartbeat(3)
-        self._dashboard(3)
-        self._loop_health(3)
-        snap = health.snapshot(self.home, now=self.now)
-        self.assertEqual(snap["verdict"], "failing")
-        self.assertEqual(snap["loop_health"]["consecutive_failures"], 3)
-        self.assertIn("NameError", snap["loop_health"]["last_error"])
-
-    def test_no_heartbeat_with_stale_dashboard_is_stale(self):
-        self._dashboard(600)
+    def test_old_cron_probe_is_stale(self):
+        self._probe(_iso(self.now - health.CRON_FRESH_SECONDS - 60))
         snap = health.snapshot(self.home, now=self.now)
         self.assertEqual(snap["verdict"], "stale")
-        self.assertIsNone(snap["heartbeat"])
-        self.assertTrue(snap["dashboard"]["stale"])
+        self.assertTrue(snap["cron"]["stale"])
 
-    def test_no_heartbeat_but_fresh_dashboard_is_unknown(self):
-        # an old daemon (pre-v0.48.4) still writing the board: not dead, not proven alive
-        self._dashboard(5)
+    def test_exactly_the_threshold_is_still_fresh(self):
+        self._probe(self.now - health.CRON_FRESH_SECONDS)
+        self.assertEqual(health.snapshot(self.home, now=self.now)["verdict"], "ok")
+
+    def test_no_probe_is_unknown_not_a_crash(self):
+        snap = health.snapshot(self.home, now=self.now)
+        self.assertEqual(snap["verdict"], "unknown")
+        self.assertIsNone(snap["cron"])
+        self.assertIsNone(snap["recap"])
+
+    def test_torn_or_garbage_probe_reads_as_absent(self):
+        write_text(self.home / "state" / "cron_probe.json", "{torn")
         self.assertEqual(health.snapshot(self.home, now=self.now)["verdict"], "unknown")
+        for ts in (True, "yesterday", None, [1]):
+            with self.subTest(ts=ts):
+                self._probe(ts)
+                self.assertEqual(health.snapshot(self.home, now=self.now)["verdict"], "unknown")
 
-    def test_nothing_on_disk_is_stale_not_a_crash(self):
-        snap = health.snapshot(self.home, now=self.now)
-        self.assertEqual(snap["verdict"], "stale")
-        self.assertIsNone(snap["heartbeat"])
-        self.assertIsNone(snap["dashboard"])
+    def test_future_timestamp_clamps_age_to_zero(self):
+        self._probe(self.now + 3600)
+        self.assertEqual(health.snapshot(self.home, now=self.now)["cron"]["age_s"], 0.0)
 
-    def test_torn_heartbeat_body_still_uses_its_mtime(self):
-        self._heartbeat(5, body=False)
-        self._dashboard(5)
+    def test_recap_block_reports_the_last_round(self):
+        self._sessions(120)
         snap = health.snapshot(self.home, now=self.now)
-        self.assertEqual(snap["verdict"], "ok")
-        self.assertIsNone(snap["heartbeat"]["phase"])
-        self.assertEqual(snap["heartbeat"]["stale_after_s"], 90)   # floor fallback
+        self.assertEqual(snap["recap"]["age_s"], 120.0)
+        self.assertEqual(snap["recap"]["updated_at"], _iso(self.now - 120))
+        write_text(self.home / "state" / "recap" / "sessions.json", "[1]")
+        self.assertIsNone(health.snapshot(self.home, now=self.now)["recap"])
+
+    def test_threshold_mirrors_the_doctor_cron_row(self):
+        from act.lib.checks import cron
+        self.assertEqual(health.CRON_FRESH_SECONDS, cron.CRON_PROBE_FRESH_SECONDS)
 
 
 class HealthRouteTestCase(unittest.TestCase):
@@ -130,9 +108,8 @@ class HealthRouteTestCase(unittest.TestCase):
         _, self.port = start_server(self, self.home)
 
     def test_route_is_token_light_json_no_store(self):
-        p = self.home / "state" / "actd.heartbeat"
-        p.write_text(json.dumps({"phase": "idle", "pid": 1, "interval": 10,
-                                 "stale_after_s": 90}), encoding="utf-8")
+        write_text(self.home / "state" / "cron_probe.json",
+                   json.dumps({"ts": _iso(time.time() - 60), "read_ok": True}))
         status, headers, body = http_request(self.port, "GET", "/api/health")
         self.assertEqual(status, 200)
         self.assertIn("application/json", headers.get("Content-Type", ""))
@@ -142,10 +119,10 @@ class HealthRouteTestCase(unittest.TestCase):
         self.assertEqual(snap["verdict"], "ok")
         self.assertIn("checked_at", snap)
 
-    def test_empty_home_answers_stale_not_500(self):
+    def test_empty_home_answers_unknown_not_500(self):
         status, snap = get_json(self.port, "/api/health")
         self.assertEqual(status, 200)
-        self.assertEqual(snap["verdict"], "stale")
+        self.assertEqual(snap["verdict"], "unknown")
 
 
 if __name__ == "__main__":

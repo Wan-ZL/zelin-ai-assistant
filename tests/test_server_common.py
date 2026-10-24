@@ -26,7 +26,6 @@ from server import security as security_mod
 app_mod.Handler.log_message = lambda self, fmt, *a: None  # type: ignore[method-assign]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "inbox"
 
 # demo_seed.py 以仓内副本为准（集成时随 server 测试一并落仓）。
 _DEMO_SEED = REPO_ROOT / "scripts" / "demo_seed.py"
