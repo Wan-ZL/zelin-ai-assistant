@@ -50,34 +50,28 @@ vault_sync_processing_live() {
     return 1
 }
 
-# The helper ships inside the LEGACY menu-bar app (bundle id com.zelin.ai-engineer
-# — the identity that holds the Documents grant; CONTRACT §12/§54). Since the §54
-# name swap that bundle lives at "Zelin's AI Assistant (old).app"; the product
-# name belongs to the board shell, which since P4 (§68.13) ALSO carries a helper
-# copy at Contents/MacOS/vault-sync-helper (compiled by shell/build.sh from
-# shell/Helpers/). Order: the legacy app first while it is installed (its grant
-# already works), then the shell (a fresh machine without the legacy app — the
-# Documents grant then keys on the shell's id, see the board's 权限体检 page).
-# Resolution: the fixed homes first (no Spotlight dependency in the common
-# case), then by bundle id via mdfind for a legacy bundle that moved anywhere
-# else under the app dirs.
+# The helper ships inside the board shell (bundle id com.zelin.ai-board, compiled by
+# shell/build.sh from shell/Helpers/ into Contents/MacOS/vault-sync-helper; CONTRACT
+# §12/§54/§68.13) — the identity that holds the one-time Documents grant. v2.0.0 retired
+# the legacy menu-bar app, and with it the lookup of its "(old)" bundle and bundle id; a
+# leftover legacy bundle is never consulted. Resolution: the two fixed homes first (no
+# Spotlight dependency in the common case), then by the shell's bundle id via mdfind for
+# a shell bundle that moved anywhere else under the app dirs.
 VAULT_SYNC_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam (same as install.sh)
-VAULT_SYNC_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"
+VAULT_SYNC_BUNDLE_ID="com.zelin.ai-board"
 
 find_vault_sync_helper() {
     local c dir app
     for dir in "$VAULT_SYNC_APPS_DIR" "$HOME/Applications"; do
-        for app in "Zelin's AI Assistant (old).app" "Zelin's AI Assistant.app"; do
-            c="$dir/$app/Contents/MacOS/vault-sync-helper"
-            if [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
-        done
+        c="$dir/Zelin's AI Assistant.app/Contents/MacOS/vault-sync-helper"
+        if [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
     done
     if command -v mdfind >/dev/null 2>&1; then
         while IFS= read -r app || [ -n "$app" ]; do
             c="$app/Contents/MacOS/vault-sync-helper"
             if [ -n "$app" ] && [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
         done < <(mdfind -onlyin "$VAULT_SYNC_APPS_DIR" -onlyin "$HOME/Applications" \
-                     "kMDItemCFBundleIdentifier == '$VAULT_SYNC_LEGACY_BUNDLE_ID'" 2>/dev/null)
+                     "kMDItemCFBundleIdentifier == '$VAULT_SYNC_BUNDLE_ID'" 2>/dev/null)
     fi
     return 1
 }
