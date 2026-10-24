@@ -13,7 +13,7 @@
     "parity": 841,
     "routes": 93,
     "settings": 21,
-    "shell": 33
+    "shell": 32
   },
   "scenarios": [
     {
@@ -459,11 +459,11 @@
     {
       "id": "contract:§36",
       "source": "contract",
-      "scenario": "v0.36.0 实时字幕（add-only，Mac 展示层）",
-      "proof": "unittest:tests.test_server_secrets_volcano_legacy_pair",
+      "scenario": "v0.36.0 实时字幕（add-only，Mac 展示层） —（retired v2.0.0，全文见 tag full）",
+      "proof": "unittest:tests.test_server_secrets,tests.test_shell_engine_mirror",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
+      "status": "waived",
+      "waive_reason": "tombstone",
       "note": null
     },
     {
@@ -669,18 +669,18 @@
     {
       "id": "contract:§54.1",
       "source": "contract",
-      "scenario": "web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）",
+      "scenario": "web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3） —（retired v2.0.0，全文见 tag full）",
       "proof": "unittest:tests.test_server_display_settings,tests.test_shell_ui_probe,tests.test_web_type_scale_mirror && flow:card_lifecycle && flow:pages_controls",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
+      "status": "waived",
+      "waive_reason": "tombstone",
       "note": null
     },
     {
       "id": "contract:§54.2",
       "source": "contract",
       "scenario": "server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）",
-      "proof": "unittest:tests.test_server_log_noise && flow:install_fresh && flow:uninstall_reinstall",
+      "proof": "unittest:tests.test_server_log_noise,tests.test_shell_engine_orphan && flow:install_fresh && flow:uninstall_reinstall",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1020,7 +1020,7 @@
       "id": "contract:§61.4",
       "source": "contract",
       "scenario": "TCC 与偏好迁移",
-      "proof": "unittest:tests.test_shell_bridge_recording_keys,tests.test_shell_engine_mirror && flow:settings_roundtrip_all",
+      "proof": "unittest:tests.test_shell_bridge_recording_keys,tests.test_shell_engine_mirror,tests.test_shell_recording_schedule && flow:settings_roundtrip_all",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1040,7 +1040,7 @@
       "id": "contract:§61.7",
       "source": "contract",
       "scenario": "录制日程：只在设定时间录（issue #27；2026-09-06；add-only）",
-      "proof": "unittest:tests.test_shell_engine_orphan,tests.test_shell_recording_schedule",
+      "proof": "unittest:tests.test_shell_recording_schedule",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -1049,7 +1049,7 @@
     {
       "id": "contract:§61.8",
       "source": "contract",
-      "scenario": "引擎归属与孤儿回收（issue #318；2026-09-14；owner 决策 **D66**；add-only）",
+      "scenario": "引擎归属：启动 adopt、退出只停自己派生的那台（v2.0.0 改写；owner 2026-10-23 lite 2.0 决定；1.x 的孤儿回收全文见 tag full）",
       "proof": "unittest:tests.test_install_ui_step,tests.test_shell_engine_orphan",
       "tier": "A",
       "status": "todo",
@@ -1319,11 +1319,11 @@
     {
       "id": "contract:§68.2",
       "source": "contract",
-      "scenario": "字幕偏好（桥 add-only）",
+      "scenario": "字幕偏好（桥 add-only） —（retired v2.0.0，全文见 tag full）",
       "proof": "unittest:tests.test_background_jobs_mutation_kills_train,tests.test_screenpipe_media_retention_knob,tests.test_server_about_check_enabled,tests.test_server_about_upgrade && flow:settings_roundtrip_all",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
+      "status": "waived",
+      "waive_reason": "tombstone",
       "note": "parent-cite"
     },
     {
@@ -1589,11 +1589,11 @@
     {
       "id": "contract:§73.5",
       "source": "contract",
-      "scenario": "覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**）",
+      "scenario": "覆盖面追记（2026-09-14，`feat/windows-server-board`；issue #90 的另一半，owner 决策 **D67**） —（retired v2.0.0，全文见 tag full）",
       "proof": "unittest:tests.test_pwa_manifest,tests.test_server_request_plumbing && flow:card_lifecycle",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
+      "status": "waived",
+      "waive_reason": "tombstone",
       "note": "parent-cite"
     },
     {
@@ -9910,81 +9910,81 @@
       "id": "parity:setting:prefs:captionsAppleLocale",
       "source": "parity",
       "scenario": "settings key captionsAppleLocale (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsArkModel",
       "source": "parity",
       "scenario": "settings key captionsArkModel (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsEngine",
       "source": "parity",
       "scenario": "settings key captionsEngine (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsFontSize",
       "source": "parity",
       "scenario": "settings key captionsFontSize (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsOpacity",
       "source": "parity",
       "scenario": "settings key captionsOpacity (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsSource",
       "source": "parity",
       "scenario": "settings key captionsSource (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsTranslate",
       "source": "parity",
       "scenario": "settings key captionsTranslate (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captionsTranslateDirection",
       "source": "parity",
       "scenario": "settings key captionsTranslateDirection (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:captureHistory",
@@ -10020,21 +10020,21 @@
       "id": "parity:setting:prefs:lastActiveRecordingMode",
       "source": "parity",
       "scenario": "settings key lastActiveRecordingMode (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:liveCaptionsEnabled",
       "source": "parity",
       "scenario": "settings key liveCaptionsEnabled (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:mainSection",
@@ -10050,11 +10050,11 @@
       "id": "parity:setting:prefs:recordingMode",
       "source": "parity",
       "scenario": "settings key recordingMode (prefs store) is carried",
-      "proof": "swift:BridgeHarness",
+      "proof": "",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
-      "note": "shell-held UserDefaults key"
+      "note": "shell-held UserDefaults key with no harness pin"
     },
     {
       "id": "parity:setting:prefs:screenPermissionRequested",
@@ -10510,7 +10510,7 @@
       "id": "route:GET /api/secrets",
       "source": "routes",
       "scenario": "GET /api/secrets is routed",
-      "proof": "http:GET /api/secrets expect=200 && unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts,tests.test_server_secrets_volcano_legacy_pair",
+      "proof": "http:GET /api/secrets expect=200 && unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -10850,7 +10850,7 @@
       "id": "route:POST /api/secrets/{name}/verify",
       "source": "routes",
       "scenario": "POST /api/secrets/{name}/verify is routed",
-      "proof": "unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts,tests.test_server_secrets_volcano_legacy_pair",
+      "proof": "unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11020,7 +11020,7 @@
       "id": "route:PUT /api/secrets/{name}/verify",
       "source": "routes",
       "scenario": "PUT /api/secrets/{name}/verify is routed",
-      "proof": "unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts,tests.test_server_secrets_volcano_legacy_pair",
+      "proof": "unittest:tests.test_server_secrets,tests.test_server_secrets_verify_verdicts",
       "tier": "A",
       "status": "todo",
       "waive_reason": null,
@@ -11427,16 +11427,6 @@
       "note": null
     },
     {
-      "id": "shell:menu.focus-capture-field.l",
-      "source": "shell",
-      "scenario": "main-menu item 聚焦捕获框 / Focus Capture Field (⌘L)",
-      "proof": "swift:MenuHarness",
-      "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": null
-    },
-    {
       "id": "shell:menu.hide-others.h",
       "source": "shell",
       "scenario": "main-menu item 隐藏其他 / Hide Others (⌥⌘H)",
@@ -11660,11 +11650,11 @@
       "id": "shell:terminal.takeover",
       "source": "shell",
       "scenario": "Apple Events hand a session over to the terminal",
-      "proof": "swift:BridgeHarness",
+      "proof": "axprobe:terminal_takeover",
       "tier": "A",
-      "status": "todo",
-      "waive_reason": null,
-      "note": "live probe axprobe:terminal_takeover = 项[3] shell_ui_probe（§77.4）"
+      "status": "waived",
+      "waive_reason": "design-not-carried D79",
+      "note": "live-shell probe = 项[3]（§77.4，需 owner FDA 现场确认）"
     }
   ]
 }

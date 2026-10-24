@@ -139,11 +139,11 @@ class PrefsAndDefaultsTestCase(unittest.TestCase):
         ts = _read(WEB / "shellBridge.ts")
         self.assertIn('enabled: false, start: "09:00", end: "19:00", days: [2, 3, 4, 5, 6], paused: false,', ts)
 
-    def test_legacy_prefs_do_not_seed_schedule_keys(self):
-        # 原生 app 没有这组键；LegacyPrefs 清单不该长出它们（§61.7「LegacyPrefs 不搬」）
+    def test_no_native_prefs_seed_touches_schedule_keys(self):
+        # §61.7「LegacyPrefs 不搬」——v2.0.0 起 LegacyPrefs 整个退役（§61.4 tombstone），壳不再从原生域读任何键
         bridge = _read(SHELL / "ShellBridge.swift")
-        keys = re.search(r"static let keys = \[(.*?)\]", bridge[bridge.index("enum LegacyPrefs"):], re.DOTALL).group(1)
-        self.assertNotIn("recordingSchedule", keys)
+        self.assertNotIn("enum LegacyPrefs", bridge)
+        self.assertNotIn("com.zelin.ai-engineer", bridge)
 
 
 class StatusCopyTestCase(unittest.TestCase):

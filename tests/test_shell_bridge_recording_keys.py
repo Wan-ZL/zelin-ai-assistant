@@ -14,14 +14,12 @@ restartRecording 与其余原生 restart 按钮一样不带守卫。另 add-only
 - `refreshRecording` 两侧词表都有，`getState` 仍是纯读（不经 RecordingActions.refresh）；
 - `setRecording on:true` 走 `RecordingActions.turnOn`，turnOn = 缺授权先请求、再 setMode（顺序）；
   `restartRecording` 直连 restartEngine、不经 RecordingActions（向导终章的守卫在 FinaleStep.tsx）；
-- `translation_note` 不是活性信号：冻结引擎里翻译关着它也是 ""、Ark 报错时 translationActive 仍 true——
-  「在不在翻」只看 `translation_active`（§61.1 追记 (c) 的措辞据此）；
-- 缝长在 ShellBridge.swift 外面的引擎文件一个字不动（§61.3 逐字节判例在 test_shell_engine_mirror.py）；
-- §61.4 追记：LegacyPrefs 的悬浮窗 frame 键 = NSWindow 对 CaptionOverlay 同名 autosave 的记录键，
-  且带自己的一次性标记（不复用 `legacyPrefsSeeded`）；
+- 缝长在 ShellBridge.swift 外面的引擎文件一个字不动（§61.3 哈希判例在 test_shell_engine_mirror.py）；
+- v2.0.0：`captions.*` 四键、`translation_note` 的活性判例与 §61.4 悬浮窗 frame 补种随 Live captions 退役
+  （§61.1 / §61.4 tombstone，全文见 tag full）——两侧都不再有它们；
 - `PermissionsProbe.screenRequestedKey` 与原生 Permissions.swift 的 UserDefaults 键同名。
 
-行为本身（缝注入下的请求次数 / 顺序 / frame 只种一次）由 `shell/tests/run.sh` 的 BridgeHarness 钉。
+行为本身（缝注入下的请求次数 / 顺序）由 `shell/tests/run.sh` 的 BridgeHarness 钉。
 """
 import re
 import unittest
@@ -35,11 +33,10 @@ TS = REPO_ROOT / "web" / "src" / "shellBridge.ts"
 
 NEW_KEYS = {
     "recording": ["self_heal_note", "log_tail"],
-    "captions": ["translation_note", "translation_active", "source_note", "apple_engine_available"],
     "permissions": ["screen_requested"],
 }
-# 页面一侧已退役的块（v2.0.0 Live captions；Swift 一侧随 LiveCaptions.swift 一起删）
-WEB_RETIRED_BLOCKS = {"captions"}
+# v2.0.0（§61.1 tombstone）：captions 块随 Live captions 在两侧一起删
+RETIRED_CAPTION_KEYS = ["translation_note", "translation_active", "source_note", "apple_engine_available"]
 
 
 def _read(path: Path) -> str:
@@ -56,54 +53,29 @@ class AddOnlyKeysMirrorTestCase(unittest.TestCase):
             for key in keys:
                 with self.subTest(block=block, key=key):
                     self.assertIn('"%s"' % key, self.swift, "ShellBridge.stateSnapshot lacks %r" % key)
-                    if block in WEB_RETIRED_BLOCKS:
-                        continue
                     self.assertIsNotNone(
                         re.search(r"^\s+%s\??: " % re.escape(key), self.ts, re.MULTILINE),
                         "web/src/shellBridge.ts lacks wire key %r" % key)
 
-    def test_web_side_no_longer_reads_the_captions_block(self):
-        # v2.0.0（§61.1 tombstone）：实时字幕随 Live captions 退役，页面不再读 captions.*（老壳快照里残留的键被忽略）
-        for key in NEW_KEYS["captions"]:
+    def test_neither_side_has_the_captions_block(self):
+        # v2.0.0（§61.1 tombstone）：实时字幕随 Live captions 退役——壳不再发 captions.*，页面不再读
+        swift_code = re.sub(r"//[^\n]*", "", self.swift)
+        for key in RETIRED_CAPTION_KEYS:
             self.assertIsNone(re.search(r"^\s+%s\??: " % re.escape(key), self.ts, re.MULTILINE), key)
+            self.assertNotIn('"%s"' % key, swift_code, key)
         self.assertNotIn("captions", re.sub(r"//[^\n]*", "", self.ts))
+        self.assertNotIn('"captions"', swift_code)
+        self.assertFalse((SHELL / "LiveCaptions.swift").exists())
 
     def test_new_keys_read_the_frozen_engine_fields_verbatim(self):
-        # 值的来源是逐字节冻结的引擎副本里的 @Published（Recording.swift / LiveCaptions.swift）
+        # 值的来源是 Recording.swift（§61.3 source of truth）里的 @Published
         self.assertIn('"self_heal_note": rec.selfHealNote', self.swift)
         self.assertIn('"log_tail": rec.diagnosis?.logTail ?? ""', self.swift)
-        self.assertIn('"translation_note": cap.translationNote', self.swift)
-        self.assertIn('"translation_active": cap.translationActive', self.swift)
-        self.assertIn('"source_note": cap.sourceNote', self.swift)
-        self.assertIn('"apple_engine_available": appleCaptionEngineAvailable()', self.swift)
         self.assertIn('"screen_requested": Prefs.bool(PermissionsProbe.screenRequestedKey, default: false)',
                       self.swift)
         recording = _read(SHELL / "Recording.swift")
         self.assertIn("@Published private(set) var selfHealNote", recording)
         self.assertIn("let logTail: String", recording)
-        captions = _read(SHELL / "LiveCaptions.swift")
-        for field in ("sourceNote", "translationNote", "translationActive"):
-            self.assertIn("@Published private(set) var %s" % field, captions)
-        self.assertIn("func appleCaptionEngineAvailable() -> Bool", captions)
-
-    def test_translation_note_is_not_an_activity_signal(self):
-        # §61.1 追记 (c) 的措辞据此：冻结引擎的 recomputeTranslation 在翻译关着时也把 note 置 ""，
-        # Ark 途中报错把错误句写进 note 而 translationActive 不动——所以 "" ≠ 在翻、非空 ≠ 没在翻，
-        # 「在不在翻」只看 translation_active。原生设置区也只在非空时渲染 note。
-        captions = _read(SHELL / "LiveCaptions.swift")
-        body = re.search(r"private func recomputeTranslation\(\) \{(.*?)\n    \}", captions, re.DOTALL).group(1)
-        off_branch = re.search(r"guard translateEnabled else \{(.*?)\}", body, re.DOTALL).group(1)
-        self.assertIn("translationActive = false", off_branch)
-        self.assertIn('translationNote = ""', off_branch)
-        on_error = re.search(r"onError: \{ \[weak self\] message in\s*(.*?)\}", captions, re.DOTALL).group(1)
-        self.assertIn("translationNote = message", on_error)
-        self.assertNotIn("translationActive", on_error)
-        settings = _read(MAC / "SettingsLiveCaptions.swift")
-        self.assertIsNotNone(re.search(r"if !cap\.translationNote\.isEmpty \{\s*statusRow\(cap\.translationNote",
-                                       settings))
-        # 桥 / web 两侧的注释都不许再写「"" = 在翻」
-        for text in (self.swift, self.ts):
-            self.assertNotIn('"" = 在翻', text)
 
     def test_web_normalize_defaults_every_new_key(self):
         # 老壳缺席 → "" / false（asString / asBool 默认），页面永不读到 undefined。
@@ -190,34 +162,9 @@ class RefreshAndTurnOnTestCase(unittest.TestCase):
         harness = _read(HARNESS)
         for needle in ("RecordingActions.hasScreenPermission", "RecordingActions.requestScreenPermission",
                        "RecordingActions.setMode", "RecordingActions.refresh",
-                       '"method": "refreshRecording"', "LegacyPrefs.overlayFrameKey"):
+                       '"method": "refreshRecording"'):
             with self.subTest(needle=needle):
                 self.assertIn(needle, harness)
-
-
-class LegacyOverlayFrameTestCase(unittest.TestCase):
-    def test_frame_key_derives_from_the_overlay_autosave_name(self):
-        swift = _read(SHELL / "ShellBridge.swift")
-        overlay = _read(SHELL / "CaptionOverlay.swift")
-        name = re.search(r'setFrameAutosaveName\("([^"]+)"\)', overlay).group(1)
-        self.assertEqual(name, "liveCaptionsPanel")
-        self.assertIn('static let overlayFrameKey = "NSWindow Frame %s"' % name, swift)
-        # 原生同一个 autosave 名（同一条 UserDefaults 记录才搬得过来）
-        self.assertIn('setFrameAutosaveName("%s")' % name, _read(MAC / "CaptionOverlay.swift"))
-
-    def test_frame_rides_its_own_one_shot_marker(self):
-        swift = _read(SHELL / "ShellBridge.swift")
-        legacy = swift[swift.index("enum LegacyPrefs"):]
-        # 两个一次性标记从源码里抓出来比：并成同一把键就会让已播种的壳永远收不到 frame
-        first_seed = re.search(r'static let marker = "([^"]+)"', legacy).group(1)
-        frame_seed = re.search(r'static let overlayFrameMarker = "([^"]+)"', legacy).group(1)
-        self.assertEqual(frame_seed, "legacyOverlayFrameSeeded")
-        self.assertNotEqual(frame_seed, first_seed, "the frame seed must not reuse the first-run marker")
-        # 首批 keys 清单不含 frame（已播种的壳靠第二个标记补收）
-        keys = re.search(r"static let keys = \[(.*?)\]", legacy, re.DOTALL).group(1)
-        self.assertNotIn("NSWindow Frame", keys)
-        self.assertIn("if !target.bool(forKey: overlayFrameMarker)", legacy)
-        self.assertIn("target.set(true, forKey: overlayFrameMarker)", legacy)
 
 
 class ScreenRequestedKeyTestCase(unittest.TestCase):
