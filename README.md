@@ -21,7 +21,7 @@ This page describes **v1.0.114**. The version truth is the git tag on `main` (re
 - **Capture** — [screenpipe](https://github.com/mediar-ai/screenpipe) records screen and audio locally; scheduled jobs export increments and a headless Claude session distills them into an Obsidian wiki (`ingest/`).
 - **Detect** — radars (Obsidian notes, Slack, Gmail, your own Claude sessions) scan for things people are asking you to do and file them into a requirement registry — a SQLite source of truth with a daily, diffable YAML export — merging duplicates across sources (`act/`).
 - **Approve** — each requirement becomes a proposal card with a plain-language summary, a cost estimate and acceptance criteria. One click approves, rejects or comments.
-- **Execute** — approved cards dispatch `claude --bg` agents in isolated git worktrees, supervised by a resident daemon (`act/actd.py`) with automatic resume and a quality gate: self-check, fresh-context diff review, draft-PR-only delivery.
+- **Execute** — approved cards dispatch `claude --bg` agents in isolated git worktrees, supervised by a resident daemon with automatic resume and a quality gate: self-check, fresh-context diff review, draft-PR-only delivery.
 - **Deliver** — finished work lands in the review lane: a paste-ready final draft for writing tasks, a draft PR for code. You accept it or send it back with comments.
 
 The board and the pipeline are decoupled: the board reads the `state/dashboard.json` projection and writes your actions to `state/inbox/`; the daemon is the registry's only writer. That contract lives in [docs/CONTRACT.md](docs/CONTRACT.md).
@@ -232,12 +232,9 @@ Design docs ([docs/design/](docs/design/README.md)) record intent and owner deci
 ```
 ingest/                    # screenpipe → Obsidian chain (export / process / cleanup + skill)
 skills/                    # in-repo skill store: manifest + skills, enabled by symlink (CONTRACT §67)
-act/actd.py                # daemon: inbox → dispatch → reconcile → dashboard
-act/executor.py            # claude --bg dispatch, resume, rework, quality gate, delivery harvest
-act/radar*.py              # the requirement radars (Obsidian / Slack / Gmail / claude sessions)
-act/analyze.py             # debt → approvable proposal expansion (LLM)
-act/digest.py              # state digest + self-improvement suggestion cards
-act/lib/                   # config / registry / projection / notify / secrets / …
+act/recap.py               # meeting recaps (the one headless claude site, §63 / §78 isolated)
+act/doctor.py              # post-install diagnostics (§25)
+act/lib/                   # config / recap store / notify / secrets / …
 server/                    # stdlib HTTP + SSE server: board API, settings, recaps, skills
 web/                       # the React board (the product UI on every OS)
 shell/                     # thin macOS Dock shell: notifications, hotkey, terminal takeover

@@ -18,7 +18,7 @@ server/ 不 import act（paths.py 的零依赖纪律），所以把 webui.py 的
     的跨源写恒带 Origin（text/plain simple request 也带），必须精确等于本面
     的回环 origin；缺席 = 非浏览器客户端（boardctl/curl），放行到 token 闸
     ——token 才是墙，Origin 是浏览器面的前置快拒。webui 无非浏览器客户端
-    所以硬拒缺席，这里 §52 的 boardctl 是法定客户端，故按 present-only 查。
+    所以硬拒缺席；这里非浏览器客户端（curl / 脚本）是法定客户端（v1 §52 的 boardctl 随 Act 退役），故按 present-only 查。
   * ``Content-Type: application/json``（每个 POST）——把「无预检 simple
     request」这一 CSRF 向量整类杀掉（纵深：Origin 闸已挡住浏览器面）。
 

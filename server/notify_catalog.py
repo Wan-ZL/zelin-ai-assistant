@@ -17,11 +17,11 @@
   ``review_ready`` / ``proposal`` / ``needs_input`` / ``receipt`` / ``review_stale`` 与它们的分类开关随
   Act 管线退役（全文见 tag full）。
 
-§66.2 追记的 ``[ui-parity]`` 门以本目录判 ``notification:<kind>`` 与 ``control:notifications:*``
+v1 §66.2 追记的 ``[ui-parity]`` 门（v2.0.0 退役，全文见 tag full）以本目录判 ``notification:<kind>`` 与 ``control:notifications:*``
 （探针 notify_catalog）：清单里每个 kind 都要登记在 ``kinds``，每句壳直发的通知都要在
 ``shell_notices`` 里有同一对 zh / en。
 
-契约：docs/CONTRACT.md §28（通知中继）、§49（路由表）、§66.2（探针）。
+契约：docs/CONTRACT.md §28（通知中继）、§49（路由表）。
 """
 from __future__ import annotations
 

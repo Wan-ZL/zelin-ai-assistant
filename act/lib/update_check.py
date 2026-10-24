@@ -25,9 +25,10 @@ Honesty rules (the trust posture of the whole product):
   merely opens the release page — nothing is ever downloaded or run.
 - ``manual_upgrade`` (add-only, §26 追记 2026-10-23 — the bridge release before lite 2.0):
   true when the newest release's MAJOR is greater than the running one's.
-  §56.3 auto-deploy never crosses a major boundary by itself and the About
-  page's「一键更新」answers 409 for it (server/about.py); the upgrade is a
-  manual ``git checkout v<X>.0.0 && bash install.sh``.
+  The retired 1.x auto-deploy (§56.3, the PR #480 bridge) never crossed a major
+  boundary by itself; since v2.0.0 the About page's「立即升级」answers 409 for it
+  (server/about.py, §79) and the upgrade is a manual
+  ``git checkout v<X>.0.0 && bash install.sh``.
 """
 from __future__ import annotations
 

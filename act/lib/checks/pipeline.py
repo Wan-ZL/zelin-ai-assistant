@@ -1,5 +1,5 @@
 """doctor 探针家族：看板 server 与 UI 构建（CONTRACT §25 行目录；§54 看板 server；
-§56.5 ui 步）。
+§23 install report 的 ui 步）。
 
 行：``board server`` / ``board ui build``。判决逻辑住 act/lib/board_server.py（plain-data
 row），这里只包 CheckResult。v2.0.0：``store2`` / ``dashboard`` / ``actd heartbeat`` /
@@ -15,7 +15,7 @@ from act.lib.checks.core import installer, row_from
 
 
 # --------------------------------------------------------------------------- #
-# §54 看板 server + §56.5 ui 步（判决逻辑在 lib 的 row 函数里）
+# §54 看板 server + §23 install report 的 ui 步（判决逻辑在 lib 的 row 函数里）
 # --------------------------------------------------------------------------- #
 def check_board_server(probes):
     """§54 看板 server 行：`GET /api/health` 答话才算活——`launchctl list` 里的
@@ -48,7 +48,7 @@ def install_report_step(name: str) -> Optional[dict]:
 
 
 def check_ui_build(probes):
-    """§56.5 `ui` 步的可见性：最近一次 install.sh 的 `ui` step 是 `skipped_tcc`
+    """§23 install report `ui` 步的可见性：最近一次 install.sh 的 `ui` step 是 `skipped_tcc`
     （node 在 launchd 会话里缺 Full Disk Access——部署照常完成、web 看板却没
     重建）→ WARN `ui_build_tcc_blocked`；`fail`（只可能来自手动 install.sh）→
     WARN 指向 ui-build.log；其余不出行。"""

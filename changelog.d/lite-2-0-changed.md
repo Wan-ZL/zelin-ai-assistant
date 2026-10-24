@@ -1,0 +1,6 @@
+type: changed
+- **会议纪要页改由看板 server 端到端负责**：新路由 `GET /api/recaps`（列表 + 三栏计数）、`POST /api/recaps/generate`、`POST /api/recaps/revert` 直接分离派生 `python -m act.recap`，并由 server 写 §63.8 请求台账；字段校验沿用旧 inbox 表单的规则，请求键名为 `key`。SSE 改为监视 `state/recap/`，事件名 `recaps.updated`。
+- **headless claude 与 owner 的 Claude Code 个人目录完全隔离（新宪法第 13 条，CONTRACT §78）**：每次 `claude -p` 都带 `CLAUDE_CONFIG_DIR=~/Library/Application Support/ZelinAIAssistant/claude-config`、cwd = 其下的空目录 `cwd/`，argv 固定带 `--bare --no-session-persistence --setting-sources "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'`；凭证只认 Anthropic API key（config/secrets 或 `~/.config/anthropic-key.txt`），不再回落到 Claude Code 登录或钥匙串。doctor 新增 `claude bare supported` 与 `isolation footprint` 两行，失败目录新增 `claude_bare_unsupported`、`isolation_footprint_violation`。
+- **健康与诊断换成 lite 口径**：`GET /api/health` = server 在答话 + cron 链探针新鲜度 + 上次纪要一轮（`ok` / `stale` / `unknown`）；`GET /api/diagnostics` 去掉 dashboard 投影与注册表后端，活动时间戳改看 `state/recap.log`。
+- **更新检查改由 server 触发、升级走新的升级器（CONTRACT §26 / §79）**：`GET /api/about` 在缓存过期时于后台起一次每日检查，`update_available` 由 server 现算；「立即升级」改为分离运行 `scripts/upgrade.sh`（该脚本随后续切片落地，在那之前返回 501 并给出手动命令），新的大版本仍回 409 `manual_upgrade`。新增设置项 `updates.auto_install`（默认关）与录制排除表 `recording.ignored_apps`。
+- **通知只剩两类**：会议纪要已生成与录制 / ingest 故障（后者穿透安静时段）；通知偏好只剩安静时段三项。

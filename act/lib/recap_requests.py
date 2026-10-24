@@ -1,7 +1,7 @@
 """act/lib/recap_requests.py — 「重新生成 / 现在生成」的请求台账 + 行投影 ``generate_request``（CONTRACT §63.8）。
 
 issue #297：按「重新生成」只换来一条 toast，新版本落地前后面板看起来一模一样——
-一次 59 秒的成功被读成失败。§48.7 ``radar_rounds`` 的模式原样搬过来：
+一次 59 秒的成功被读成失败。v1 §48.7 ``radar_rounds`` 的模式（雷达随 v2.0.0 退役，全文见 tag full）原样搬过来：
 
 - ``state/recap_requests.json``（**server 单写者**——``POST /api/recaps/generate``；``state/recap/`` 整目录仍归
   act/recap.py，这里不碰它）：``{<meeting_key>: {"requested_at": iso, "launch":
