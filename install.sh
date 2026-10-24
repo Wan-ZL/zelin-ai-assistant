@@ -1269,8 +1269,13 @@ main() {
             --non-interactive) NON_INTERACTIVE=1 ;;
             --no-launchd) NO_LAUNCHD=1 ;;
             --from-upgrade) FROM_UPGRADE=1; NON_INTERACTIVE=1 ;;
-            --pkg-postinstall|--reinstall-agent)
-                echo "install.sh: $_arg was retired in v2.0.0 (full text at git tag full)" >&2
+            --pkg-postinstall)
+                # CONTRACT §74 v2.0.0: no .pkg ships, so its postinstall mode always
+                # refuses before any side effect (exit 3, no §23 report).
+                echo "install.sh --pkg-postinstall: no .pkg ships since v2.0.0 — nothing changed (CONTRACT §74)." >&2
+                exit 3 ;;
+            --reinstall-agent)
+                echo "install.sh: --reinstall-agent was retired in v2.0.0 (full text at git tag full)" >&2
                 usage; exit 2 ;;
             *)
                 echo "install.sh: unknown flag '$_arg'" >&2

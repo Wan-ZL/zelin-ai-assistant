@@ -460,7 +460,7 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 
 > **§23 v2.0.0 修订（PR-D；本块为准，下文是历史正文）**：
 > - `mode` ∈ `interactive | non-interactive | upgrade`（`upgrade` = §79 升级器跑的 `install.sh --non-interactive
->   --from-upgrade`）；`pkg-postinstall` 随 .pkg 退役（§74），那个 flag 与 `--reinstall-agent` 现在都是用法错误 exit 2。
+>   --from-upgrade`）；`pkg-postinstall` 随 .pkg 退役：那个 flag 无条件 exit 3、不写报告（§74 v2.0.0 追记），`--reinstall-agent` 是用法错误 exit 2。
 > - **step 集**（读方按 `name` 查、容忍缺席与未知行）：`config`、`version`、`runtime_python`、`claude_bin`、`stable_claude`、
 >   **`claude_config`**（新：§78 的 `claude-config/` + `cwd/`，`ok:<路径>` / `warn:mkdir … failed`）、**`anthropic_key`**（新，§19
 >   修订块）、`state_dirs`、**`migrate`**（新，§78：`ok:agents: <退役的 label>; skills links: <名字>; files: <deploy_state>` /

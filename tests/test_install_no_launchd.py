@@ -6,9 +6,9 @@ crontab is neither read nor written. The 1.x one-pass daemon proof
 (`actd --once`, step `actd_once`) retired with actd (full text at tag full).
 Pinned here by sourcing the real install.sh (main runs only when executed):
 
-  - flags combine; an unknown flag, and the two flags retired in v2.0.0
-    (`--pkg-postinstall`, `--reinstall-agent`), are a usage error (exit 2)
-    before any side effect;
+  - flags combine; an unknown flag and the retired `--reinstall-agent` are a
+    usage error (exit 2) before any side effect; `--pkg-postinstall` refuses
+    with exit 3 (§74 v2.0.0 追记: no .pkg ships);
   - `install_server_agent` under --no-launchd records `launchd=skipped` with
     the literal `--no-launchd` at the start of the detail (the marker
     act/lib/fresh_install.py reads) and never calls launchctl;
@@ -49,12 +49,18 @@ class FlagParsingTestCase(unittest.TestCase):
         self.assertEqual(list(self.tmp.iterdir()), [], "no file was written under $HOME")
 
     def test_retired_flags_say_so(self):
-        for flag in ("--pkg-postinstall", "--reinstall-agent"):
-            with self.subTest(flag=flag):
-                proc = self._run(flag)
-                self.assertEqual(proc.returncode, 2, proc.stderr)
-                self.assertIn("retired in v2.0.0", proc.stderr)
-                self.assertEqual(proc.stdout, "")
+        proc = self._run("--reinstall-agent", "com.zelin.aiassistant.server")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("retired in v2.0.0", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+    def test_pkg_postinstall_always_refuses_with_exit_3(self):
+        """§74 v2.0.0 追记: no .pkg ships; the flag refuses before any side effect."""
+        proc = self._run("--pkg-postinstall")
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("CONTRACT §74", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(list(self.tmp.iterdir()), [], "no file under $HOME, no §23 report")
 
 
 @unittest.skipIf(_WIN, "install.sh is POSIX-only")
