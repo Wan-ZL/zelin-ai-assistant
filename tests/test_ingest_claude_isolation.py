@@ -15,7 +15,7 @@ runs in tests/integration/test_ingest_smoke.py):
     files in the §19 order;
   - process-screenpipe.sh sources claude-env.sh, runs claude from ``$HEADLESS_CWD`` with
     ``"${ISOLATION_ARGV[@]}"``, ``--add-dir "$VAULT"``, the vault CLAUDE.md through
-    ``--append-system-prompt-file`` and ``--allowedTools Read,Write,Edit,Bash,Glob,Grep``;
+    ``--append-system-prompt-file`` and ``--allowedTools Read,Edit,Bash``;
     its prompt says "Never run git."; the retired fallback to the CLI's own credentials,
     its own claude lookup and the ``cd "$VAULT"`` cwd are gone.
 """
@@ -104,7 +104,7 @@ class ProcessInvocationTestCase(unittest.TestCase):
         start = self.text.index('"$CLAUDE_BIN" -p')
         call = self.text[start:self.text.index("CLAUDE_PID=$!", start)]
         for literal in ('"${ISOLATION_ARGV[@]}"', '--add-dir "$VAULT"',
-                        '--allowedTools "Read,Write,Edit,Bash,Glob,Grep"'):
+                        '--allowedTools "Read,Edit,Bash"'):
             self.assertIn(literal, call)
         self.assertIn("VAULT_PROMPT_ARGV", call)
         self.assertIn('--append-system-prompt-file "$VAULT/CLAUDE.md"', self.text)

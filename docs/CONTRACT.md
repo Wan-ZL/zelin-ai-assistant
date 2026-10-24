@@ -325,7 +325,8 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 >   `DISABLE_AUTOUPDATER=1`、`ANTHROPIC_API_KEY`、`CLAUDE_BIN` = `python3 -m act.lib.config --print-value claude_bin`、
 >   `HEADLESS_CWD` = `--print-path headless_cwd`、`ISOLATION_ARGV` bash 数组），然后
 >   `cd "$HEADLESS_CWD"` 再起 `"$CLAUDE_BIN" -p <prompt> "${ISOLATION_ARGV[@]}" --add-dir "$VAULT"
->   [--append-system-prompt-file "$VAULT/CLAUDE.md"] --allowedTools Read,Write,Edit,Bash,Glob,Grep`。cwd 在 repo
+>   [--append-system-prompt-file "$VAULT/CLAUDE.md"] --allowedTools Read,Edit,Bash`（`--bare` 下只有这三个工具，见 §78
+>   「工具面」）。cwd 在 repo
 >   树外，vault（direct 模式是真 vault，mirror 模式是 `state/vault-mirror/`）经 `--add-dir` 进来；`--bare` 关了
 >   CLAUDE.md 自动发现，所以 vault 自己的 CLAUDE.md（wiki 约定）显式注入，**文件在才带**（claude 拒收不存在的
 >   文件）；SKILL.md 照旧按绝对路径写进 prompt。prompt 末尾多一句 `Never run git.`（mirror 在 repo 的 git 树里，
@@ -3308,6 +3309,13 @@ README 是产品第一面，也最先腐烂。本节把「每条主张都可机�
 `claude bare supported` 行用 `claude --help` 确认五个旗标都在（缺一 = FAIL `claude_bare_unsupported`）。隔离靠
 **结构**而不只靠旗标语义：cwd 在 repo 树外，即使 `--bare` 将来变化，repo 的 CLAUDE.md、`.claude/skills` 与
 `state/vault-mirror/.claude/settings.json` 也不在祖先链上。
+
+**工具面**：`--bare` 同时设 `CLAUDE_CODE_SIMPLE=1`（`claude --help`，2.1.309），headless 会话里只剩 **Bash、Edit、Read**
+三个工具——没有 Write / Glob / Grep，`--allowedTools` 写了也不出现。所以 ingest 的允许表就是 `Read,Edit,Bash`（§18 修订块）；
+新文件用 Edit（`old_string` 为空）或 Bash 写出，搜索走 Bash 里的 `grep`（`ingest/skills/unprocessed-ingest/SKILL.md` 照此措辞）。
+`--add-dir` 只让那个目录可读、算作工作目录，**不圈定写入范围**：写权限来自允许规则，`-p` 模式不弹确认，Bash 能写到这个进程
+本身能写的任何位置（2026-10-24 实测：Edit 与 Bash 都在 cwd 与 add-dir 之外落了文件）。真正的边界是进程自己的文件访问权限
+（用户身份 + TCC），不是旗标；prompt 里的 vault 路径与 `Never run git.` 是约定，不是强制。recap 另带 `--tools ""`，一个工具都没有。
 
 **凭证政策**：只有 `ANTHROPIC_API_KEY`（§19 顺序：进程环境已有的值 → config/secrets → `~/.config/anthropic-key.txt`；
 `llm.runner_env` 注入）。`--bare` 永不读 OAuth / 钥匙串，所以「claude login 进隔离目录」不是可用的替代方案；没有

@@ -32,8 +32,10 @@
 ### 1. Ingest 加工 → Anthropic
 
 - **触发**：install.sh 写入的唯一一条 crontab（`*/30`）：`screenpipe-export.sh` 把 `~/.screenpipe/db.sqlite` 里新增的屏幕文本与
-  音频转写导出为 vault `1 - unprocessed/` 下的 markdown，`process-screenpipe.sh` 再起一个 headless `claude -p`（allowedTools：
-  Read / Write / Edit / Bash / Glob / Grep；`--add-dir` 只给 vault）按 `/unprocessed-ingest` skill 加工这些文件。
+  音频转写导出为 vault `1 - unprocessed/` 下的 markdown，`process-screenpipe.sh` 再起一个 headless `claude -p`（`--bare` 下只有
+  Read / Edit / Bash 三个工具，允许表也只写这三个；vault 经 `--add-dir` 给进来）按 `/unprocessed-ingest` skill 加工这些文件。
+  `--add-dir` 只决定读哪里，**不限制写到哪里**：Bash 能写到本机这个用户进程能写的任何位置，边界是进程自己的文件权限
+  （用户身份 + TCC），不是旗标（CONTRACT §78「工具面」）。
 - **Payload**：**全屏文本**（accessibility text + OCR，含 app 名、窗口名、时间戳）与**音频转写全文**；vault 自己的 `CLAUDE.md`
   （wiki 约定）作为系统提示附上。agent 读文件入 context 即出境。
 - **注意**：claude 直接读文件，**词条 redaction 不经过此路径**。屏幕采集按 `recording.ignored_apps` 排除敏感 app（采集 +

@@ -323,7 +323,7 @@ Sub-agent 在写完所有 raw file 后，**全权完成**以下工作（Opus 1M 
 
 1. **对比 raw 和 wiki**
    - 从 raw 中提取关键 topics（人名、项目、系统、决策、状态变化）
-   - Grep `4 - wiki/` 找出每个 topic 对应的 wiki 页面（包括 `4 - wiki/people/`）
+   - 用 Bash 跑 `grep -rl` 搜 `4 - wiki/`，找出每个 topic 对应的 wiki 页面（包括 `4 - wiki/people/`）
    - 读相关 wiki 页面，对比 raw 内容：哪些是新的？哪些已有？哪些有矛盾？
 
 2. **更新 wiki 页面**
@@ -333,7 +333,7 @@ Sub-agent 在写完所有 raw file 后，**全权完成**以下工作（Opus 1M 
    - **个人生活内容（财务、租房、健康、家庭、人际等）** → 照常入 wiki，按主题建独立页面（type 可用 `concept` / `learning` / `decision`，或新增明确的页面如 `Apartment Lease.md`、`Health Log.md`、`Personal Finance.md`）。这是私人 vault，personal life context 是有价值的知识。
 
 3. **Page-internal consistency sweep** — 对 Step 2 直接触及的**每个 wiki 页面**做一次 internal-consistency 检查:
-   - 重新整页 Read（或对刚加的 fact 在页内 Grep 关键词）
+   - 重新整页 Read（或用 Bash `grep -n` 在页内搜刚加的 fact 的关键词）
    - 找: 新加的内容是否跟页面其他 section 矛盾？是否还残留旧工具名、旧 cadence、被新 fact 推翻的 claim、过期的 deadline、已 deprecated 的安装步骤、过时的代码块等 stale 描述？
    - 找到矛盾 → **在同一次 update 里顺手改完**，不要留给主线程 9b QA 兜底。
    - 范围只限本次直接修改过的页，不延伸到全 wiki — 那是 Step 10 Freshness Audit 的事。
@@ -390,7 +390,7 @@ Agent 完成后，主线程做 **QA review**，不重做：
 所有 ingest 完成后，做 wiki-wide staleness 检查：
 
 1. **Collect topics**: 从本次 ingest 的所有 source 中提取 key entities 和 topics（项目名、人名、系统、决策）
-2. **Reverse lookup**: Grep `4 - wiki/` 中所有非 source-summary 页，找出引用了这些 topics 的页面（"potentially affected"）
+2. **Reverse lookup**: 用 Bash `grep -rl` 搜 `4 - wiki/` 中所有非 source-summary 页，找出引用了这些 topics 的页面（"potentially affected"）
 3. **Date check**: 对比每个 affected 页的 `updated` 和今天日期。**7+ 天未更新** 且有新相关信息 = candidate
 4. **Content check**: 读 candidate 页，与新 source 对比，识别：
    - **矛盾** — 页面说 X，新 source 说 Y
