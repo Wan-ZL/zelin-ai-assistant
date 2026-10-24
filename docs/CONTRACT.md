@@ -3391,5 +3391,6 @@ KILL 兜底）、`open -b com.zelin.ai-board`，新壳接管仍在录的引擎�
 **1.x → 2.0 过渡**：1.x 安装被 v1.0.117 的桥（§56.3 tombstone 下的保留段）挡在大版本边界，升级只走手动
 `git fetch --tags origin && git checkout v2.0.0 && bash install.sh`（本机分叉时先 `git branch keep/… main && git reset --hard
 v2.0.0`，见 README 迁移块）。判例 `tests/test_upgrade_script.py`（真 git + 本地 bare origin：快进成功、diverged → 回执、
-脏工作树 → 拒绝、未打 tag → 拒绝、安装失败、持锁）、`tests/test_server_about_upgrade.py`、
+脏工作树 → 拒绝、未打 tag → 拒绝、未跟踪文件挡住快进 → `ff_failed`（HEAD 与文件不动）、`git fetch` 失败 → `failed` / `fetch`、
+安装失败、持锁、过期锁）、`tests/test_server_about_upgrade.py`、
 `tests/test_server_about_manual_upgrade.py`。

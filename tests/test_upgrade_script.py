@@ -15,6 +15,11 @@ opened and the screenpipe engine is never reachable. Pinned:
   - local commits (diverged), local edits (dirty) or another branch = status
     diverged (exit 4) with the manual commands; the script never resets, stashes
     or rewrites: the commit and the edit are still there afterwards;
+  - an untracked file the release would overwrite (`--untracked-files=no` lets it
+    past the dirty check) = `git merge --ff-only` fails = status diverged / reason
+    ff_failed (exit 4): HEAD and the file stay as they were;
+  - `git fetch` failing (offline, origin gone) = status failed / reason fetch
+    (exit 1), install.sh not run;
   - install.sh failing = status failed with install_rc (exit 1), no relaunch, no
     rollback;
   - a second upgrade while one holds the lock = exit 3, the receipt untouched.
@@ -198,7 +203,36 @@ class UpgradeScriptTestCase(unittest.TestCase):
         self.assertEqual(self._state()["reason"], "not_on_main")
         self.assertEqual(self._git(self.local, "symbolic-ref", "--short", "HEAD"), "experiment")
 
+    def test_an_untracked_collision_is_ff_failed_and_nothing_moves(self):
+        (self.seed / "NEWFILE.txt").write_text("from the release\n", encoding="utf-8")
+        self._release()
+        (self.local / "NEWFILE.txt").write_text("mine, untracked\n", encoding="utf-8")
+        head = self._head()
+        proc = self._upgrade()
+        self.assertEqual(proc.returncode, 4, proc.stdout + proc.stderr)
+        state = self._state()
+        self.assertEqual((state["status"], state["reason"], state["target"]),
+                         ("diverged", "ff_failed", "v2.0.1"))
+        self.assertTrue(state["commands"], state)
+        self.assertEqual(self._head(), head, "nothing moves")
+        self.assertEqual((self.local / "NEWFILE.txt").read_text(encoding="utf-8"),
+                         "mine, untracked\n")
+        self.assertNotIn("install.sh --non-interactive --from-upgrade", self._calls())
+        self.assertFalse((self.local / "state" / "upgrade.lock").exists())
+
     # -- failures ----------------------------------------------------------- #
+    def test_fetch_failure_is_a_failed_receipt(self):
+        self._release()
+        head = self._head()
+        self._git(self.local, "remote", "set-url", "origin", str(self.tmp / "no-such-origin.git"))
+        proc = self._upgrade()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        state = self._state()
+        self.assertEqual((state["status"], state["reason"]), ("failed", "fetch"))
+        self.assertEqual(self._head(), head)
+        self.assertEqual(self._calls(), [], "no install.sh, no relaunch")
+        self.assertFalse((self.local / "state" / "upgrade.lock").exists())
+
     def test_install_failure_is_a_receipt_without_relaunch_or_rollback(self):
         self._release()
         Path(self.env["RUNNING_FLAG"]).write_text("", encoding="utf-8")
