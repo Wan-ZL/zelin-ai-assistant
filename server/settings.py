@@ -15,7 +15,7 @@
 
 2. **Shared helpers** the per-section settings modules use (recaps, display,
    settings_catalog): :func:`read_overrides`, :func:`atomic_write_json`,
-   :func:`config_yaml_doc`, :func:`coerce_bool`, :func:`coerce_clock_time`.
+   :func:`config_yaml_doc`, :func:`coerce_clock_time`.
 
 v2.0.0 (Act pipeline retired; full text in tag ``full``): the
 ``models.dispatch`` knob and the "follow the Claude Code global default" mode
@@ -69,8 +69,6 @@ MODEL_KNOBS = (MODEL_PIPELINE, MODEL_FALLBACK)
 OVERRIDE_KEY = "models_%s"
 
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
-_BOOL_WORDS = {"true": True, "yes": True, "on": True, "1": True,
-               "false": False, "no": False, "off": False, "0": False}
 
 _MODEL_SHAPE_MSG = ("模型 id 只能含字母数字和 . _ - [ ]，≤64 字符，不能有空格 / "
                     "a model id is letters, digits and . _ - [ ] only, ≤64 chars, no spaces")
@@ -85,17 +83,9 @@ def settings_overrides_path(home: Path) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# shared coercions (mirror of config.coerce_bool / coerce_clock_time)
+# shared coercions (mirror of config.coerce_clock_time; the bool twin retired with
+# the daily-loop knobs in v2.0.0 — server/recaps.py and settings_catalog keep their own)
 # --------------------------------------------------------------------------- #
-def coerce_bool(value) -> bool:
-    if isinstance(value, bool):
-        return value
-    key = str(value).strip().lower() if isinstance(value, (int, str)) else ""
-    if key in _BOOL_WORDS:
-        return _BOOL_WORDS[key]
-    raise ValueError("必须是 true/false / must be true or false")
-
-
 def coerce_clock_time(value) -> str:
     m = CLOCK_TIME_RE.match(value.strip()) if isinstance(value, str) else None
     if m is None:

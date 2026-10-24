@@ -201,15 +201,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _send_not_modified(self, extra: Optional[dict] = None) -> None:
-        """304：无体，**不发 Content-Type / Content-Length**（RFC 9110 §8.6——304 上的 Content-Length
-        只许等于 200 会发的体长，发 0 是错的；客户端本就知道 304 没体）；安全头 + ETag / Cache-Control 照发。"""
-        self.send_response(304)
-        self._emit_security_headers()
-        for k, v in (extra or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-
     def _send_json(self, status: int, obj: dict) -> None:
         body = json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8")
         self._send_bytes(status, body, "application/json; charset=utf-8",

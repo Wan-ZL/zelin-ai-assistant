@@ -15,8 +15,8 @@
   （§68.4 追记；原生 Pages.swift ``.reveal``：``fileExists ? p : deletingLastPathComponent``——用户至少能看见它
   本该在哪、顺手建出来）；**相对路径**（字段没有绝对路径校验、config.yaml 也能存）没有可开的祖先
   （``parents`` 尽头是 ``.`` = server 的 cwd，不是用户的树）→ 仍 404，绝不 ``open .``。
-- create：``mkdir -p``（已在 = ``created:false`` 幂等）；登记了 git init 的键另 ``git init -q``
-  （best-effort：失败只回执 ``git_init:"failed"``；今日没有这样的键）；mkdir 失败 →
+- create：``mkdir -p``（已在 = ``created:false`` 幂等）；回执的 add-only 键 ``git_init`` 恒为 null
+  （v2.0.0：唯一要 ``git init`` 的键 ``default_target_repo`` 随 executor 退役，runner 一并删除）；mkdir 失败 →
   500 ``could not create the folder: <why>``（web 前缀原生句「创建目录失败：」）。
 - reveal（v2.0.0 从退役的 server/files.py 搬来，只留词表半边）：``target`` ∈ :data:`REVEAL_TARGETS`
   ——``config``（``config.yaml``，缺席则模板；doctor ``config_invalid`` 行的「显示文件」）与
@@ -50,13 +50,6 @@ Runner = Callable[[list], int]
 
 def _default_opener(path: Path) -> None:
     subprocess.run(["/usr/bin/open", str(path)], check=False, timeout=20)
-
-
-def _default_runner(argv: list) -> int:
-    try:
-        return subprocess.run(argv, check=False, capture_output=True, timeout=30).returncode
-    except (OSError, subprocess.SubprocessError):
-        return 127
 
 
 def _key_of(payload: dict) -> str:
@@ -130,12 +123,6 @@ def open_folder(home: Path, payload: dict, opener: Optional[Opener] = None,
     return receipt
 
 
-def _git_init(path: Path, run: Runner) -> str:
-    if (path / ".git").exists():
-        return "skipped"
-    return "done" if run(["git", "-C", str(path), "init", "-q"]) == 0 else "failed"
-
-
 def create_folder(home: Path, payload: dict, runner: Optional[Runner] = None) -> dict:
     """``POST /api/folders/create {key}`` → ``{"ok", "key", "path", "created", "git_init"}``。"""
     key = _key_of(payload)
@@ -146,8 +133,8 @@ def create_folder(home: Path, payload: dict, runner: Optional[Runner] = None) ->
             path.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise ApiError("could not create the folder: %s" % exc, {"key": key, "path": str(path)})
-    git_init = _git_init(path, runner or _default_runner) if FOLDER_FIELDS[key][1] else None
-    return {"ok": True, "key": key, "path": str(path), "created": not existed, "git_init": git_init}
+    del runner   # v2.0.0: no folder key asks for `git init` any more (add-only receipt key stays, null)
+    return {"ok": True, "key": key, "path": str(path), "created": not existed, "git_init": None}
 
 
 # --------------------------------------------------------------------------- #

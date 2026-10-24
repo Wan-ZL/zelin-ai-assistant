@@ -158,6 +158,14 @@ class UpgraderTestCase(_Home):
         self.assertTrue(popen.call_args[1]["start_new_session"])
         self.assertEqual(popen.call_args[1]["cwd"], str(self.home))
 
+    def test_no_home_and_no_reader_reads_as_no_cache(self):
+        self.assertIsNone(about._read_update(None, None))
+        repo = Path(tempfile.mkdtemp(prefix="zai-about-repo-"))
+        write_text(repo / "scripts" / "upgrade.sh", "#!/bin/bash\n")
+        receipt = about.install_now({}, spawner=self._spawner, repo=repo)
+        self.assertEqual(receipt["latest"], None)
+        self.assertEqual(self.spawned[0][2], repo / "state" / "upgrade.log")   # no home → the repo's state/
+
     def test_manual_fix_without_a_known_latest(self):
         self.assertEqual(about.manual_fix(""),
                          "git fetch --tags origin && git checkout v<latest> && bash install.sh")

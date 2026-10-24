@@ -266,17 +266,6 @@ def plist_interpreter(text: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def plist_number_of_files(text: str, key: str) -> Optional[int]:
-    """`<key>KEY</key><dict>…<key>NumberOfFiles</key><integer>N</integer>…</dict>`
-    — NumberOfFiles may sit anywhere inside the dict (a hand-edited plist
-    with another limit first must not read as unset)."""
-    m = re.search(r"<key>%s</key>\s*<dict>(.*?)</dict>" % key, text, re.S)
-    if not m:
-        return None
-    n = re.search(r"<key>NumberOfFiles</key>\s*<integer>(\d+)</integer>", m.group(1))
-    return int(n.group(1)) if n else None
-
-
 def symlink_shaped(value: Optional[str]) -> bool:
     """该路径是否经过 symlink（≠ 自己的 realpath）。不存在的路径原样返回，
     所以未安装/占位路径不会误报。"""

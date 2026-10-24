@@ -77,7 +77,6 @@ _launchd_log_paths = launchd.launchd_log_paths
 _launchd_log_tail = launchd.launchd_log_tail
 _launchd_log_mtime = launchd.launchd_log_mtime
 _launchd_claude_probe = launchd.claude_probe
-_plist_number_of_files = launchd.plist_number_of_files
 _row_from = core.row_from
 
 

@@ -231,25 +231,6 @@ def two_installs_row(run: Run, daemon_claude: str, daemon_ver: str,
                 OUTDATED)
 
 
-def bg_unsupported_row(run: Run, daemon_claude: str, daemon_ver: str,
-                       installer: str) -> Optional[dict]:
-    """--bg is what dispatch hangs off. Two-step probe: `--help` (side-effect
-    free; 2.1.206 lists "--bg, --background") and, ONLY when help lacks it, a
-    bare `claude --bg` whose error must carry the exact §25 outdated signature
-    — so a reformatted future help page alone can never false-FAIL."""
-    rc, help_out = run([daemon_claude, "--help"], timeout=15)
-    if rc != 0 or not help_out.strip() or "--bg" in help_out:
-        return None
-    rc2, bg_out = run([daemon_claude, "--bg"], timeout=15)
-    if rc2 != 0 and failures.classify(bg_out) == OUTDATED:
-        return _row("fail",
-                    "%s (%s) does not support --bg - every dispatch fails with "
-                    "\"unknown option '--bg'\"" % (daemon_claude, _shown(daemon_ver)),
-                    "update Claude Code (or remove this outdated copy), then: bash %s" % installer,
-                    OUTDATED)
-    return None
-
-
 def daemon_claude_ok_suffix(via_stable: bool, shell_claude: Optional[str],
                             daemon_claude: str) -> str:
     if via_stable:
@@ -265,14 +246,14 @@ def daemon_claude_row(run: Run, daemon_path_env: Callable[[], Optional[str]],
     second, outdated install ranked first on the daemon PATH once broke every
     dispatch with "unknown option '--bg'", retrying forever behind a generic
     notification (2026-07-08). Compare the binary the daemons launch against
-    the login shell's, and probe --bg support."""
+    the login shell's. (The --bg support probe retired with dispatch in v2.0.0;
+    §78's ``claude bare supported`` row checks the flags lite relies on.)"""
     row, daemon_claude, shell_claude, via_stable = daemon_claude_target(
         daemon_path_env, login_shell_claude, installer)
     if row:
         return row
     daemon_ver = version_of(run, daemon_claude)
-    row = (two_installs_row(run, daemon_claude, daemon_ver, shell_claude, installer)
-           or bg_unsupported_row(run, daemon_claude, daemon_ver, installer))
+    row = two_installs_row(run, daemon_claude, daemon_ver, shell_claude, installer)
     if row:
         return row
     return _row("ok", "%s (%s)%s" % (daemon_claude, _shown(daemon_ver),

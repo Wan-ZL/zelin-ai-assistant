@@ -14,7 +14,7 @@ from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from server import folders, subproc
+from server import subproc
 
 BUDGET_SECONDS = 30
 _PY = sys.executable
@@ -53,15 +53,6 @@ class SubprocDefaultRunnerTestCase(unittest.TestCase):
             Path(TMP_HOME), "json.tool", ["--help"], timeout_s=20)
         self.assertEqual(rc, 0)
         self.assertIn("json", out.lower())
-
-
-@unittest.skipIf(_WIN, "POSIX subprocess semantics")
-class FoldersGitRunnerTestCase(unittest.TestCase):
-    """§68.1 创建目录后的 ``git init`` runner：只回 rc；缺可执行文件 127。"""
-
-    def test_returns_rc_and_127_for_missing_executable(self):
-        self.assertEqual(folders._default_runner([_PY, "-c", "raise SystemExit(4)"]), 4)
-        self.assertEqual(folders._default_runner(["/nonexistent/git", "init"]), 127)
 
 
 if __name__ == "__main__":

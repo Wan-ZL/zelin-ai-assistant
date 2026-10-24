@@ -324,6 +324,32 @@ class WriteAuthUnitTestCase(unittest.TestCase):
         self.assertEqual(status, 401)
         assert_envelope(self, obj, "UNAUTHORIZED")
 
+    def test_an_oversize_body_is_413_and_drained(self):
+        """§49 1 MiB cap: the body is read off the socket and discarded (so the
+        client sees the envelope instead of a reset), never parsed."""
+        limit = app_mod.MAX_BODY_BYTES
+        h = _bare_handler(path="/api/recaps/mark", command="POST",
+                          headers={"Host": "127.0.0.1", "Content-Type": "application/json",
+                                   security.TOKEN_HEADER: "tok",
+                                   "Content-Length": str(limit + 1)}, ctx=self._ctx())
+        h.rfile = io.BytesIO(b"x" * (limit + 1))
+        h.connection = mock.Mock()
+        h._dispatch("POST")
+        status, obj = _status_and_body(h)
+        self.assertEqual(status, 413)
+        assert_envelope(self, obj, "INVALID_FIELD")
+        self.assertEqual(h.rfile.read(), b"x")          # read up to the cap, the overflow byte left
+        h.connection.settimeout.assert_called_once()
+
+    def test_draining_stops_at_a_hangup_or_a_socket_error(self):
+        h = _bare_handler(ctx=self._ctx())
+        h.connection = mock.Mock()
+        h.rfile = io.BytesIO(b"abc")
+        h._discard_body(10)                              # client closed early: stop quietly
+        self.assertEqual(h.rfile.read(), b"")
+        h.rfile = mock.Mock(read=mock.Mock(side_effect=OSError("timed out")))
+        h._discard_body(10)                              # never raises
+
     def test_bad_host_rejected_even_on_get(self):
         h = _bare_handler(headers={"Host": "evil.example"}, ctx=self._ctx())
         h._dispatch("GET")

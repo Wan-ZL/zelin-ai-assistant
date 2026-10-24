@@ -14,6 +14,7 @@ flags / voice / maintainer 八个 section 随 Act 管线退役（全文见 tag f
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
@@ -263,6 +264,43 @@ class ConfigMirrorTestCase(unittest.TestCase):
         self.assertEqual(by_key["screenpipe_media_retention_minutes"]["bounds"],
                          (act_config.MIN_MEDIA_RETENTION_MINUTES,
                           act_config.MAX_MEDIA_RETENTION_MINUTES))
+
+
+
+class CatalogInternalsTestCase(unittest.TestCase):
+    """Mechanisms the lite catalog keeps without a registered user today (add-only
+    machinery: nested override blocks, dynamic placeholders, the check vocabulary)."""
+
+    def test_an_unknown_check_kind_is_a_programming_error(self):
+        with self.assertRaises(ValueError):
+            catalog._f("k", "string", "z", "e", check="no-such-check")
+
+    def test_drop_override_handles_flat_and_nested_spellings(self):
+        flat = {"key": "language", "override": "language"}
+        doc = {"language": "en", "other": 1}
+        catalog._drop_override(doc, flat)
+        self.assertEqual(doc, {"other": 1})
+        nested = {"key": "block.sub", "override": "block.sub"}
+        doc = {"block": {"sub": 1, "keep": 2}, "block.sub": 3}
+        catalog._drop_override(doc, nested)
+        self.assertEqual(doc, {"block": {"keep": 2}})
+        doc = {"block": {"sub": 1}}
+        catalog._drop_override(doc, nested)
+        self.assertEqual(doc, {})          # an emptied block goes with its last key
+        doc = {"block": "not-a-dict"}
+        catalog._drop_override(doc, nested)
+        self.assertEqual(doc, {"block": "not-a-dict"})
+
+    def test_a_registered_dynamic_placeholder_overrides_the_static_one(self):
+        field = catalog.field_index(catalog.lookup("redaction"))["redaction_terms_file"]
+        with unittest.mock.patch.dict(catalog.DYNAMIC_PLACEHOLDERS,
+                                      {"redaction_terms_file": lambda f, doc: "/derived/terms.txt"}):
+            out = catalog._project_field(field, {}, {})
+        self.assertEqual(out["placeholder"], {"zh": "/derived/terms.txt", "en": "/derived/terms.txt"})
+        with unittest.mock.patch.dict(catalog.DYNAMIC_PLACEHOLDERS,
+                                      {"redaction_terms_file": lambda f, doc: None}):
+            out = catalog._project_field(field, {}, {})
+        self.assertEqual(out["placeholder"], field["placeholder"])   # None = the static one stays
 
 
 if __name__ == "__main__":
