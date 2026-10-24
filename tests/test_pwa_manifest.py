@@ -1,8 +1,9 @@
 """PWA 安装清单 + 生成的图标（docs/CONTRACT.md §73）。
 
 四件事钉在这里：index.html 挂着 `<link rel="manifest">`；清单的 `name` 与
-`<title>` 逐字相同；主题色/背景色逐字取自 `ui/tokens/native-tokens.json` 的
-`windowBackground.light`（§66.3 token 单源，不许手写字面量）；两张 PNG 是
+`<title>` 逐字相同；主题色/背景色逐字取自 `web/src/styles/tokens.css` 原生快照块的
+`--native-color-window-background-light`（v2.0.0 前取自 `ui/tokens/native-tokens.json`，它随 §66
+退役；快照块是同一组值，仍不许在清单里另写字面量）；两张 PNG 是
 `scripts/ui/make_pwa_icons.py` 从 favicon.svg 栅格化的结果——重跑零 diff
 （口径 = 像素，见该脚本 docstring）。
 """
@@ -25,7 +26,7 @@ import make_pwa_icons as icons  # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST_PATH = os.path.join(REPO_ROOT, "web", "public", "manifest.webmanifest")
 INDEX_PATH = os.path.join(REPO_ROOT, "web", "index.html")
-TOKENS_PATH = os.path.join(REPO_ROOT, "ui", "tokens", "native-tokens.json")
+TOKENS_CSS = os.path.join(REPO_ROOT, "web", "src", "styles", "tokens.css")
 
 
 def _read(path):
@@ -38,8 +39,12 @@ def _manifest():
 
 
 def _window_background():
-    tokens = json.loads(_read(TOKENS_PATH))
-    return tokens["color"]["semantic"]["windowBackground"]["$value"]
+    css = _read(TOKENS_CSS)
+    out = {}
+    for mode in ("light", "dark"):
+        m = re.search(r"--native-color-window-background-%s:\s*(#[0-9a-fA-F]{6})\s*;" % mode, css)
+        out[mode] = m.group(1) if m else None
+    return out
 
 
 class ManifestShapeTestCase(unittest.TestCase):

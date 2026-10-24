@@ -1,4 +1,4 @@
-"""web/ 的构建在仓库之外也成立（CONTRACT §56.5 ui 步、§66.2、§69.4）。
+"""web/ 的构建在仓库之外也成立（CONTRACT §56.5 ui 步、§69.4）。
 
 install.sh 的 ui 步把 web/（除 node_modules / dist）镜像到 $HOME 下的构建目录里
 `npm run build`——仓库根不在那里。2026-09-03 首次 fresh-install 验收（run
@@ -15,6 +15,9 @@ tests/integration/test_web_build_outside_repo.py）：
     找不到时判例自己抛错而不是静默空转；
   - install.sh 的镜像排除集不变（node_modules / dist / .zai-*），tsconfig.build.json
     因此随镜像走。
+
+v2.0.0：当年那个读仓库根 fixture 的 parity 判例（§66）随 ui/parity/ 退役；web/src 自此没有
+任何文件读仓库根，下面另钉「不再有人引用 ui/parity/」。
 """
 import json
 import re
@@ -125,27 +128,25 @@ class NoEscapingImportTestCase(unittest.TestCase):
         self.assertEqual(offenders, {}, "static imports that escape web/ break the out-of-repo build "
                                         "(install.sh ui step); read repo fixtures via import.meta.glob")
 
-    def test_parity_suite_reads_repo_fixtures_via_glob_and_fails_loud(self):
-        text = (SRC / "parity.test.tsx").read_text(encoding="utf-8")
-        self.assertIn('import.meta.glob(["../../ui/parity/native-inventory.json", "../../ui/parity/fixtures/*.json"]', text)
-        self.assertIn('import.meta.glob("../../ui/parity/*.txt"', text)
-        self.assertIn('query: "?raw"', text)
-        self.assertIn("throw new Error(`ui/parity/${rel} not found", text)
-        self.assertNotIn('from "../../ui/parity/', text)
+    def test_nothing_in_web_src_reads_the_retired_parity_fixtures(self):
+        readers = sorted(str(p.relative_to(REPO_ROOT)) for p in _source_files()
+                         if "ui/parity/" in _COMMENTS.sub("", p.read_text(encoding="utf-8")))
+        self.assertEqual(readers, [], "ui/parity/ retired with §66 in v2.0.0")
+        self.assertFalse((REPO_ROOT / "ui" / "parity").exists())
 
     def test_detector_sees_an_escaping_import(self):
         # the detector itself must not be a no-op: plant an escaping import in a temp file under src
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".test.ts", dir=str(SRC), delete=False,
                                          encoding="utf-8") as fh:
-            fh.write('import x from "../../ui/parity/native-inventory.json";\n'
+            fh.write('import x from "../../fixtures/inventory.json";\n'
                      'import { y } from "./types";\n'
                      '// import z from "../../not-an-import";\n'
-                     'const w = await import("../../ui/parity/fixtures/lanes.json");\n')
+                     'const w = await import("../../fixtures/lanes.json");\n')
             planted = Path(fh.name)
         try:
             self.assertEqual(_escaping_imports(planted),
-                             ["../../ui/parity/native-inventory.json", "../../ui/parity/fixtures/lanes.json"])
+                             ["../../fixtures/inventory.json", "../../fixtures/lanes.json"])
         finally:
             planted.unlink()
 

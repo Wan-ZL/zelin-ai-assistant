@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""README 真实性审计：把 README.md 的每条主张判成 ok / stale（CONTRACT §58 + §66）。
+"""README 真实性审计：把 README.md 的每条主张判成 ok / stale（CONTRACT §58 + §77.5）。
 
 法典：docs/CONTRACT.md §58（质量仪表与合并硬门——本脚本是同一族的一道观测门）、
-§66（UI 对齐清单 = 标签真源：`ui/parity/native-inventory.json` 的 owner=web 条目）。
+§77.5（本门的判据）。v2.0.0：§66 的 UI 对齐清单（`ui/parity/native-inventory.json`，
+标签的第一真源）随 mac/ 退役，标签只对 web/src 与设置目录的文案源判。
 判据三类（缺一不可，全部机械判定）：
   1. **路径**——主张里出现的仓库路径必须存在（运行时生成的路径按前缀白名单放行）。
   2. **退役面**——问问助手 / Ask 页、iMessage 通道、原生菜单栏 app UI、被当成
      「现在就这么做」的 mac/ 构建指令、以及非当前 tag 的版本字面量（§56.1：版本
      真源是 main 上的 git tag，README 里写死旧版本 = 过期主张）。
-  3. **UI 标签**——主张里引号括起来的界面文案必须真的被 web app 渲染：先查
-     §66 清单的 owner=web 条目，再查 web/src 与 server/settings_catalog.py 的
-     文案源；`--render` 时改用 Playwright 真渲染出来的文本兜底判定。
+  3. **UI 标签**——主张里引号括起来的界面文案必须真的被 web app 渲染：查
+     web/src 与 server/settings_catalog.py 的文案源；`--render` 时改用 Playwright
+     真渲染出来的文本兜底判定。
 
 用法：
     python3 scripts/qa/readme_audit.py --summary
@@ -291,42 +292,6 @@ def check_retired(claim, tag):
 # 判据 3：UI 标签
 # --------------------------------------------------------------------------- #
 
-def _own_labels(node):
-    """一个 owner=web 条目自己的 en / zh 文案（其它 owner = 不是 web 渲染的字）。"""
-    if node.get("owner") != "web":
-        return []
-    out = []
-    for key in ("en", "zh"):
-        value = node.get(key)
-        if isinstance(value, str):
-            out.append(value)
-    return out
-
-
-def _walk_web_labels(node, out):
-    """§66 清单是任意深的 dict/list 树；沿树收所有 owner=web 的文案。"""
-    if isinstance(node, dict):
-        out.extend(_own_labels(node))
-        children = list(node.values())
-    elif isinstance(node, list):
-        children = node
-    else:
-        return
-    for child in children:
-        _walk_web_labels(child, out)
-
-
-def _inventory_labels(repo_root):
-    path = os.path.join(repo_root, "ui", "parity", "native-inventory.json")
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    labels = []
-    _walk_web_labels(data, labels)
-    return labels
-
-
 def _source_corpus(repo_root):
     chunks = []
     for rel in ("web/index.html", "server/settings_catalog.py"):
@@ -345,8 +310,8 @@ def _source_corpus(repo_root):
 
 
 def label_corpus(repo_root):
-    """§66 清单的 owner=web 文案 + web/src + 设置目录的文案，拼成一个查找面。"""
-    return "\n".join(_inventory_labels(repo_root)) + "\n" + _source_corpus(repo_root)
+    """web/src + 设置目录的文案，拼成一个查找面（§66 清单那一半随 v2.0.0 退役）。"""
+    return _source_corpus(repo_root)
 
 
 _HTML_ATTR_RE = re.compile(r'\s[\w:-]+="[^"]*"')
@@ -387,8 +352,8 @@ def check_labels(claim, corpus_lower, rendered_lower=None):
                 claim.mark("UI label %r is in the sources but was not rendered "
                            "by the running web app" % label)
             continue
-        claim.mark("UI label %r is not rendered by the web app (not in the §66 "
-                   "owner=web inventory nor in web/src)" % label)
+        claim.mark("UI label %r is not rendered by the web app (not in web/src "
+                   "nor in the settings catalog)" % label)
 
 
 # --------------------------------------------------------------------------- #

@@ -17,21 +17,16 @@
   ``review_ready`` / ``proposal`` / ``needs_input`` / ``receipt`` / ``review_stale`` 与它们的分类开关随
   Act 管线退役（全文见 tag full）。
 
-v1 §66.2 追记的 ``[ui-parity]`` 门（v2.0.0 退役，全文见 tag full）以本目录判 ``notification:<kind>`` 与 ``control:notifications:*``
-（探针 notify_catalog）：清单里每个 kind 都要登记在 ``kinds``，每句壳直发的通知都要在
-``shell_notices`` 里有同一对 zh / en。**刻意暂留的库函数**：``kind_names`` / ``fragments`` /
-``same_template`` / ``sentences`` / ``has_sentence`` 只服务那个探针，唯一生产调用方
-``scripts/ui/parity_check.py`` 已不在 run_gates.sh 里；它们不是活的 server 面，PR-C 删 ``scripts/ui/``
-时一并删除（§28 v2.0.0 修订）。
+v1 §66.2 追记的 ``[ui-parity]`` 门（v2.0.0 退役，全文见 tag full）曾以本目录判原生清单的
+``notification:<kind>`` 与 ``control:notifications:*``；只服务那个探针的库函数（``kind_names`` /
+``fragments`` / ``same_template`` / ``sentences`` / ``has_sentence``）随 PR-C 删除 ``scripts/ui/`` 一并删除
+（§28 v2.0.0 修订）。壳直发句与 shell/Sources 的逐字对照住在判例 tests/test_server_notify_catalog.py。
 
 契约：docs/CONTRACT.md §28（通知中继）、§49（路由表）。
 """
 from __future__ import annotations
 
-import re
 from typing import Optional
-
-_PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 
 
 def _notice(nid: str, title_zh: str, title_en: str, *, source: str,
@@ -97,20 +92,6 @@ KINDS: tuple = (
 )
 
 
-def kind_names() -> list:
-    return [k["kind"] for k in KINDS]
-
-
-def fragments(template: str) -> list:
-    """模板 → 去掉 ``{占位}`` 后的静态片段（比对 Swift 插值句时两边同做）。"""
-    return [part for part in _PLACEHOLDER.split(template) if part]
-
-
-def same_template(a: str, b: str) -> bool:
-    """两句只差占位名（`{n}` vs `{overflow.count}`）即视为同一句。"""
-    return fragments(a) == fragments(b)
-
-
 def _body(notice: dict) -> dict:
     if notice["body_failure_id"] is None:
         return dict(notice["body"])
@@ -125,24 +106,6 @@ def resolve_notice(notice: dict) -> dict:
     return {"id": notice["id"], "title": dict(notice["title"]), "body": _body(notice),
             "slots": {k: [dict(v) for v in vs] for k, vs in notice.get("slots", {}).items()},
             "source": notice["source"]}
-
-
-def sentences() -> list:
-    """目录里每一句（title 与 body 各算一句，插值 slot 的每个取值也算一句）的 (zh, en) 对。
-    只给已退役的 §66.2 探针（scripts/ui/parity_check.py）用，PR-C 随它删除——见模块 docstring。"""
-    out = []
-    for notice in SHELL_NOTICES:
-        resolved = resolve_notice(notice)
-        out.append((resolved["title"]["zh"], resolved["title"]["en"]))
-        out.append((resolved["body"]["zh"], resolved["body"]["en"]))
-        for values in resolved["slots"].values():
-            out.extend((v["zh"], v["en"]) for v in values)
-    return out
-
-
-def has_sentence(zh: str, en: str) -> bool:
-    """清单里的一条通知句（zh, en；插值已成 {expr}）是否登记在目录（只差占位名即算同一句）。"""
-    return any(same_template(zh, szh) and same_template(en, sen) for szh, sen in sentences())
 
 
 def catalog() -> dict:

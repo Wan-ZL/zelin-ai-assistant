@@ -1,4 +1,4 @@
-// 左侧导航栏判例（CONTRACT §54.4 / §66.2 rail:*）：六项同序同名（zh / en；原生八页去掉 D29 问问助手、D30 依赖检查——
+// 左侧导航栏判例（CONTRACT §54.4；§66.2 rail:* 已退役）：六项同序同名（zh / en；原生八页去掉 D29 问问助手、D30 依赖检查——
 // 清单里 owner=retired 的 rail 项不再上栏）+ data-rail-item 锚、web 自有的会议纪要紧跟任务台列第二且不带锚（D32，
 // 分隔线退役）、web 自有的技能在录制之后、回收站之前且同样不带锚（D78）、选中态跟 ?page=（deps / diagnostics 旧深链归
 // 设置）、深链正确、折叠持久化到 localStorage `sidebarCollapsed`（原生 UserDefaults 同名）、收起态只剩图标 + tooltip、
@@ -23,12 +23,22 @@ function renderRail(language: "zh" | "en" = "en", search = "") {
   );
 }
 
-// 原生清单经 import.meta.glob 读（不许静态 import 仓库根——install.sh 在 web/ 的仓外镜像里编，
-// CONTRACT §56.5；tests/test_web_build_self_contained.py 钉），找不到即抛错。
-const inventoryGlob = import.meta.glob("../../../../ui/parity/native-inventory.json", { eager: true, import: "default" });
-const inventory = inventoryGlob["../../../../ui/parity/native-inventory.json"] as
-  { rail: { items: Array<{ slug: string; zh: string; en: string; gated: boolean; owner: string }> } } | undefined;
-if (!inventory) throw new Error("ui/parity/native-inventory.json not found — this suite runs from the repo's web/ dir");
+// 原生 rail 清单的快照（v2.0.0：§66 的 ui/parity/native-inventory.json 随 mac/ 退役，全文见 tag full；
+// 这里内联它在退役那一刻的 rail 块，判例不再读仓库根）。
+const inventory: { rail: { items: Array<{ slug: string; zh: string; en: string; gated: boolean; owner: string }> } } = {
+  rail: {
+    items: [
+      { slug: "dashboard", zh: "任务台", en: "Workbench", gated: true, owner: "web" },
+      { slug: "ask", zh: "问问助手", en: "Ask", gated: false, owner: "retired" },
+      { slug: "deps", zh: "依赖检查", en: "Dependencies", gated: false, owner: "retired" },
+      { slug: "ingest", zh: "录制与数据接入", en: "Recording & Data Sources", gated: true, owner: "web" },
+      { slug: "trash", zh: "回收站", en: "Trash", gated: true, owner: "web" },
+      { slug: "archive", zh: "永久性完成", en: "Done for good", gated: true, owner: "web" },
+      { slug: "settings", zh: "设置", en: "Settings", gated: true, owner: "web" },
+      { slug: "about", zh: "关于", en: "About", gated: true, owner: "web" },
+    ],
+  },
+};
 // 栏上只放清单里仍判（gated）的项；ask / deps 在清单 attribution.rail_owner 里标 retired（D29 / D30）
 const nativeRail = inventory.rail.items.filter((r) => r.gated);
 const retiredRail = inventory.rail.items.filter((r) => !r.gated);

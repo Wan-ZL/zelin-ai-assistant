@@ -13,8 +13,8 @@ mirror (the static half is tests/test_web_build_self_contained.py):
     at the repo's already-installed tree (no `npm ci`, no network), run the
     real `npm run build` → exit 0 and dist/index.html present;
   - the full `npm run typecheck` (tsconfig.json, tests included) passes from
-    that copy too — the parity suite reaches the repo fixtures through
-    import.meta.glob, never through a path tsc has to resolve.
+    that copy too (v2.0.0: the parity suite that read repo-root fixtures retired
+    with §66 and ui/parity/; nothing under web/src reaches outside web/ now).
 
 Skips when npm is absent or web/node_modules is not installed (the plain
 unittest jobs; the qa-gates job and a developer machine have both). Lives in
@@ -55,14 +55,14 @@ def _mirror_ignore(_dir, names):
     return [n for n in names if n in _MIRROR_EXCLUDES or n.startswith(".zai-")]
 
 
-@unittest.skipIf(_WIN, "install.sh's mirror build is POSIX-only (install.ps1 has no ui step)")
+@unittest.skipIf(_WIN, "install.sh's mirror build is POSIX-only")
 @unittest.skipUnless(shutil.which("npm") and (NODE_MODULES / ".package-lock.json").exists(),
                      "needs npm and an installed web/node_modules (cd web && npm ci)")
 class WebBuildOutsideRepoTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # the copy lives under a temp dir that is NOT inside the repo: ../../ui/parity
-        # resolves to nothing there, exactly like ~/Library/Caches/zelin-ai-assistant/web-build
+        # the copy lives under a temp dir that is NOT inside the repo: any path that escapes
+        # web/ resolves to nothing there, exactly like ~/Library/Caches/zelin-ai-assistant/web-build
         cls.tmp = Path(tempfile.mkdtemp(prefix="zai-web-mirror-"))
         cls.copy = cls.tmp / "web-build"
         shutil.copytree(WEB, cls.copy, ignore=_mirror_ignore, symlinks=True)

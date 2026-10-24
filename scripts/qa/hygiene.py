@@ -3,7 +3,7 @@
 
 法典：docs/CONTRACT.md §58.3；阈值 truth = qa/gates.toml [hygiene]。范围：
   - 行数上限：act/ server/ scripts/ 的 .py（防腐 #1：文件 ≤2000、函数 ≤300、
-    class ≤800）+ shell/ 的 .swift（≤1500）。mac/ 按 D3 豁免（退役中），
+    class ≤800）+ shell/ 的 .swift（≤1500；mac/ 已在 v2.0.0 删除），
     tests/ 是判例不设门。
   - docstring 引 §（防腐 #5 前半）：act/** + server/** 的模块 docstring 必须
     含 `§<数字>`（__init__.py 豁免——版本占位/包壳没有行为可引）。

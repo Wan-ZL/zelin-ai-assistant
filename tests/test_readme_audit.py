@@ -23,15 +23,10 @@ import readme_audit  # noqa: E402
 
 
 def _fake_repo(readme, extra_files=()):
-    """最小仓库：README + ui/parity 清单 + web/src 一个文案源。"""
+    """最小仓库：README + web/src 一个文案源（§66 清单 v2.0.0 退役，不再是标签源）。"""
     root = tempfile.mkdtemp(prefix="readme-audit-")
-    os.makedirs(os.path.join(root, "ui", "parity"))
     os.makedirs(os.path.join(root, "web", "src"))
     os.makedirs(os.path.join(root, "docs", "images"))
-    with open(os.path.join(root, "ui", "parity", "native-inventory.json"), "w") as fh:
-        fh.write('{"controls": [{"id": "control:board:button:approve", '
-                 '"owner": "web", "en": "Approve", "zh": "\\u6279\\u51c6"},'
-                 '{"id": "control:x", "owner": "retired", "en": "Ask"}]}')
     with open(os.path.join(root, "web", "src", "i18n.ts"), "w") as fh:
         fh.write('export const strings = { review: "In review" };\n')
     with open(os.path.join(root, "README.md"), "w") as fh:
@@ -139,9 +134,12 @@ class RetiredSurfaceTest(unittest.TestCase):
 
 
 class LabelClaimTest(unittest.TestCase):
-    def test_label_in_inventory_is_ok(self):
-        root = _fake_repo('- click the "Approve" button on the card\n')
-        self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
+    def test_a_leftover_parity_inventory_is_not_a_label_source(self):
+        root = _fake_repo('- click the "Approve" button on the card\n',
+                          extra_files=("ui/parity/native-inventory.json",))
+        with open(os.path.join(root, "ui", "parity", "native-inventory.json"), "w") as fh:
+            fh.write('{"controls": [{"owner": "web", "en": "Approve"}]}')
+        self.assertEqual(len(readme_audit.audit(root, tag="v1.0.114").stale), 1)
 
     def test_label_from_web_sources_is_ok(self):
         root = _fake_repo('- the "In review" lane holds finished work\n')
@@ -154,7 +152,7 @@ class LabelClaimTest(unittest.TestCase):
         self.assertIn("Teleport", stale[0].reasons[0])
 
     def test_retired_owner_label_is_stale(self):
-        """清单里 owner=retired 的文案（Ask）不算「web app 渲染得出来」。"""
+        """退役面的文案（Ask）不算「web app 渲染得出来」。"""
         root = _fake_repo('- the "Ask" tab answers questions\n')
         self.assertTrue(readme_audit.audit(root, tag="v1.0.114").stale)
 
@@ -167,11 +165,11 @@ class LabelClaimTest(unittest.TestCase):
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
     def test_render_mode_requires_the_label_on_screen(self):
-        root = _fake_repo('- click the "Approve" button on the card\n')
+        root = _fake_repo('- the "In review" lane holds finished work\n')
         clean = readme_audit.audit(root, tag="v1.0.114",
-                                   rendered="Approve Reject")
+                                   rendered="In review / Done")
         self.assertEqual(clean.stale, [])
-        missing = readme_audit.audit(root, tag="v1.0.114", rendered="Reject only")
+        missing = readme_audit.audit(root, tag="v1.0.114", rendered="Done only")
         self.assertIn("not rendered by the running web app",
                       missing.stale[0].reasons[0])
 
