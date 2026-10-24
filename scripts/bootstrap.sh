@@ -5,42 +5,28 @@
 #   curl -fsSL …/scripts/bootstrap.sh | bash -s -- ~/Code/zelin-ai-assistant   # custom checkout dir
 #   bash scripts/bootstrap.sh [--dir PATH] [--ref BRANCH] [--no-open] [--no-launchd] [PATH]
 #
-# Owner's acceptance criterion (vnext2-plan, 2026-09-02): "on another computer
-# I can start from a blank environment — or update this software on another
-# computer — and use it directly." This script is that command, and it is the
-# SAME command for both cases: a re-run on a machine that already has the
-# checkout fast-forwards it and re-runs the installer (idempotent = update).
-#
-# What it does, in order (each step prints ok / warn / ERR):
+# The same command installs a fresh machine and updates an existing checkout
+# (fast-forward + re-install). Steps, each printing ok / warn / ERR:
 #   1. preflight — macOS only (lite 2.0 dropped the Linux / Windows installers);
-#      Xcode Command Line Tools (git, swiftc, /usr/bin/python3 come with them —
-#      checked with `xcode-select -p`, which never pops the install dialog);
-#      git; python3.
+#      Xcode Command Line Tools (`xcode-select -p`, never the install dialog);
+#      git; python3; claude (a warn when missing)
 #   2. checkout dir — default ~/Projects/zelin-ai-assistant, or the PATH arg /
-#      --dir / $ZAI_BOOTSTRAP_DIR. A dir outside $HOME (external volume, network
-#      share) gets a loud TCC warning (§55: macOS grants file access PER BINARY;
-#      launchd-spawned daemons and claude will need Full Disk Access there).
-#   3. clone (first run) or fetch + fast-forward (re-run). An existing non-git
-#      dir, a checkout of some other repo, or local edits are refused / left
-#      alone — this script never destroys anything it did not create.
-#   4. config.yaml from config.example.yaml when absent (never overwritten).
-#   5. bash install.sh --non-interactive [--no-launchd] — never prompts; the
-#      exit code is the number of failed steps (CONTRACT §23/§56).
-#   6. python3 -m act.doctor --fresh-install — the buckets: what the installer
-#      wired, what still needs YOU (Full Disk Access for the daemon interpreter
-#      and claude — with paths — the API key, opening the board), what is broken.
-#   7. open the Board app (skipped with --no-open / $ZAI_BOOTSTRAP_NO_OPEN=1, or
-#      when no bundle was built — the board is then at http://127.0.0.1:<port>/).
+#      --dir / $ZAI_BOOTSTRAP_DIR; outside $HOME = a TCC warning (§55)
+#   3. clone (first run) or fetch + fast-forward (re-run); local edits, another
+#      repo's checkout or a non-git dir are refused or left alone
+#   4. config.yaml from config.example.yaml when absent (never overwritten)
+#   5. bash install.sh --non-interactive [--no-launchd]
+#   6. python3 -m act.doctor --fresh-install — what is wired, what still needs
+#      you (API key, Full Disk Access, opening the app), what is broken
+#   7. open the app (skipped with --no-open / $ZAI_BOOTSTRAP_NO_OPEN=1)
 #
-# Exit code: 0 = installed, nothing broken (TCC grants / credentials may still
-# be pending — those are listed, they are the human's); otherwise the first
-# non-zero of: preflight (2–5), install.sh failed steps, doctor broken rows.
+# Exit code: 0 = installed, nothing broken (grants / the key may still be
+# pending — listed, they are the human's); otherwise the first non-zero of:
+# preflight (2–5), checkout (6–10), install.sh failed steps, doctor broken rows.
 #
-# Test seams (tests/integration/test_bootstrap_script.py): every external tool
-# is resolved through PATH (a fake git/xcode-select/uname/open can front it),
-# ZAI_BOOTSTRAP_REPO_URL points the clone anywhere (a local bare repo in CI),
-# stdin is /dev/null for every child (the script itself may be arriving on
-# stdin through the curl pipe — a child reading stdin would eat the script).
+# Test seams (tests/integration/test_bootstrap_script.py): every tool through
+# PATH; ZAI_BOOTSTRAP_REPO_URL points the clone anywhere; stdin is /dev/null
+# for every child (the script itself may arrive on stdin through the curl pipe).
 set -uo pipefail
 
 REPO_URL="${ZAI_BOOTSTRAP_REPO_URL:-https://github.com/Wan-ZL/zelin-ai-assistant.git}"
@@ -59,7 +45,7 @@ usage: bootstrap.sh [--dir PATH] [--ref BRANCH] [--no-open] [--no-launchd] [PATH
   --dir PATH      checkout directory (default ~/Projects/zelin-ai-assistant; env ZAI_BOOTSTRAP_DIR)
   --ref BRANCH    branch or tag to install (default main; env ZAI_BOOTSTRAP_REF)
   --no-open       do not open the Board app at the end (env ZAI_BOOTSTRAP_NO_OPEN=1)
-  --no-launchd    install.sh --no-launchd: wire no scheduler, run one actd pass (CI / dry run)
+  --no-launchd    install.sh --no-launchd: no LaunchAgent, no crontab (CI / dry run)
 EOF
 }
 
@@ -106,7 +92,7 @@ preflight() {
     if command -v claude >/dev/null 2>&1; then
         ok "claude: $(command -v claude)"
     else
-        warn "claude CLI not found — install.sh continues; the daemons idle until Claude Code is installed (the summary at the end lists it)"
+        warn "claude CLI not found — install.sh continues; ingest and recaps idle until Claude Code is installed (the summary lists it)"
     fi
     return 0
 }
@@ -122,7 +108,7 @@ announce_dir() {
     if outside_home "$_phys"; then
         warn "$_phys is OUTSIDE your home folder (external volume / network share / protected location)."
         warn "macOS grants file access PER BINARY (TCC, CONTRACT §55): the daemon interpreter and claude"
-        warn "will each need Full Disk Access before anything launchd starts can read this checkout."
+        warn "will each need Full Disk Access before the server agent or cron can read this checkout."
         warn "A path under \$HOME (default ~/Projects/zelin-ai-assistant) needs none of that."
     else
         ok "inside \$HOME — no Full Disk Access needed for the checkout itself"
