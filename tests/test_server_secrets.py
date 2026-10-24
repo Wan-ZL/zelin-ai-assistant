@@ -215,6 +215,29 @@ class SecretsVerifyTestCase(_ServerCase):
         self.assertEqual(status, 404)
 
 
+class LegacyPresentTestCase(unittest.TestCase):
+    """``legacy_present`` 的三格（v2.0.0 起名单只剩 Anthropic，另两格靠注入的表项钉住）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="zai-legacy-present-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_a_name_without_older_tiers_is_never_legacy(self):
+        self.assertFalse(secrets_store.legacy_present(self.root, "nope.txt", config_doc={}))
+
+    def test_an_explicit_config_path_wins_over_the_default(self):
+        explicit = self.root / "explicit.txt"
+        default = self.root / "default.txt"
+        explicit.write_text("tok\n", encoding="utf-8")
+        table = {"x.txt": (("secrets", "x_path"), str(default))}
+        with mock.patch.dict(secrets_store._LEGACY_PATHS, table):
+            self.assertTrue(secrets_store.legacy_present(
+                self.root, "x.txt", config_doc={"secrets": {"x_path": str(explicit)}}))
+            # 显式路径缺席 → 落到默认路径；默认文件不存在 → False
+            self.assertFalse(secrets_store.legacy_present(self.root, "x.txt", config_doc={}))
+
+
 class NameMirrorTestCase(unittest.TestCase):
     def test_server_names_mirror_act_secrets_and_shell_support(self):
         names = {s["name"] for s in secrets_store.SECRETS}
