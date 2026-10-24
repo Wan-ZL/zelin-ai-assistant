@@ -208,10 +208,12 @@ class _FenceState(object):
             self.blocks += 1
 
     def see(self, stripped):
-        """围栏内第一行以 Removed in 2.0 开头 → 整块按 removed 判（§77.5 追记）。"""
+        """围栏内第一行以 Removed in 2.0 开头 → 整块按 removed 判（§77.5 追记）。
+
+        围栏语言已经是 removed 的块，第一行再写一遍 Removed in 2.0 也还是同一个块（不重复计数）。"""
         if self.fence is None or not stripped:
             return
-        if self.fresh and _REMOVED_HEAD_RE.match(stripped):
+        if self.fresh and self.fence != _REMOVED_FENCE_LANG and _REMOVED_HEAD_RE.match(stripped):
             self.fence = _REMOVED_FENCE_LANG
             self.blocks += 1
         self.fresh = False
@@ -254,11 +256,19 @@ def _shell_tokens(text):
         return text.split()
 
 
+def _inline_code_tokens(code):
+    """反引号里的一段：以 ~ 或 / 开头的整段是一条家目录 / 绝对路径（`~/Library/Application Support/…`
+    里的空格是路径的一部分，不是命令参数的分隔），原样当一个 token；其余按命令切。"""
+    if code.startswith(("~", "/")):
+        return [code]
+    return _shell_tokens(code)
+
+
 def _raw_path_tokens(text, kind):
     """可能是路径的原始片段：反引号里的命令 token、md 链接、html src|href。"""
     raw = []
     for match in _INLINE_CODE_RE.finditer(text):
-        raw.extend(_shell_tokens(match.group(1)))
+        raw.extend(_inline_code_tokens(match.group(1)))
     raw.extend(_LINK_RE.findall(text))
     raw.extend(_HTML_REF_RE.findall(text))
     if kind == "code":

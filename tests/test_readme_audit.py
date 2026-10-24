@@ -80,6 +80,11 @@ class PathClaimTest(unittest.TestCase):
         root = _fake_repo("- the board reads `state/dashboard.json` from `web/dist`\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
 
+    def test_home_path_with_a_space_is_one_token(self):
+        """`~/Library/Application Support/…` 不被切成 `Support/…` 这条假路径。"""
+        self.assertEqual(readme_audit._candidate_paths(
+            "a dir under `~/Library/Application Support/Example/claude-config/`"), [])
+
     def test_prose_slash_is_not_a_path(self):
         root = _fake_repo("- launchd/cron scheduling with export/cleanup scripts\n")
         self.assertEqual(readme_audit.audit(root, tag="v1.0.114").stale, [])
@@ -180,6 +185,10 @@ class RemovedBlockTest(unittest.TestCase):
         """块中间才出现的 Removed in 2.0 不把整块变成免判块。"""
         stale = self._stale("```text\nmenu-bar app\nRemoved in 2.0\n```\n")
         self.assertEqual(len(stale), 1)
+
+    def test_removed_fence_with_a_removed_heading_is_one_block(self):
+        """```removed 围栏的第一行再写 Removed in 2.0：还是第一个块，不被当成第二个。"""
+        self.assertEqual(self._stale("```removed\nRemoved in 2.0\n" + self.BODY + "```\n"), [])
 
     def test_second_block_is_stale(self):
         readme = ("```removed\nmenu-bar app\n```\n"
