@@ -1,104 +1,61 @@
-# Demo mode (no real data needed) & recording guide
+# Demo mode (no real data needed)
 
-**Demo 模式(无需真实数据)与录屏指南** —— 不需要 API key、screenpipe 或 Obsidian,
-就能跑起完整 UI;这也是贡献者预览界面改动的推荐方式(见 `CONTRIBUTING.md`)。
+**Demo 模式（无需真实数据）** —— 不需要 API key、screenpipe 或 Obsidian，就能把会议纪要页、设置页、
+关于页完整跑起来；这也是贡献者预览界面改动的推荐方式（见 `CONTRIBUTING.md`）。
 
-> **最快路径（v0.48 web 看板）**：`bash scripts/dev-preview.sh` 一条命令 = 种 demo 数据 + 起本地 server + 浏览器打开 web 看板（缺 `web/dist` 会自动 `npm install && npm run build`，需 Node LTS）；`--real` 改用 §19 home 指针指向的真实数据。本文其余部分是 **Mac app** 的 demo 与录屏指南——seeder 和 `--scene` 两边通用（`bash scripts/dev-preview.sh approved`）。
+`scripts/demo_seed.py` 往一个临时的 `AIASSISTANT_HOME` 写一份**完全虚构**的 `state/recap/`
+（inkweld / example-bench / alex.doe / sam.rivera / jordan.lee……全是编的，绝无真实人物或组织数据）。
+看板 server（`python3 -m server`）照常经 `GET /api/recaps` 读它，所以页面上看到的就是真 app 的渲染。
+1.x 的 seeder 写的是退役看板的 `state/dashboard.json` 卡片数据，全文在 git tag `full`。
 
-`scripts/demo_seed.py` 生成一份**完全虚构**的 `state/dashboard.json`（example-bench /
-inkweld / alex.doe / sam.rivera……全是编的，绝无真实人物或组织数据），让 app 指着一个
-假的 `AIASSISTANT_HOME` 跑，用于 README 截图和 demo 视频。五种卡片类型 + 边缘状态
-（queued 灰卡、dispatch 报错、blocked、chat 交付的 final draft、回收站）全部可见。
-
-## 快速开始
+## 一条命令
 
 ```bash
-# 1. 生成 demo 数据（目录不存在会自动创建）
-python3 scripts/demo_seed.py /tmp/assistant-demo
-
-# 2. 构建并安装 app（如尚未安装）
-./mac/build.sh --install
-
-# 3. 退出正在跑的正式实例（避免两个菜单栏图标打架）
-pkill -x ZelinAIEngineer || true
-
-# 4. 启动 app 指向 demo 目录
-#    ⚠️ 必须直接跑 bundle 里的二进制 —— `open` 不会把环境变量传给 app 进程，
-#    AIASSISTANT_HOME 会静默丢失、app 读到的还是 ~/Projects/zelin-ai-assistant。
-AIASSISTANT_HOME=/tmp/assistant-demo "/Applications/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
+bash scripts/dev-preview.sh              # 场景 initial；缺 web/dist 会先 npm install && npm run build（需 Node LTS）
+bash scripts/dev-preview.sh generating   # 另一个场景
+bash scripts/dev-preview.sh --real       # 不种 demo，读 home 指针指向的真实数据
 ```
 
-app 每 5s 重读 dashboard.json，重跑 seeder 后最多等 5s 界面就换过来。
+demo 模式永远用临时目录（默认 `/tmp/zai-demo`，`ZAI_DEMO_HOME` 可改），写上「向导已完成」标记，然后起
+server 并打开浏览器。**绝不触碰真实的 `state/`。**
 
-两个注意点：
+## 场景
 
-- **新鲜度警告**：`generated_at` 超过 90s，看板 header 会出现橙色「actd 可能未运行」。
-  每次截图/开拍前重跑一次 seeder；长时间录屏可以开个循环保鲜：
-  `while true; do python3 scripts/demo_seed.py /tmp/assistant-demo >/dev/null; sleep 60; done`
-- demo 期间点 ✅/❌ 只会往 `/tmp/assistant-demo/state/inbox/` 写文件（没有 actd 在读），
-  无害；卡片不会真的动——视频里卡片的流动靠 `--scene` 换数据（见下）。
-
-## 英文数据（`--english` / `--lang en`）
-
-```bash
-python3 scripts/demo_seed.py /tmp/assistant-demo --english
-python3 scripts/demo_seed.py /tmp/assistant-demo --scene review --lang en
-```
-
-默认仍是中文（既有文档与脚本一字不改）。录英文版视频 / 截英文截图时加 `--english`
-（等价 `--lang en`）：同一份虚构数据集经一张「中文串 → 英文串」词表逐值替换，卡片
-id / 时间戳 / 列大小 / 校验结论与中文版完全一致，只有文字换了语言；输出里不含任何
-CJK 字符（`tests/test_demo_seed.py` 钉死——给数据集新加一条中文串而没补词表，测试就红）。
-
-## 校验模式
-
-```bash
-python3 scripts/demo_seed.py /tmp/assistant-demo --check
-```
-
-只校验现有文件不写入：counts 与各区数组一致、sources 四字段全为字符串（Swift 侧
-`Source` 非可选，一个 null 整列卡片就没了）、epoch 字段是 int、queued 项不带
-session_id 等。写入模式跑完也会自动做同一套校验。
-
-## `--scene`：为视频分步生成流水线时刻
-
-主角卡 **R-101**（example-bench 一键导出评测报告）在六个 scene 里走完整个流水线，
-其余卡片保持不动，视频里就是"一张卡在动"：
-
-| scene | R-101 所在位置 |
+| `--scene` | 页面上有什么 |
 |---|---|
-| `captured` | 提案——「AI 研究中」占位卡（会议录音刚被 radar 捕获，完整提案生成前） |
-| `initial`（默认） | 提案（T1 卡，满配：sources/plan/DoD/成本/截止） |
-| `approved` | 运行中——灰色 queued 卡（已批准、待派发） |
-| `running` | 运行中——working，40 秒前启动，带 `claude attach` 命令 |
-| `review` | 待验收——delivered_summary 提到 draft PR #42，30 秒前进入 |
-| `done` | 已完成——10 秒前验收，进「阶段性完成」 |
+| `initial`（缺省） | 8 份已出稿的纪要：五行形与可发送长版（分节、逐条标签）两种形状；质量 ok / 需复核（带结构化问题）/ 转写太短 / 没录到音频；一份重新生成过（有上一版、有转写原版）；一场进行中的会；已归档、已忽略各一份 |
+| `generating` | 同 `initial`，外加一个正在进行的「重新生成」请求（§63.8 回执 = 生成中） |
+| `empty` | 什么都没有：第一次装好时的空页面 |
+
+## 直接用 seeder
 
 ```bash
-python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
+python3 scripts/demo_seed.py /tmp/assistant-demo                          # 写 initial
+python3 scripts/demo_seed.py /tmp/assistant-demo --scene empty
+python3 scripts/demo_seed.py /tmp/assistant-demo --now 2026-09-02T12:00:00Z   # 固定时钟，逐字节可复现
+python3 scripts/demo_seed.py /tmp/assistant-demo --check                  # 校验形状 + 走一遍 GET /api/recaps 的投影
+AIASSISTANT_HOME=/tmp/assistant-demo HOME=/tmp/assistant-demo ZAI_PORT=47821 python3 -m server
 ```
 
-## 截图 shot list（README 用）
+`--check` 退出码非 0 = 有一份纪要形状不对，或它没出现在 `GET /api/recaps` 里。每份纪要都同时带中英两种语言，
+界面语言是看的人自己的选择，所以 seeder 没有语言开关。可粘贴的 `copy_*` 正文与「需复核」那份的问题列表由
+`act/lib/recap_text` 真渲染、真校验得出，数据不会和 daemon 的产出漂移（判例 `tests/test_demo_seed.py`、
+`tests/test_demo_seed_golden.py`）。
 
-1. **看板主窗口**：点菜单栏图标直接打开看板（v0.48 起 popover 已移除）。点最左
-   的「潜在任务」窄条展开后，提案 / 运行中 / 待验收 / 潜在任务 / 阶段性完成
-   全部非空；最右还有一条默认收起的「永久性完成」窄条（scene `initial`）。
-2. **T2 卡展开**：R-102（inkweld demo 环境）点「展开详情 ▸」——$85 成本、
-   需文字确认、disagreement、重复×3、🟢 新建 repo 一行全在。
-3. **待验收 + final draft**：R-110（周报）——chat 交付，展开可见完整双语周报草稿；
-   旁边 R-109 是 repo 交付对照（draft PR 回执 + DoD checklist + 耗时）。
-4. **回收站**：展开 trash 区——R-116 被拒建议，「恢复 / 永久保存」按钮 + 搜索框。
+## 谁在用它
 
-## 30 秒 demo 视频 storyboard
+- web 视觉基线与 e2e（`web/e2e/demoServer.ts`，场景 `initial`）；
+- `scripts/qa/readme_audit.py --render`（经 `scripts/qa/readme_render.mjs`）；
+- README 截图（`scripts/qa/readme_shots.mjs`：固定时钟 `--now`，写 `docs/images/*.png`）；
+- `scripts/dev-preview.sh`；
+- server 测试的公共夹具（`tests/test_server_common.seed_scene`）。
 
-镜头始终对着看板主窗口。每步先跑命令，等 ≤5s 刷新。
+README 截图只许真渲染（CONTRACT §77.5）：从 demo server 拍，绝不手绘、绝不用生成模型画界面。重拍：
 
-| 时间 | 命令 | 画面 |
-|---|---|---|
-| 0–6s | `--scene initial` | 全景：五列都有货。镜头推向提案列的 R-101。 |
-| 6–11s | 点 R-101 的 ✅，随即 `--scene approved` | 卡片从提案列消失，运行中列顶出现灰色 queued 卡——"批准即入队"。 |
-| 11–16s | `--scene running` | 灰卡变 working：转起来的状态、`claude attach` 一键复制。 |
-| 16–24s | `--scene review` | 卡片跳到待验收：draft PR #42 回执 + DoD checklist，鼠标划过「验收 ✓」。 |
-| 24–30s | 点验收，随即 `--scene done` | 卡片落入完成列（刚刚验收）。拉远回全景，定格。 |
+```bash
+(cd web && npm ci && npx playwright install chromium && npm run build)
+node scripts/qa/readme_shots.mjs          # 覆盖 docs/images/ 下 README 引用的几张 PNG
+```
 
-录完记得把 `/tmp/assistant-demo` 删掉，重启正式 app 即可回到真实数据。
+拍之前脚本只做一件改写：把拍图机器上的路径（本 checkout、临时 home、运行者的 `~`）换成一台普通安装上的
+`~/Projects/zelin-ai-assistant` 与 `~`，免得 README 带上拍图那台机器的用户名与临时目录；界面本身不动。

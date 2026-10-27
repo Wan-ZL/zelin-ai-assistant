@@ -2,7 +2,7 @@
 
 纪律（BUILD-CONTRACT §0.3 + §2.3）：
 - 每个 TestCase 用独立 tmpdir 当 AIASSISTANT_HOME，数据一律由 live 树的
-  ``scripts/demo_seed.py`` 种入（全虚构数据），绝不触碰生产 state/；
+  ``scripts/demo_seed.py`` 种入（全虚构的会议纪要，v2.0.0），绝不触碰生产 state/；
 - 真 server：``server.app.make_server(port=0, home=..., ...)`` 起在随机端口，
   serve_forever 跑在 daemon 线程里，调用方 addCleanup 负责 shutdown；
 - HTTP 客户端 = stdlib http.client，每个请求新建连接（避免 keep-alive 串台）。
@@ -10,10 +10,8 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
 import threading
-from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Optional
 
@@ -47,29 +45,16 @@ def demo_seed():
     return _demo_seed_module
 
 
-SCENES = ("captured", "initial", "approved", "running", "review", "done")
+SCENES = ("initial", "empty", "generating")
 
 
-def seed_scene(home: Path, scene: str) -> dict:
-    """跑 demo_seed.main() 种指定场景（含其自带 validate 闸门），返回落盘 dict。"""
-    rc = None
-    with redirect_stdout(io.StringIO()):
-        rc = demo_seed().main([str(home), "--scene", scene])
-    assert rc == 0, f"demo_seed --scene {scene} failed (rc={rc})"
-    return json.loads(dashboard_path(home).read_text(encoding="utf-8"))
-
-
-def dashboard_path(home: Path) -> Path:
-    return home / "state" / "dashboard.json"
-
-
-def rewrite_board(home: Path, dash: dict) -> None:
-    """原子改写 dashboard.json（tmp+replace，复刻 actd/demo_seed 写法）。"""
-    p = dashboard_path(home)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(dash, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
-    tmp.replace(p)
+def seed_scene(home: Path, scene: str = "initial") -> dict:
+    """种 demo_seed 的会议纪要场景（v2.0.0：看板卡片场景随 dashboard.json 退役），
+    返回 ``{state 下的相对路径: 文档}``；场景自带的 validate 闸门不过就当场失败。"""
+    files = demo_seed().seed(Path(home), scene)
+    problems = demo_seed().validate(files)
+    assert not problems, f"demo_seed --scene {scene}: {problems}"
+    return files
 
 
 # --------------------------------------------------------------------------- #

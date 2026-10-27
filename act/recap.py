@@ -148,9 +148,9 @@ class Lock:
 # generation (the sealed model call)
 # --------------------------------------------------------------------------- #
 def voice_profile_text() -> Optional[str]:
-    """docs/VOICE.md two-level fallback (server/folders.py's reveal mirrors it):
+    """Two-level voice-profile fallback (server/folders.py's reveal mirrors it):
     private state/voice-profile.md, else the shipped config/voice-profile.default.md,
-    else None."""
+    else None. The 1.x guide (docs/VOICE.md) is at git tag full."""
     for p in (config.STATE_DIR / "voice-profile.md",
               config.HOME / "config" / "voice-profile.default.md"):
         if p.exists():

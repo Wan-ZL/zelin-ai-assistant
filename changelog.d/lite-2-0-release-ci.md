@@ -1,0 +1,7 @@
+type: changed
+- **发版只发 Dock 壳（lite 2.0，PR-E）**：`release.yml` 从 tag 盖章、跑 compileall 与全量单测后用 `shell/build.sh` 构建 Dock app（并核对 bundle 自报的版本 = tag），发三个资产：`ZelinAIAssistant-<tag>-macos.zip`（带 build provenance attestation）、`checksums.sha256`、零条目的终止版 `appcast.xml`（让残留的 1.x 菜单栏 app 永远读到「已是最新」，上传前核对没有任何 `<item>`）。Release 正文的安装说明改为 bootstrap 一行命令，并给出 1.x 一次性手动升级命令（停在 `main` 上，`scripts/upgrade.sh` 只快进在 `main` 上的 checkout）。CONTRACT §56.2 / §74.3 / §79 追记。
+- **fresh-install CI 改为真接线并核对封闭足迹**：不再带 `--no-launchd`，真装 LaunchAgent、真写 crontab，断言 `~/.claude` 从未被创建、LaunchAgents 恰好只有 server 一个、crontab 恰好一行属于本产品、安装后没有被改动的 tracked 文件、LaunchAgent 起的 server 答 `/api/health` / `/api/recaps` / `/api/setup` / `/api/permissions`、`doctor --fresh-install` 干净、第二次安装足迹不变、`uninstall.sh --yes` 逐项删净（CONTRACT §69 追记）。
+- **README 审计（§77.5）**：允许一个围栏「Removed in 2.0」块（块内免判），第二个块算过期；提到 git tag / branch `full` 的主张，本树不存在的路径改到 `full` 那棵树上查；退役轴加上实时字幕、雷达、看板卡片、.pkg、自动部署、actd 与 `claude --bg`。`--render` 改等 `/api/health`、渲染 lite 的页面。
+- **demo 数据改为虚构会议纪要**：`scripts/demo_seed.py` 写 `state/recap/`（两种出稿形状、各种质量状态、一场进行中的会、已归档与已忽略各一份；场景 `initial` / `empty` / `generating`，`--now` 固定时钟、`--check` 走一遍 `GET /api/recaps` 的投影）；`scripts/dev-preview.sh` 跟着改，docs/DEMO.md 重写。
+- **AI review prompt 去掉 Act 时代的措辞**：Claude 与 Codex 两个 review 的 prompt 改为描述壳 / server / web / ingest / 纪要的结构，并把读写 `~/.claude` 列为红线（宪法第 13 条）。
+- **`docs/design/lite2-plan.md` 补成完整版**：owner 的决定（L1–L18）、本轮实施中的默认取舍（L19–L22）、切片记录、隔离与发布路径、上线与回滚；1.x 的 D 编号指向 git tag `full` 上的 vnext2-plan。

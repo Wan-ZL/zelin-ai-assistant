@@ -7,15 +7,15 @@
 > Using it as-is means drafts written in your name start from the author's
 > tendencies.
 >
-> **Recommended**: generate your own profile from your real messages (guide:
-> [docs/VOICE.md](../docs/VOICE.md)) and save it to `state/voice-profile.md`.
+> **Recommended**: write your own profile from your real messages and save it
+> to `state/voice-profile.md` (the meeting recap reads it).
 > When that file exists it takes priority and this default is ignored entirely.
 > ⚠️ A personal profile contains real speech samples = work data: it belongs in
 > `state/` (gitignored) and must never be committed.
 
 > 用途：任何以 owner 名义起草的文字（Slack 消息 / 邮件 / 报告成稿）必须遵守本档案。
-> 维护：本默认档案随 repo 发布、保持静态；个人档案的维护节奏（打回反馈回流、
-> 定期重归纳）见 docs/VOICE.md。
+> 维护：本默认档案随 repo 发布、保持静态；1.x 的个人档案维护指南（docs/VOICE.md）
+> 在 git tag `full`。
 
 ## 全局铁律（所有语境）
 

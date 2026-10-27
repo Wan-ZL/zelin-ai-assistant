@@ -186,3 +186,11 @@ bash uninstall.sh             # 执行（y/N 确认）
 结尾逐项附删除命令。`bash uninstall.sh --purge` 一并删除（vault 永不碰）。
 
 > ✅ **预期状态**：`launchctl list | grep zelin` 无输出；`crontab -l` 里没有我们的行；`~/.claude` 与装机前一字不差。
+
+## 这条路线在 CI 上每天都走一遍
+
+`.github/workflows/fresh-install.yml`（"Fresh install (macOS)"）在每次 push 到 main、每晚一次以及手动触发时用一台干净的 macOS runner 复现本页（不按 PR 跑——macOS runner 稀缺，CONTRACT §56.8）：空 `$HOME`、本地 origin、`bash scripts/bootstrap.sh`（即 `bash install.sh --non-interactive`，真的装 LaunchAgent、真的写 crontab）→ 断言安装报告；断言封闭足迹（CONTRACT §78）：`~/.claude` 从未被创建、`~/Library/LaunchAgents` 恰好只有 `com.zelin.aiassistant.server.plist`、crontab 里恰好一行属于本产品；安装后没有被改动的 tracked 文件；LaunchAgent 起的 server 答 `/api/health` `/api/recaps` `/api/setup` `/api/permissions`；`doctor --fresh-install` 退出 0；第二次运行是更新且足迹不变；最后 `bash uninstall.sh --yes` 逐项删干净。绿 = 「另一台电脑、空白环境、一条命令、直接能用」成立（CONTRACT §69.4 与其 v2.0.0 追记）。
+
+## 附：GitHub Release 里有什么
+
+每个 release（CONTRACT §56.2）带三个资产：`ZelinAIAssistant-<tag>-macos.zip`（CI 上用 `shell/build.sh` 构建、带 build provenance attestation 的 Dock app，`gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant` 可验）、`checksums.sha256`、以及零条目的 `appcast.xml`（CONTRACT §74.3：让残留的 1.x 菜单栏 app 的 Sparkle 永远读到「已是最新」）。app 依赖它的 checkout（server、ingest 脚本、纪要代码都在仓库里），所以安装路线仍是上面的 bootstrap；zip 适合核对或单独替换 bundle。2.0 不再发 .pkg、不再发 Linux / Windows 包（CONTRACT §74.1 / §74.2 tombstone，1.x 的安装器在 tag `full`）。

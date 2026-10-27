@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dev-preview：（缺 web/dist 则先 build）→ 种 demo 数据 → 起 server → 开浏览器（BUILD-CONTRACT §2.3）。
 # 用法：
-#   scripts/dev-preview.sh [scene]   # demo 模式；scene ∈ captured|initial|approved|running|review|done
+#   scripts/dev-preview.sh [scene]   # demo 模式；scene ∈ initial|empty|generating（scripts/demo_seed.py 的会议纪要场景）
 #   scripts/dev-preview.sh --real    # 真实数据：读 §19 home 指针（或 AIASSISTANT_HOME），不种 demo
 # demo 模式一律使用临时 AIASSISTANT_HOME —— 绝不触碰生产 state/（ground rule 3）。
 set -euo pipefail
@@ -37,7 +37,7 @@ DIST="$ROOT/web/dist/index.html"
 if [ ! -f "$DIST" ]; then
   echo "dev-preview: web/dist 尚未构建，现在构建（首次约 1-2 分钟）…"
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "dev-preview: 需要 Node.js（LTS）来构建 web 看板 —— 未找到 node/npm。" >&2
+    echo "dev-preview: 需要 Node.js（LTS）来构建 web 前端 —— 未找到 node/npm。" >&2
     echo "  安装: https://nodejs.org 或 brew install node，然后重跑本脚本。" >&2
     exit 1
   fi
@@ -63,8 +63,8 @@ if [ "$REAL_MODE" = 1 ]; then
     echo "  还没安装过？先跑 bash install.sh，或先用 demo 模式：bash scripts/dev-preview.sh" >&2
     exit 1
   fi
-  if [ ! -f "$RUN_HOME/state/dashboard.json" ]; then
-    echo "dev-preview: 注意 —— $RUN_HOME/state/dashboard.json 不存在（actd 还没跑过？），看板会是空的" >&2
+  if [ ! -d "$RUN_HOME/state/recap/recaps" ]; then
+    echo "dev-preview: 注意 —— $RUN_HOME/state/recap/recaps 不存在（cron 的 act.recap 还没出过稿？），会议纪要页会是空的" >&2
   fi
   MODE_DESC="real, home=$RUN_HOME"
 else
@@ -76,6 +76,8 @@ else
     exit 1
   fi
   python3 "$SEEDER" "$RUN_HOME" --scene "$SCENE"
+  # 首次运行向导（§68.5）会整页顶掉会议纪要页：与 web/e2e/demoServer.ts 同一个「向导已完成」标记
+  printf '{"completed_at": "2026-09-02T12:00:00Z"}\n' > "$RUN_HOME/state/setup_done.json"
   MODE_DESC="scene=$SCENE, home=$RUN_HOME"
 fi
 
@@ -84,9 +86,9 @@ AIASSISTANT_HOME="$RUN_HOME" ZAI_PORT="$PORT" PYTHONPATH="$ROOT" \
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT INT TERM
 
-# 等 server 起来（最多 5s）
+# 等 server 起来（最多 5s）；/api/health 是永远答话的活性路由（v2.0.0：/api/board 随看板退役）
 for _ in $(seq 1 50); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/board" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
     break
   fi
   sleep 0.1

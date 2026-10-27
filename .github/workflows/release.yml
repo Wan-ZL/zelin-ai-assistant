@@ -1,18 +1,27 @@
-# Release: on a v* tag — stamp the version FROM THE TAG (CONTRACT §56.1: the
-# tag is the version's single source of truth; act/_version.py and the iOS
-# MARKETING_VERSION pins are written on this runner, never committed), run all
-# CI gates, package the .app with ditto, build the .pkg, generate SHA-256
-# checksums, attest build provenance, and publish a GitHub Release whose body
-# is the delta of changelog.d/ fragments + the legacy CHANGELOG [Unreleased]
-# text since the previous tag (§56.7; nothing is rewritten or deleted by CI —
-# history lives in Releases + tags).
+# Release: on a v* tag, stamp the version FROM THE TAG (CONTRACT §56.1: the
+# tag is the version's single source of truth; act/_version.py is written on
+# this runner, never committed), run the Python gates, build the Dock shell
+# (shell/build.sh), zip it with ditto, write SHA-256 checksums, attest build
+# provenance, and publish a GitHub Release whose body is the delta of
+# changelog.d/ fragments + the legacy CHANGELOG [Unreleased] text since the
+# previous tag (§56.7; nothing is rewritten or deleted by CI; history lives in
+# Releases + tags). Every release also carries the TERMINAL appcast.xml
+# (§74.3): a zero-item Sparkle feed, so a leftover 1.x menu-bar app that still
+# polls /releases/latest/download/appcast.xml is told "up to date" and never
+# re-arms.
+#
+# lite 2.0 (v2.0.0): macOS only. The 1.x steps are gone with their sources:
+# the iOS pin stamping (--ios), the Sparkle vendoring and mac/build.sh (mac/
+# removed), the .pkg (§74.1/§74.2 retired, no .pkg ships), and the Linux /
+# Windows portable bundles (install-linux.sh / install.ps1 removed). Full text
+# of the 1.x workflow at git tag `full`.
 #
 # Two ways in (CONTRACT §56.2): a hand-pushed tag, or `gh workflow run
-# release.yml --ref v<version>` from release-on-merge.yml — tags created with
+# release.yml --ref v<version>` from release-on-merge.yml (tags created with
 # GITHUB_TOKEN never fire `on: push: tags`, so the auto path dispatches
-# explicitly. Under workflow_dispatch GITHUB_REF_NAME is still the tag name the
-# run was started on, so the ref gate below covers both entrances (dispatching
-# on a branch by mistake fails it immediately).
+# explicitly). Under workflow_dispatch GITHUB_REF_NAME is still the tag name
+# the run was started on, so the ref gate below covers both entrances
+# (dispatching on a branch by mistake fails it immediately).
 name: Release
 
 on:
@@ -24,29 +33,32 @@ on:
 jobs:
   release:
     runs-on: macos-latest
+    timeout-minutes: 45
     permissions:
       contents: write # create the GitHub Release and upload assets
       id-token: write # OIDC token for the build provenance attestation
       attestations: write # persist the provenance attestation
+    env:
+      # the shell bundle shell/build.sh assembles (CONTRACT §54; the apostrophe
+      # means every use goes through a quoted variable)
+      APP_NAME: "Zelin's AI Assistant.app"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # gh release talks to the API via GH_TOKEN env — git auth is never
+          # gh release talks to the API via GH_TOKEN env; git auth is never
           # used after checkout
           persist-credentials: false
-          # full history + tags: the release notes are the [Unreleased] delta
-          # against the previous tag's CHANGELOG.md (git show <prev>:CHANGELOG.md)
+          # full history + tags: the release notes are the delta against the
+          # previous tag's tree, and the tag gate checks ancestry on origin/main
           fetch-depth: 0
           fetch-tags: true
 
       - name: Stamp the version from the tag
         # Integrity gate + stamping in one step (CONTRACT §56.1). The ref must
         # be a vX.Y.Z tag (a workflow_dispatch on a branch fails here, before
-        # the expensive build); its number is written to the git-ignored
-        # act/_version.py on this runner and act.__version__ is then verified
-        # to report exactly the tag — every artifact below (Info.plist, .pkg,
-        # appcast, portable bundles) self-reports the tag. The iOS pins are
-        # stamped after the unit tests (one test pins the committed placeholder).
+        # the build); its number is written to the git-ignored act/_version.py
+        # on this runner and act.__version__ is then verified to report exactly
+        # the tag. No file in the tree is ever bumped.
         run: |
           set -euo pipefail
           case "${GITHUB_REF_NAME}" in
@@ -57,22 +69,21 @@ jobs:
           # merge = release (§56.2): a tag whose commit is not on main would
           # publish code nobody merged. fetch-depth 0 brings origin/main along.
           if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::${GITHUB_REF_NAME} points at $(git rev-parse --short HEAD), which is not on origin/main — releases are cut from main only (CONTRACT §56.2)"
+            echo "::error::${GITHUB_REF_NAME} points at $(git rev-parse --short HEAD), which is not on origin/main; releases are cut from main only (CONTRACT §56.2)"
             exit 1
           fi
           python3 scripts/version_stamp.py --version "${VERSION}" --write
           GOT="$(python3 -c 'import act; print(act.__version__)')"
           if [ "${GOT}" != "${VERSION}" ]; then
-            echo "::error::act.__version__ reports ${GOT} after stamping ${VERSION} — resolution order broken (act/lib/version.py)"
+            echo "::error::act.__version__ reports ${GOT} after stamping ${VERSION}; resolution order broken (act/lib/version.py)"
             exit 1
           fi
           echo "stamped act/_version.py = ${VERSION} (runner-only)"
 
       - name: Select pinned Xcode
         # Same pin as ci.yml (issue #15): .github/xcode-version via
-        # scripts/ci/select_xcode.sh — the release build of a commit resolves
-        # exactly the Xcode its CI run was green on; a missing pin fails here
-        # instead of silently picking another toolchain at tag time.
+        # scripts/ci/select_xcode.sh. The release build of a commit resolves
+        # exactly the Xcode its CI run was green on; a missing pin fails here.
         run: bash scripts/ci/select_xcode.sh
 
       - name: Install PyYAML
@@ -80,33 +91,27 @@ jobs:
         run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
 
       - name: Compile Python sources
-        run: python3 -m compileall -q act ingest
+        run: python3 -m compileall -q act ingest server
 
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-      - name: Stamp the iOS version pins (runner-only)
-        # Same number into ios/project.yml + the two pbxproj pins, never
-        # committed (§56.1) — after the unit tests, which assert the committed
-        # files still carry the 0.0.0-dev placeholder.
-        run: python3 scripts/version_stamp.py --version "${GITHUB_REF_NAME#v}" --ios
-
       - name: Import signing certificate (stable self-signed; optional)
         # Makes CI release builds sign with the SAME stable self-signed identity
-        # as local builds, so macOS TCC grants (Screen Recording, etc.) PERSIST
-        # across version updates instead of resetting on every ad-hoc rebuild.
-        # Created + wired once by shell/scripts/make-signing-cert.sh.
+        # as local builds (shell/build.sh SIGN_ID), so macOS TCC grants (Screen
+        # Recording, Microphone) PERSIST across versions instead of resetting on
+        # every ad-hoc rebuild. Created once by shell/scripts/make-signing-cert.sh.
         #
         # GitHub can't reference `secrets` in `if:`, so the guard is inside bash:
         # with no secret this step is a harmless no-op and build.sh falls back to
-        # ad-hoc signing — a fork without the secret still builds fine.
+        # ad-hoc signing; a fork without the secret still builds fine.
         env:
           P12_B64: ${{ secrets.MACOS_SIGN_CERT_P12 }}
           P12_PASSWORD: ${{ secrets.MACOS_SIGN_CERT_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${P12_B64:-}" ]; then
-            echo "no MACOS_SIGN_CERT_P12 secret — ad-hoc signing fallback (TCC grants reset on update)"
+            echo "no MACOS_SIGN_CERT_P12 secret; ad-hoc signing fallback (TCC grants reset on update)"
             exit 0
           fi
           IDENTITY="Zelin AI Engineer Dev"
@@ -127,144 +132,96 @@ jobs:
           security import "$P12_PATH" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
 
-          # fail LOUDLY if a misconfigured secret didn't actually yield the identity —
+          # fail LOUDLY if a misconfigured secret didn't actually yield the identity:
           # better a red build than a silently ad-hoc release that resets TCC grants.
           # No `-v`: the self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED), which
           # `-v` (trusted-only) would hide even though it signs fine.
           if ! security find-identity -p codesigning | grep -q "$IDENTITY"; then
-            echo "::error::signing cert secret present but identity '$IDENTITY' not found — check MACOS_SIGN_CERT_P12 / MACOS_SIGN_CERT_PASSWORD"
+            echo "::error::signing cert secret present but identity '$IDENTITY' not found; check MACOS_SIGN_CERT_P12 / MACOS_SIGN_CERT_PASSWORD"
             security find-identity -p codesigning || true
             exit 1
           fi
-          echo "signing identity '$IDENTITY' ready — build.sh will sign with it"
+          echo "signing identity '$IDENTITY' ready; shell/build.sh will sign with it"
 
-      - name: Vendor Sparkle (framework + tools)
-        # Download + verify (SHA-256) + vendor Sparkle.framework and its bin/ tools
-        # into mac/Frameworks/ (gitignored). MUST run before the build so build.sh
-        # links + embeds + signs the framework (the frozen legacy app still links
-        # it). Nothing signs an appcast enclosure any more — the feed is terminal,
-        # CONTRACT §74.3 — but bin/sign_update is what re-arming it would need.
-        run: bash mac/scripts/fetch-sparkle.sh
-
-      - name: Build macOS app
-        run: bash mac/build.sh
-
-      - name: Package app bundle
-        # ditto (not zip) preserves resource forks / bundle metadata correctly.
-        # App name contains an apostrophe — always reference it via a quoted variable.
-        run: |
-          APP="Zelin's AI Assistant (old).app"   # mac/build.sh APP_NAME (the legacy app; §54)
-          ZIP="ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
-          cd mac/build
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-
-      - name: Build .pkg installer
-        # Produces mac/build/ZelinAIAssistant-<version>.pkg (version = the stamp
-        # written above; the pipeline payload gets its own act/_version.py so a
-        # .pkg install — no .git — still self-reports the tag).
-        run: bash mac/package.sh
-
-      - name: Stage release assets
-        # Rename the pkg to match the tag so both assets share one naming scheme
-        # (the tag gate above guarantees v$VERSION == $GITHUB_REF_NAME).
-        run: |
-          VERSION="$(python3 -c 'import act; print(act.__version__)')"
-          mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
-
-      - name: Generate the terminal appcast.xml (the legacy Sparkle feed is retired)
-        # CONTRACT §74.3 — the retired menu-bar app (com.zelin.ai-engineer, D3)
-        # is the ONLY client of this feed, and on 2026-09-07 it used it: Sparkle
-        # fetched v1.0.14's .pkg and installed it unattended, and that payload's
-        # postinstall rsynced an older tag over the live checkout (issue #333).
-        # The feed therefore carries NO items any more: a well-formed channel
-        # with zero <item>s is what "you are up to date, forever" looks like to
-        # Sparkle — quieter and more deterministic than dropping the asset
-        # (which leaves /releases/latest/download/appcast.xml a 404 the client
-        # re-fetches every day). Nothing is EdDSA-signed because nothing is
-        # offered, so the SUPublicEDKey preflight went with it. Re-arming the
-        # feed = restore an <item> with an <enclosure>, sign it with
-        # mac/Frameworks/bin/sign_update, and put that preflight back
-        # (scripts/sparkle_pubkey.py is kept for exactly that). The .pkg itself
-        # is still built, attested, checksummed and attached to the release — a
-        # human can still download it and run it by hand.
+      - name: Build the Dock shell (shell/build.sh)
+        # The same build install.sh's ui step runs (CONTRACT §54.3 / §56.5);
+        # ZAI_PORT = the default board server port, as in ci.yml. build.sh
+        # derives the version through scripts/build_version.sh (git describe on
+        # this tag = the stamp above) and refuses to ship the plist placeholder;
+        # the check below proves the bundle self-reports the tag.
         run: |
           set -euo pipefail
-          cat > mac/build/appcast.xml <<EOF
+          ZAI_PORT=47820 bash shell/build.sh
+          PLIST="shell/build/${APP_NAME}/Contents/Info.plist"
+          GOT="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
+          if [ "${GOT}" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::the shell bundle reports ${GOT}, not ${GITHUB_REF_NAME#v} (scripts/build_version.sh)"
+            exit 1
+          fi
+          echo "shell bundle version: ${GOT}"
+
+      - name: Package the app bundle
+        # ditto (not zip) preserves resource forks / bundle metadata correctly.
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "shell/build/${APP_NAME}" "dist/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
+          ls -l dist
+
+      - name: Generate the terminal appcast.xml (the legacy Sparkle feed is retired)
+        # CONTRACT §74.3: the retired 1.x menu-bar app (com.zelin.ai-engineer,
+        # D3, full text at tag full) is the ONLY client of this feed, and on
+        # 2026-09-07 it used it: Sparkle fetched v1.0.14's .pkg and installed it
+        # unattended over the live checkout (issue #333). The feed therefore
+        # carries NO items: a well-formed channel with zero <item>s is what "you
+        # are up to date, forever" looks like to Sparkle, quieter and more
+        # deterministic than dropping the asset (a 404 the client re-fetches
+        # every day). Every release uploads it, because the client follows the
+        # Latest release (/releases/latest/download/appcast.xml). Nothing is
+        # signed because nothing is offered; 2.0 ships no .pkg and no Sparkle.
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cat > dist/appcast.xml <<EOF
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
             <channel>
               <title>Zelin's AI Assistant (retired feed)</title>
               <link>https://github.com/${GITHUB_REPOSITORY}/releases/latest</link>
-              <description>This Sparkle feed is retired and intentionally carries no items: the legacy menu-bar app never auto-installs a .pkg again (CONTRACT 74.3). Update by running install.sh in your checkout, or download the .pkg from the release page and run it yourself.</description>
+              <description>This Sparkle feed is retired and intentionally carries no items: the 1.x menu-bar app never auto-installs anything again (CONTRACT 74.3). To move to the current release, bring main in your clone up to the release tag and run install.sh (docs/INSTALL.md, moving from 1.x).</description>
             </channel>
           </rss>
           EOF
-          echo "generated terminal appcast.xml:"; cat mac/build/appcast.xml
-
-      - name: Set up Node (the portable bundles carry a prebuilt web/dist)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Build the board (web/ -> web/dist)
-        # CONTRACT §49 追记 (owner 决策 D67): the board served by `python -m
-        # server` is the ONE UI on macOS / Linux / Windows, and the portable
-        # bundles now ship server/ + web/ — so web/dist must exist before
-        # package-portable.sh copies the tree. Without it the documented primary
-        # install (docs/WINDOWS.md / docs/LINUX.md "Option A — download the
-        # release bundle") lands on the "dist not built yet" placeholder page.
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Package portable Linux + Windows bundles
-        # Windows/Linux are pure Python (no compiled binary), so each "installer"
-        # is a self-contained source archive + the platform install script. Emits
-        # dist/ZelinAIAssistant-<tag>-linux.tar.gz and -windows.zip. Independent of
-        # the macOS signing/Sparkle steps above. See scripts/package-portable.sh.
-        run: bash scripts/package-portable.sh "${GITHUB_REF_NAME}"
+          # well-formed, one <channel>, zero <item>s (the whole point of §74.3)
+          python3 -c 'import sys, xml.etree.ElementTree as ET; root = ET.parse(sys.argv[1]).getroot(); assert root.find("channel") is not None, "no <channel>"; items = list(root.iter("item")); assert not items, "%d <item> element(s) in the terminal appcast (CONTRACT 74.3)" % len(items)' dist/appcast.xml
+          echo "generated terminal appcast.xml:"; cat dist/appcast.xml
 
       - name: Generate SHA-256 checksums
-        # One checksums file covering all four assets, written with BARE filenames
-        # (mac assets live in mac/build/, portable archives in dist/) so a user who
-        # downloads the assets into one flat dir can verify with:
-        #   shasum -a 256 -c checksums.sha256 --ignore-missing
+        # BARE filenames, so a user who downloads the assets into one directory
+        # can verify with: shasum -a 256 -c checksums.sha256 --ignore-missing
         run: |
           set -euo pipefail
-          MB="mac/build"
-          {
-            ( cd "$MB" && shasum -a 256 \
-                "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" \
-                "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" )
-            ( cd dist && shasum -a 256 \
-                "ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz" \
-                "ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip" )
-          } > "$MB/checksums.sha256"
-          cat "$MB/checksums.sha256"
+          ( cd dist && shasum -a 256 "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" ) > dist/checksums.sha256
+          cat dist/checksums.sha256
 
       - name: Attest build provenance
-        # Publishes SLSA provenance tying both assets to this workflow run.
+        # Publishes SLSA provenance tying the app zip to this workflow run.
         # Users verify with: gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: |
-            mac/build/ZelinAIAssistant-*-macos.zip
-            mac/build/ZelinAIAssistant-*.pkg
-            dist/ZelinAIAssistant-*-linux.tar.gz
-            dist/ZelinAIAssistant-*-windows.zip
+          subject-path: dist/ZelinAIAssistant-*-macos.zip
 
       - name: Release notes from changelog.d fragments + legacy [Unreleased] delta
         # CONTRACT §56.2 / §56.7: PRs write one changelog.d/<slug>.md fragment
         # each ([Unreleased] is frozen, shrink-only); a release never rewrites
         # or deletes anything. The body is every entry present at this tag
-        # (fragments ∪ [Unreleased]) minus the entries the previous tag's tree
-        # already had (scripts/ci/changelog_release_notes.py) — so fragments
+        # (fragments plus [Unreleased]) minus the entries the previous tag's tree
+        # already had (scripts/ci/changelog_release_notes.py), so fragments
         # that nobody pruned yet are not announced twice. The first release
         # (no previous tag) takes everything. A malformed fragment is a
         # ::warning:: and is skipped, never a failed release (the PR-time
         # `changelog_fragments.py check` is the hard gate). Empty delta = no
-        # changelog paragraph, the auto-generated PR list still follows.
+        # changelog paragraph; the auto-generated PR list still follows.
         run: |
           set -euo pipefail
           PREV="$(git tag -l 'v[0-9]*' | python3 scripts/ci/release_tags.py previous "${GITHUB_REF_NAME}" || true)"
@@ -277,7 +234,7 @@ jobs:
             fi
             echo "release notes = fragments + [Unreleased] delta since ${PREV}"
           else
-            echo "no previous tag — release notes = every fragment + the whole [Unreleased] section"
+            echo "no previous tag; release notes = every fragment + the whole [Unreleased] section"
           fi
           python3 scripts/ci/changelog_release_notes.py CHANGELOG.md --previous /tmp/prev-changelog.md \
             --fragments changelog.d --previous-fragments /tmp/prev-tree/changelog.d > /tmp/changelog-delta.md
@@ -289,69 +246,60 @@ jobs:
           cat /tmp/release-body.md
 
       - name: Create GitHub Release and upload assets
-        # The changelog delta comes first, then the install-steps block; gh
-        # appends the --generate-notes PR list after the --notes-file body.
-        # The install block exists because the pkg is UNSIGNED (no Developer
-        # ID yet): without the three-click bypass spelled out next to the
-        # download, macOS Sequoia shows only "Done / Move to Trash" and users
-        # conclude the app is malware. Remove the Gatekeeper paragraph once
-        # builds are signed and notarized.
+        # The changelog delta comes first, then the install block; gh appends
+        # the --generate-notes PR list after the --notes-file body. The app
+        # needs its checkout (the board server, the ingest scripts and the
+        # recap code all run from it), so the install path is the one-command
+        # bootstrap (§69.1), which builds the same app locally; the zip is the
+        # attested CI build of that bundle. @TAG@ is replaced with the tag name.
+        # The 1.x command ends on main (not a detached tag) because
+        # scripts/upgrade.sh only fast-forwards a checkout that is on main (§79).
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
-          PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
-          LINUX="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz"
-          WIN="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip"
+          set -euo pipefail
+          ZIP="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
           cat > /tmp/release-notes.md <<'NOTES'
-          ## 安装 / Install
+          ## 安装 / Install（macOS）
 
-          ### macOS
+          一条命令装好（克隆仓库、跑 `install.sh`、在本机构建 Dock app）：
 
-          下载下方的 `ZelinAIAssistant-*.pkg` 双击安装。装完后菜单栏会自动出现小图标（首启弹权限设置页）。
+          ```
+          curl -fsSL https://raw.githubusercontent.com/Wan-ZL/zelin-ai-assistant/main/scripts/bootstrap.sh | bash
+          ```
 
-          **这个安装包目前没有 Apple 开发者签名**，所以 macOS 第一次会拦下它说"无法打开"。这不是故障，也不是恶意软件——用 3 步绕过（只需做这一次）：
+          One command (clones the repo, runs `install.sh`, builds the Dock app on your Mac). The app runs against its checkout: the local server, the ingest scripts and the recap code all live there, so the bootstrap is the install path. `ZelinAIAssistant-@TAG@-macos.zip` is the same app built and attested on CI; it carries no Apple Developer ID signature, so macOS asks once (right-click the app, Open, Open).
 
-          1. 在 Finder 里**右键点击** .pkg 文件 → 选「打开」；
-          2. 弹窗里再点一次「打开」；
-          3. 如果 macOS Sequoia 仍然拒绝：打开 系统设置 → 隐私与安全性，拉到底部，点「仍要打开」，输一次密码。
+          已经装过 2.x：关于页的「立即升级」（`scripts/upgrade.sh`，CONTRACT §79）。Already on 2.x: About, Upgrade now.
 
-          Download `ZelinAIAssistant-*.pkg` below and double-click it. The build is **not yet signed with an Apple Developer ID**, so macOS blocks the first open — expected, not malware. Bypass it once: **right-click the .pkg in Finder → Open → Open**; if macOS Sequoia still refuses, go to System Settings → Privacy & Security, scroll to the bottom, click **Open Anyway** and enter your password.
+          从 1.x 升级：1.x 的自动部署在大版本边界停下，需要手动一次 / Coming from 1.x (auto-deploy stops at the major boundary), once by hand:
 
-          ### Windows / Linux
+          ```
+          cd ~/Projects/zelin-ai-assistant && git fetch --tags origin && git checkout main && git merge --ff-only origin/main && bash install.sh
+          ```
 
-          Windows 和 Linux 是纯 Python（无需编译）。下载对应的源码包，解压，然后从解压出的目录里运行安装脚本：
-
-          - **Windows**：下载 `ZelinAIAssistant-*-windows.zip`，解压后运行 `install.ps1`（指南：[docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md)）。
-          - **Linux**：下载 `ZelinAIAssistant-*-linux.tar.gz`，解压后运行 `bash install-linux.sh`（指南：[docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md)）。
-
-          Windows and Linux are pure Python (no build step). Download the matching source bundle, unpack it, and run the install script from the extracted folder:
-
-          - **Windows**: download `ZelinAIAssistant-*-windows.zip`, extract, run `install.ps1` — see [docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md).
-          - **Linux**: download `ZelinAIAssistant-*-linux.tar.gz`, unpack, run `bash install-linux.sh` — see [docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md).
-
-          完整安装指南 / full install guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · 卸载 / uninstall: `bash uninstall.sh`
+          本地 main 有自己的提交、快进不了时，见 docs/INSTALL.md「从 1.x 迁移」一节（先留备份分支；脚本从不替你 reset）。If the fast-forward refuses (local commits on main), see "从 1.x 迁移" (moving from 1.x) in docs/INSTALL.md: keep a backup branch first; no script resets your checkout. 最后一个 1.x 在 git tag `full`。The last 1.x is at git tag `full`. Guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · uninstall: `bash uninstall.sh`
 
           NOTES
+          sed -i '' "s/@TAG@/${GITHUB_REF_NAME}/g" /tmp/release-notes.md
           cat /tmp/release-body.md /tmp/release-notes.md > /tmp/release-full.md
           # "Latest" is what update_check (/releases/latest) follows, and it is
-          # where the legacy app's SUFeedURL (…/releases/latest/download/
-          # appcast.xml) lands — which is why the newest release must always
-          # carry the TERMINAL appcast (§74.3): an older release's armed feed
-          # must never become "latest" again. Merge =
-          # release means back-to-back merges run this workflow in parallel and
-          # finish in any order — decide from the tag list, never from who
-          # finishes last (a lower tag must not eclipse a higher one). API
-          # unreachable → old behavior (latest).
+          # where the 1.x app's SUFeedURL (/releases/latest/download/appcast.xml)
+          # lands; that is why the newest release must always carry the TERMINAL
+          # appcast (§74.3): an older release's armed feed must never become
+          # "latest" again. Merge = release means back-to-back merges run this
+          # workflow in parallel and finish in any order; decide from the tag
+          # list, never from who finishes last (a lower tag must not eclipse a
+          # higher one). API unreachable = old behavior (latest).
           HIGHEST="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
                      | sed 's#^refs/tags/##' | python3 scripts/ci/release_tags.py highest || true)"
           LATEST=true
           if [ -n "$HIGHEST" ] && [ "$HIGHEST" != "$GITHUB_REF_NAME" ]; then
             LATEST=false
-            echo "${HIGHEST} exists above ${GITHUB_REF_NAME} — publishing without the Latest mark"
+            echo "${HIGHEST} exists above ${GITHUB_REF_NAME}; publishing without the Latest mark"
           fi
           gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-full.md --generate-notes --latest="$LATEST"
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" "$LINUX" "$WIN" mac/build/checksums.sha256 mac/build/appcast.xml
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" dist/checksums.sha256 dist/appcast.xml
 
       - name: Clean up signing keychain
         # Runs even if an earlier step failed: never leave the decoded cert or

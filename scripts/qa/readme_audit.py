@@ -7,11 +7,20 @@
 判据三类（缺一不可，全部机械判定）：
   1. **路径**——主张里出现的仓库路径必须存在（运行时生成的路径按前缀白名单放行）。
   2. **退役面**——问问助手 / Ask 页、iMessage 通道、原生菜单栏 app UI、被当成
-     「现在就这么做」的 mac/ 构建指令、以及非当前 tag 的版本字面量（§56.1：版本
-     真源是 main 上的 git tag，README 里写死旧版本 = 过期主张）。
+     「现在就这么做」的 mac/ 构建指令、lite 2.0 退役的面（实时字幕、雷达、看板卡片 /
+     kanban、.pkg、自动部署、actd、`claude --bg` 派发），以及非当前 tag 的版本字面量
+     （§56.1：版本真源是 main 上的 git tag，README 里写死旧版本 = 过期主张）。
   3. **UI 标签**——主张里引号括起来的界面文案必须真的被 web app 渲染：查
      web/src 与 server/settings_catalog.py 的文案源；`--render` 时改用 Playwright
      真渲染出来的文本兜底判定。
+
+v2.0.0 的两条放行（§77.5 追记）：
+  - **一个**围栏「Removed in 2.0」块（围栏语言写 `removed`，或块内第一行以
+    `Removed in 2.0` / `2.0 删除` 开头）：块里列的是已经退役的东西，所以路径轴、退役轴
+    （含版本字面量）与标签轴都不判它；第二个这样的块 = stale（只许一处说「删了什么」）。
+  - **`full` 标签 / 分支**（1.x 的归档点）：提到 `full` 的主张里，本树不存在的路径改到
+    `full` 那棵树上查（`full:<path>` 写法同理）；本地没有 `full` 这个 ref 时视为无法判、
+    放行（与 tag 拿不到时整条版本轴不判同理）。
 
 用法：
     python3 scripts/qa/readme_audit.py --summary
@@ -56,7 +65,15 @@ _HTML_REF_RE = re.compile(r'(?:src|href)="([^"]+)"')
 _IMAGE_RE = re.compile(r"docs/images/[\w.\-]+\.png")
 _VERSION_RE = re.compile(r"\bv\d+\.\d+(?:\.\d+)?(?:\.x)?\b")
 
-# 退役面（§27 tombstone / D3 / §56.1）。每条 = (正则, 判词)。
+# 1.x 的归档 ref（branch + annotated tag，lite2-plan L16）。
+FULL_REF = "full"
+# 「Removed in 2.0」块的认法：围栏语言 = removed，或块内第一行以这两种开头。
+_REMOVED_FENCE_LANG = "removed"
+_REMOVED_HEAD_RE = re.compile(r"^(?:Removed in 2\.0|2\.0 删除)", re.I)
+# 主张提到 `full` 这个 ref 的写法：反引号 `full`、tag/branch full、`full:<path>`。
+_FULL_REF_RE = re.compile(r"`full`|\b(?:tag|branch)\s+`?full\b|标签\s*`?full\b|\bfull:[\w.]", re.I)
+
+# 退役面（§27 tombstone / D3 / §56.1 / lite 2.0 的 tombstone）。每条 = (正则, 判词)。
 RETIRED_PATTERNS = (
     (re.compile(r"问问助手|\bAsk page\b|\?page=ask", re.I),
      "retired surface: 问问助手 / Ask page (CONTRACT §27 tombstone, D29)"),
@@ -68,6 +85,18 @@ RETIRED_PATTERNS = (
      "retired surface: mac/ native app build instructions (D3, app retiring)"),
     (re.compile(r"\bSwiftUI\b.*(?:app|window|kanban)", re.I),
      "retired surface: SwiftUI app presented as current (D3)"),
+    (re.compile(r"live[- ]captions?|实时字幕", re.I),
+     "retired surface: live captions (v2.0.0, §36 tombstone, lite2-plan L2)"),
+    (re.compile(r"\b(?:slack|gmail|obsidian|claude[- ]session)s?\s+radars?\b|\bradars?\b|雷达", re.I),
+     "retired surface: the Act radars (v2.0.0, §48 tombstone)"),
+    (re.compile(r"\bkanban\b|看板卡片|卡片详情|approval card|审批卡|\bcard lanes?\b", re.I),
+     "retired surface: the Act board and its cards (v2.0.0, §1/§37 tombstones)"),
+    (re.compile(r"\.pkg\b|\bpkg installer\b", re.I),
+     "retired surface: the .pkg installer (v2.0.0, §74.1/§74.2 tombstones)"),
+    (re.compile(r"auto[- ]deploy|自动部署", re.I),
+     "retired surface: auto-deploy (v2.0.0, §56.3 tombstone; upgrades are §79)"),
+    (re.compile(r"\bactd\b|claude --bg", re.I),
+     "retired surface: the Act daemon / claude --bg dispatch (v2.0.0, §3/§5 tombstones)"),
 )
 # UI 语境词：只有在这些词旁边的引号文案才当成 UI 标签来判。
 _UI_CONTEXT_RE = re.compile(
@@ -92,6 +121,7 @@ class Claim(object):
         self.text = text
         self.verdict = "ok"
         self.reasons = []
+        self.block = 0      # 第几个 Removed in 2.0 块（0 = 不在块里）
 
     def mark(self, reason):
         self.verdict = "stale"
@@ -133,11 +163,20 @@ def _fence_language(stripped, fence):
     return stripped[3:].strip() or "sh"
 
 
+def _fenced_kind(fence):
+    """围栏的 claim kind：mermaid 是画（diagram），Removed in 2.0 块是 removed，其余当命令（code）。"""
+    if fence == "mermaid":
+        return "diagram"
+    if fence == _REMOVED_FENCE_LANG:
+        return "removed"
+    return "code"
+
+
 def _fenced_claims(stripped, fence):
-    """围栏内一行 → [(kind, text)]；mermaid 是画（diagram），其余当命令（code）。"""
+    """围栏内一行 → [(kind, text)]。"""
     if not stripped or stripped.startswith("#"):
         return []
-    return [("diagram" if fence == "mermaid" else "code", stripped)]
+    return [(_fenced_kind(fence), stripped)]
 
 
 def _plain_claims(stripped):
@@ -153,19 +192,55 @@ def _plain_claims(stripped):
     return [("prose", sentence) for sentence in _split_sentences(stripped)]
 
 
+class _FenceState(object):
+    """extract_claims 的围栏状态：当前围栏语言、是否刚开围栏、见过几个 Removed in 2.0 块。"""
+
+    def __init__(self):
+        self.fence = None
+        self.fresh = False      # 刚开了一个围栏、还没见到第一行内容
+        self.blocks = 0
+
+    def toggle(self, stripped):
+        """```开合。"""
+        self.fence = _fence_language(stripped, self.fence)
+        self.fresh = self.fence is not None
+        if self.fence == _REMOVED_FENCE_LANG:
+            self.blocks += 1
+
+    def see(self, stripped):
+        """围栏内第一行以 Removed in 2.0 开头 → 整块按 removed 判（§77.5 追记）。
+
+        围栏语言已经是 removed 的块，第一行再写一遍 Removed in 2.0 也还是同一个块（不重复计数）。"""
+        if self.fence is None or not stripped:
+            return
+        if self.fresh and self.fence != _REMOVED_FENCE_LANG and _REMOVED_HEAD_RE.match(stripped):
+            self.fence = _REMOVED_FENCE_LANG
+            self.blocks += 1
+        self.fresh = False
+
+    def pairs(self, stripped):
+        if self.fence is not None:
+            return _fenced_claims(stripped, self.fence)
+        return _plain_claims(stripped)
+
+
 def extract_claims(text):
-    """README 正文 → Claim 列表（bullet / table / code / diagram / media / prose）。"""
+    """README 正文 → Claim 列表（bullet / table / code / diagram / media / prose / removed）。
+
+    removed = 「Removed in 2.0」围栏块里的行（§77.5 追记）；每行带上它属于第几个这样的块
+    （``Claim.block``），:func:`check_removed_blocks` 据此只放行第一个。"""
     claims = []
-    fence = None
+    state = _FenceState()
     for lineno, raw in enumerate(text.splitlines(), start=1):
         stripped = raw.strip()
         if stripped.startswith("```"):
-            fence = _fence_language(stripped, fence)
+            state.toggle(stripped)
             continue
-        pairs = (_fenced_claims(stripped, fence) if fence is not None
-                 else _plain_claims(stripped))
-        for kind, body in pairs:
-            claims.append(Claim(len(claims) + 1, kind, lineno, body))
+        state.see(stripped)
+        for kind, body in state.pairs(stripped):
+            claim = Claim(len(claims) + 1, kind, lineno, body)
+            claim.block = state.blocks if kind == "removed" else 0
+            claims.append(claim)
     return claims
 
 
@@ -181,11 +256,19 @@ def _shell_tokens(text):
         return text.split()
 
 
+def _inline_code_tokens(code):
+    """反引号里的一段：以 ~ 或 / 开头的整段是一条家目录 / 绝对路径（`~/Library/Application Support/…`
+    里的空格是路径的一部分，不是命令参数的分隔），原样当一个 token；其余按命令切。"""
+    if code.startswith(("~", "/")):
+        return [code]
+    return _shell_tokens(code)
+
+
 def _raw_path_tokens(text, kind):
     """可能是路径的原始片段：反引号里的命令 token、md 链接、html src|href。"""
     raw = []
     for match in _INLINE_CODE_RE.finditer(text):
-        raw.extend(_shell_tokens(match.group(1)))
+        raw.extend(_inline_code_tokens(match.group(1)))
     raw.extend(_LINK_RE.findall(text))
     raw.extend(_HTML_REF_RE.findall(text))
     if kind == "code":
@@ -243,12 +326,80 @@ def _path_exists(repo_root, token):
     return "/" not in target and target in _basenames(repo_root)
 
 
+_FULL_TREE = {}
+
+
+def _git_ok(repo_root, *args):
+    try:
+        proc = subprocess.run(["git", "-C", repo_root] + list(args),
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              check=False)
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _is_git_toplevel(repo_root):
+    """repo_root 自己就是一个 git checkout 的根（不向上找到别人的仓库）。"""
+    try:
+        proc = subprocess.run(["git", "-C", repo_root, "rev-parse", "--show-toplevel"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    except OSError:
+        return False
+    top = proc.stdout.decode("utf-8", "replace").strip()
+    return proc.returncode == 0 and os.path.realpath(top) == os.path.realpath(repo_root)
+
+
+def full_ref_exists(repo_root):
+    """本地有没有 `full` 这个 ref（tag 或 branch）；没有 = full 那棵树无法查。"""
+    cached = _FULL_TREE.get(repo_root)
+    if cached is None:
+        cached = _is_git_toplevel(repo_root) and _git_ok(
+            repo_root, "rev-parse", "--verify", "--quiet", FULL_REF + "^{commit}")
+        _FULL_TREE[repo_root] = cached
+    return cached
+
+
+def _path_in_full(repo_root, path):
+    """路径在 `full` 那棵树里在不在；本地没有 full ref = 无法判，放行。"""
+    if not full_ref_exists(repo_root):
+        return True
+    return _git_ok(repo_root, "cat-file", "-e", "%s:%s" % (FULL_REF, path.rstrip("/")))
+
+
+def _full_object_path(token):
+    """`full:<path>` 写法 → path；别的 token → None。"""
+    if token.startswith(FULL_REF + ":"):
+        return token[len(FULL_REF) + 1:]
+    return None
+
+
+def _token_ok(repo_root, token, mentions_full):
+    """一条路径 token 成不成立：`full:<path>` 只查 full；提到 full 的主张里本树没有的也查 full。"""
+    full_path = _full_object_path(token)
+    if full_path is not None:
+        return _path_in_full(repo_root, full_path)
+    if _path_exists(repo_root, token):
+        return True
+    return mentions_full and _path_in_full(repo_root, token)
+
+
 def check_paths(repo_root, claim):
-    if claim.kind == "diagram":
+    if claim.kind in ("diagram", "removed"):
         return
+    mentions_full = bool(_FULL_REF_RE.search(claim.text))
     for token in _candidate_paths(claim.text, claim.kind):
-        if not _path_exists(repo_root, token):
-            claim.mark("path does not exist: %s" % token)
+        if not _token_ok(repo_root, token, mentions_full):
+            where = " (nor at tag %s)" % FULL_REF if mentions_full or _full_object_path(token) else ""
+            claim.mark("path does not exist: %s%s" % (token, where))
+
+
+def check_removed_blocks(claims):
+    """只许一个「Removed in 2.0」块（§77.5 追记）：第二个及以后的块里每一行都 stale。"""
+    for claim in claims:
+        if claim.kind == "removed" and claim.block > 1:
+            claim.mark("only one 'Removed in 2.0' block is allowed (§77.5); this is block %d"
+                       % claim.block)
 
 
 # --------------------------------------------------------------------------- #
@@ -282,6 +433,8 @@ def _check_version_literals(claim, tag):
 
 
 def check_retired(claim, tag):
+    if claim.kind == "removed":
+        return
     for pattern, reason in RETIRED_PATTERNS:
         if pattern.search(claim.text):
             claim.mark(reason)
@@ -343,7 +496,7 @@ def candidate_labels(text):
 
 
 def check_labels(claim, corpus_lower, rendered_lower=None):
-    if claim.kind in ("code", "diagram"):
+    if claim.kind in ("code", "diagram", "removed"):
         return
     for label in candidate_labels(claim.text):
         needle = label.lower()
@@ -360,8 +513,8 @@ def check_labels(claim, corpus_lower, rendered_lower=None):
 # 真渲染（--render）
 # --------------------------------------------------------------------------- #
 
-def rendered_text(repo_root, pages=("", "?page=settings", "?page=skills",
-                                    "?page=recaps", "?page=trash")):
+def rendered_text(repo_root, pages=("", "?page=ingest", "?page=settings",
+                                    "?page=about", "?page=permissions")):
     """Playwright 打开 demo server 的每一页，返回可见文本（失败 = 抛 RuntimeError）。"""
     script = os.path.join(repo_root, "scripts", "qa", "readme_render.mjs")
     if not os.path.exists(script):
@@ -412,6 +565,7 @@ def audit(repo_root, readme_text=None, tag=None, rendered=None):
         check_paths(repo_root, claim)
         check_retired(claim, tag)
         check_labels(claim, corpus_lower, rendered_lower)
+    check_removed_blocks(claims)
     return Report(claims, referenced_images(readme_text))
 
 
@@ -423,7 +577,7 @@ def render_markdown(report, tag):
     lines = [
         "# README audit",
         "",
-        "Generated by `scripts/qa/readme_audit.py` (CONTRACT §58 / §66). "
+        "Generated by `scripts/qa/readme_audit.py` (CONTRACT §58 / §77.5). "
         "Version truth = git tag `%s`." % (tag or "<unknown>"),
         "",
         report.summary(),

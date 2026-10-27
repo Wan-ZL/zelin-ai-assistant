@@ -4,9 +4,9 @@
 
 ## 相对私有版改了什么
 
-- **移除**:运行时状态(`state/`)、真实配置(`config.yaml`、`config/runtime.json`、`config/secrets/`)、真实注册表条目(`act/registry/R-*.yaml`;1.x 留过一个虚构示例 `R-000-example.yaml`,v2.0.0 随注册表退役删除)、构建产物(`shell/build/`;1.x 还有 `mac/build/`)、含真实使用数据的早期设计文档(`docs/design/`,留了说明)。
-- **通用化**:真实人名 → "manager"/通用称呼;真实项目名/频道名/Slack ID → 占位符(`<your-team-channel>`、`C01234ABCDE` 等);绝对路径 `/Users/<user>/...` → `~`/`$HOME` 写法。
-- **行为等价**:feature flag `manager_pack`(私有版叫别的名字;该 flag 已随 v0.14 的功能移除退役)、`[MANAGER-OWES]` 标签、`~/Projects/your-workbench` 默认落点等重命名是全局一致的,逻辑未变;manager 提及识别改为从 `config.yaml` 的 `sources.watch_people` 首项派生。
+- **移除**:运行时状态(`state/`)、真实配置(`config.yaml`、`config/runtime.json`、`config/secrets/`)、构建产物(`shell/build/`)、含真实使用数据的早期设计文档(`docs/design/`,留了说明)。
+- **通用化**:真实人名 → 通用称呼;真实项目名/频道名 → 占位符;绝对路径 `/Users/<user>/...` → `~`/`$HOME` 写法。demo 与测试里的人名、项目名(`alex.doe`、`inkweld` 等)全是编的。
+- 1.x 时代的另外几处改名(manager 相关的 flag 与标签)都在 Act 管线的代码里,随 v2.0.0 退役;全文在 git tag `full`。
 - 文档里出现的 `~/Desktop/Keys/` 等默认凭证路径只是**本机约定示例**,推荐用 App 设置窗口把凭证写入 `config/secrets/`(见 `docs/CONTRACT.md` §19)。
 
 ## 脱敏审计原则
